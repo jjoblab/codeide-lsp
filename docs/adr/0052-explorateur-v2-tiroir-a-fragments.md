@@ -97,6 +97,18 @@
    « NN % » visible pendant le glissement puis fondue (380 ms). La
    largeur est mémorisée par instance sauvegardée (§ 19 — par session,
    pas persistée en disque).
+   *Affinage v0.32.1 (retour appareil réel)* : le FOND du tiroir est
+   borné à la largeur visible (`fond_tiroir`, inset de fin de 13 dp) —
+   la bande de débord reste **transparente**, la moitié externe de la
+   poignée flotte sur l'éditeur assombri comme `right:-13px` dans la
+   maquette, et les fragments remplissent le tiroir visible d'un bord à
+   l'autre ; la poignée reste entièrement DANS le cadre du tiroir
+   (entièrement touchable — un enfant hors des bornes de son parent ne
+   recevrait pas les touchers). Le tiroir porte en sus une MARGE haute
+   égale à l'inset de la barre de statut
+   (`applySystemBarsInsetsTopMargin`, core:ui) : il ne peint plus rien
+   derrière elle (maquette § 2 : le tiroir s'ouvre sous la barre de
+   statut), la barre de navigation reste un rembourrage bas.
 
 7. **Snackbar maison (§ 15).** Vue gonflée dans une zone du tiroir
    centrée au-dessus du rail : message + chemin en seconde ligne mono,
