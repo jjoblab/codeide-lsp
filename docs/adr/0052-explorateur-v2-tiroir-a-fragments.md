@@ -32,6 +32,12 @@
    (emblème coloré, titre, sous-titre mono = chemin de la racine
    affichée) — plus d'entête commun. « Fermer le projet » rejoint le
    débordement de la toolbar, le type de projet devient son sous-titre.
+   *Amendé v0.32.2 (retour appareil réel — ADR 0053)* : le fragment
+   Terminal ne migre plus la carte T6 — il déménage dans
+   `feature:terminal` et rend de vraies sessions (fabrique Hilt
+   `FabriqueFragmentTerminalTiroir` + contrat `ControleurTerminalTiroir`,
+   tous deux dans `core:ui` — les features ne se référencent toujours
+   pas).
 
 2. **Arbre v2 sans re-chargement d'arbre entier.** `NoeudExplorateur`
    porte désormais son état de présentation : sélection (fond dégradé +
@@ -109,6 +115,14 @@
    (`applySystemBarsInsetsTopMargin`, core:ui) : il ne peint plus rien
    derrière elle (maquette § 2 : le tiroir s'ouvre sous la barre de
    statut), la barre de navigation reste un rembourrage bas.
+   *Affinage v0.32.2 (retour appareil réel)* : la barre de navigation
+   devient à son tour une MARGE basse
+   (`applySystemBarsInsetsMargins`, core:ui — le tiroir ne chevauche
+   plus la navbar, son rail s'arrête au-dessus des gestes), et le
+   glissement de la poignée porte enfin l'état « pendant » de la
+   maquette — sélecteur pressé posé à la main (l'écouteur consommant
+   tout, il ne s'active jamais seul), points ⋮ accent, grossissement
+   1.08 animé 150 ms, retour symétrique au relâchement.
 
 7. **Snackbar maison (§ 15).** Vue gonflée dans une zone du tiroir
    centrée au-dessus du rail : message + chemin en seconde ligne mono,
