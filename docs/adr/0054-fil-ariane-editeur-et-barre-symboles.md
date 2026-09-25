@@ -1,6 +1,7 @@
 # ADR 0054 — Fil d'Ariane de l'éditeur et barre de symboles au clavier
 
-- **Statut** : accepté (v0.32.3, retour d'appareil réel sur l'étape 31)
+- **Statut** : accepté (v0.32.3) ; **amendé** par l'ADR 0055 (v0.32.4 —
+  les classes réelles remplacent les transcriptions)
 - **Contexte** : retour utilisateur du 2026-09-26, quatrième point :
   « Analyse le dépôt code-editor, il a la fonctionnalité breadcrumb qu'il
   ajoute, et aussi virtualkey à ajouter dans l'entête du bottom sheet
@@ -101,3 +102,20 @@
   - La barre de symboles s'étendra naturellement (touches Ctrl/Alt
     pour le terminal, jeu par langage) sans toucher à l'architecture :
     la vue ne connaît que son écouteur.
+
+---
+
+## Amendement (v0.32.4, ADR 0055)
+
+Le constat d'ouverture — « ces deux classes n'existent pas dans la
+version publiée 3.37.0 » — était **erroné** : `BreadcrumbBar` et
+`SymbolBarView` existent dans le tag v3.37.0 consommé, dans le paquet
+`jo.codeeditor.view` (le déplacement vers `view/chrome/` est postérieur,
+tags de nettoyage du dépôt amont). Les décisions 1 (transcription) et
+la moitié « vue maison » de la décision 2 sont donc **remplacées** par
+l'ADR 0055 : les classes réelles de la bibliothèque sont consommées
+telles quelles, les transcriptions (`VueFilArianeEditeur`,
+`BarreSymbolesEditeur`) sont supprimées. Le scanner
+`SymbolesEnglobants` et son test sont conservés — ils alimentent
+`BreadcrumbBar.setSegments()`. La décision « pas de bump de dépendance »
+reste valable, pour une raison différente (inutile, pas impossible).
