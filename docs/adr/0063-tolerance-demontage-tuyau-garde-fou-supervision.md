@@ -75,6 +75,14 @@
    `DEBUG_KEYSTORE_B64` écrit au même chemin — décision reportée, le cache
    suffit au rythme de livraison actuel.
 
+   *Amendé par l'ADR 0067 (v0.37.2) : le cache n'a pas tenu — les caches
+   sont scopés par ref (les runs des tags poussés ensemble ne se voient
+   pas) et évictables ; chaque APK CI repartait d'une clé aléatoire
+   (retour v0.37.1 sur v0.37.0). L'identité debug est désormais un
+   keystore PUBLIC VERSIONNÉ dans `config/signature/` et le verrou
+   `verify-signature.sh` s'exécute à chaque run. Le plan de reprise
+   `DEBUG_KEYSTORE_B64` est obsolète.*
+
 ## Conséquences
 
 - L'arrêt forcé (orchestrateur muet, fin de tentative, `arreter`) ne
