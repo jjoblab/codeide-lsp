@@ -1,11 +1,16 @@
 # ADR 0083 — Configuration automatique de l'environnement dans le terminal : `codeide-env`
 
-- Statut : accepté (2026-10-05)
+- Statut : accepté (2026-10-05 ; **corrigé le 2026-10-05, v0.54.0** — le
+  journal live se rend dans un mini TerminalView INTÉGRÉ à l'écran
+  d'installation, plus de bascule vers l'écran du terminal)
 - Contexte : comportement demandé par l'utilisateur — « une fois que le
   bootstrap installé et `pkg update`, la configuration de l'environnement
   avec l'installation de java, android sdk, etc. » ; ajustements suivants :
-  **git retiré** (« pas vraiment urgent ») et **journal live dans le
-  TerminalView** (« pour un design plus cohérent »).
+  **git retiré** (« pas vraiment urgent »), **journal live dans le
+  TerminalView** (« pour un design plus cohérent ») puis **mini écran
+  TerminalView intégré, pas de nouvelle session visible** (« pour le
+  journal live, il fallait le remplacer complètement par un mini écran
+  TerminalView et non créer une nouvelle session terminal »).
 
 ## Contexte
 
@@ -86,25 +91,54 @@ L'écran Installation (`feature:install`) déclenche la configuration dès
 l'état `Terminee` de la base — y compris l'état INITIAL (écran rouvert
 sur un bootstrap installé mais un environnement incomplet : c'est la
 voie de reprise). Un garde tient le déclenchement à UN par vie de
-l'écran ; l'effet `OuvrirTerminal` bascule vers `TerminalActivity`
-(`AppNavigator.openTerminal`). La complétude étant disque, un
+l'écran ; l'identifiant de session rendu par le port alimente
+`EtatInstallation.sessionConfiguration`. La complétude étant disque, un
 environnement déjà prêt ne déclenche rien.
 
-Le bouton « Ouvrir le terminal » (phase résultat) y revient à tout
-moment ; `codeide-env` reste lançable à la main dans n'importe quelle
-session. **Repli** : si la session ne peut pas être créée, l'ancienne
-phase d'outils par paquets subsiste — réduite à `openjdk-17` seul
+`codeide-env` reste lançable à la main dans n'importe quelle session
+(la session « Configuration » est une session ORDINAIRE du registre,
+visible dans l'écran du terminal si l'utilisateur y va de lui-même).
+**Repli** : si la session ne peut pas être créée, l'ancienne phase
+d'outils par paquets subsiste — réduite à `openjdk-17` seul
 (`PAQUETS_OUTILS` perd `git`).
+
+### 4. Correctif v0.54.0 — le mini TerminalView INTÉGRÉ, pas de bascule
+
+Retour utilisateur : « pour le journal live, il fallait le remplacer
+complètement par un mini écran TerminalView et non créer une nouvelle
+session terminal (si possible) ». La v0.52.0 basculait vers
+`TerminalActivity` (effet `OuvrirTerminal`) : l'utilisateur quittait
+l'écran d'installation pour un écran de terminal complet — une
+« nouvelle session terminal » vécue comme une rupture de parcours.
+
+La v0.54.0 supprime l'effet et le bouton : la session « Configuration »
+(qui reste le MOTEUR — un TerminalView ne rend qu'une session de pty
+vivante, c'est l'acception du « si possible ») est rendue DANS l'écran
+d'installation, dans une carte `TerminalView` de hauteur fixe
+(~280 dp, police 13 dp) :
+
+- `feature:install` dépend de `terminal-view` + `core:terminal-runtime`
+  (même artefacts que `feature:terminal`) ;
+- `ClientTerminalMini` : client minimal (tap → focus + clavier — la
+  session est INTERACTIVE : relancer `codeide-env`, Ctrl+C… ; pas de
+  zoom, pas de copie auto) ;
+- le fragment branche la session (anti-rebranchement par identifiant,
+  thème du terminal appliqué aux indices 256/257/258) et repeint au
+  signal `observeSorties` — même architecture que `TerminalActivity` ;
+- le journal `TextView` ne survit qu'à la phase de BASE (le shell
+  n'existe pas avant l'extraction du bootstrap : aucun terminal n'y
+  serait rendable — la contrainte physique demeure).
 
 ## Conséquences
 
 - Premier lancement : bootstrap → `apt update` → **la configuration
-  démarre seule** dans le terminal (Java puis SDK Android) —
-  comportement demandé, atteint sans nouvel écran.
-- Le journal de la configuration vit dans le TerminalView : design
-  cohérent, plus de double affichage ; l'écran Installation garde SON
-  journal pour la seule phase de base (qui précède l'existence du
-  shell — impossible à exécuter dans le terminal).
+  démarre seule** (Java puis SDK Android) — comportement demandé,
+  atteint sans nouvel écran.
+- Le journal de la configuration vit dans un mini TerminalView INTÉGRÉ
+  à l'écran d'installation (v0.54.0) : design cohérent, plus de double
+  affichage, plus de bascule d'écran ; le journal TextView ne survit
+  qu'à la phase de base (qui précède l'existence du shell — impossible
+  à exécuter dans le terminal).
 - `git` n'est plus installé automatiquement (`pkg install git` à la
   demande) ; l'option `-g` de `codeidesetup` (voie autonome) demeure.
 - Les appareils v0.37.3+ reçoivent la commande au démarrage suivant
@@ -126,4 +160,6 @@ phase d'outils par paquets subsiste — réduite à `openjdk-17` seul
   (pipeline coroutine de l'installation).
 - `EcrivainCodeideEnvCli` (`core:bootstrap`), `ConfigurationEnvTermux`
   et `envoyerTexte` (`core:terminal-runtime`), déclenchement
-  `feature:install` — v0.52.0.
+  `feature:install` — v0.52.0 ; mini TerminalView intégré
+  (`ClientTerminalMini`, `sessionConfiguration` dans l'état de rendu) —
+  v0.54.0.
