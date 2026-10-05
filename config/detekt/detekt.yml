@@ -24,7 +24,10 @@ style:
       - 'kotlin.io.print'
       - 'java.lang.Throwable.printStackTrace'
   # Règle 4 : pas de suppression d'avertissement non justifiée.
-  ForbiddenPublicDataClass: false # autorisé : les modèles de l'UI sont des data class
+  # `ForbiddenPublicDataClass` n'est plus dans le ruleset `style` (dépréciée
+  # depuis detekt 1.23.x : migrée vers le ruleset `libraries`, non activé
+  # ici). Les data class publiques restent donc autorisées par défaut,
+  # comme voulu par les modèles de l'UI.
 
 exceptions:
   # Règle 4 : les catch génériques qui avalent l'erreur sont interdits.
