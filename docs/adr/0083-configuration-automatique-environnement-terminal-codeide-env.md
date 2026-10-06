@@ -1,8 +1,18 @@
 # ADR 0083 — Configuration automatique de l'environnement dans le terminal : `codeide-env`
 
-- Statut : accepté (2026-10-05 ; **corrigé le 2026-10-05, v0.54.0** — le
-  journal live se rend dans un mini TerminalView INTÉGRÉ à l'écran
-  d'installation, plus de bascule vers l'écran du terminal)
+- Statut : **remplacé** (accepté le 2026-10-05, corrigé le 2026-10-05
+  v0.54.0 ; remplacé le 2026-10-06, v0.60.0, par les ADR 0085/0087/0089
+  et l'ADR 0091 — la configuration de l'environnement n'est PLUS pilotée
+  par frappe dans un pseudo-terminal : le parcours d'installation
+  (orchestrateur verify-first, `CommandRunner` à capture intégrale, état
+  persisté par phase, vérification par exécution réelle) l'installe et la
+  vérifie, et l'écran d'installation E5 projète son journal et ses
+  progression. Les trois causes racines qui ont motivé la présente ADR —
+  script shell non testable en unité, orchestration par frappe de pty
+  sans code de retour, état déduit du disque — sont précisément ce que
+  la refonte élimine. Les installations achevées par `codeide-env` sont
+  **adoptées** par la migration E6 (ADR 0091 § 1). Ce document reste la
+  référence historique de la commande et de son journal live.)
 - Contexte : comportement demandé par l'utilisateur — « une fois que le
   bootstrap installé et `pkg update`, la configuration de l'environnement
   avec l'installation de java, android sdk, etc. » ; ajustements suivants :
