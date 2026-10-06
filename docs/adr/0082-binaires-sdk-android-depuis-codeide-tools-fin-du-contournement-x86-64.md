@@ -1,6 +1,16 @@
 # ADR 0082 — Binaires du SDK Android depuis le dépôt `codeide-tools` : fin du contournement x86_64
 
-- Statut : accepté (2026-10-04)
+- Statut : **remplacé** (accepté le 2026-10-04 ; remplacé le 2026-10-06,
+  v0.60.0, par l'ADR 0089 — la phase 4 `ANDROID_SDK` du parcours
+  d'installation consomme le **manifeste v2** du même dépôt
+  `codeide-tools` : composants, sommes SHA-256, `installPath` et
+  spécifications de vérification par exécution. Le principe — des
+  binaires reconditionnés pour aarch64 depuis `codeide-tools`, jamais les
+  x86_64 du `sdkmanager` Google — est conservé ; seul le mécanisme
+  d'installation change : plus de commande `android-sdk` générée, le
+  parcours télécharge, extrait et vérifie chaque composant. Les
+  installations posées par cet ADR sont **adoptées** par la migration E6
+  (ADR 0091 § 1). Ce document reste la référence historique du dépôt.)
 - Contexte : vouloir régler DÉFINITIVEMENT le problème de l'Android SDK,
   « comme AndroidIDE » — création du dépôt séparé
   [`jjoblab/codeide-tools`](https://github.com/jjoblab/codeide-tools)
