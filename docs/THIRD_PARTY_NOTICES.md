@@ -9,6 +9,8 @@ d'ajout contre les sources officielles.
 | `com.github.jjoblab.code-editor:cel-ui` | 3.37.0 | Apache-2.0 (dépôt jjoblab/code-editor) | Éditeur de code, onglets, coloration | `feature:editor` (depuis l'étape 13) |
 | `com.github.termux.termux-app:terminal-emulator` | v0.118.3 | Apache-2.0 — code dérivé de [Terminal Emulator for Android](https://github.com/jackpal/Android-Terminal-Emulator), exception explicite du dépôt termux-app (racine GPLv3) | Sessions shell interactives via pseudo-terminal | `core:terminal-runtime` (étape T4), `feature:terminal` (T5) |
 | `com.github.termux.termux-app:terminal-view` | v0.118.3 | Apache-2.0 — même exception que `terminal-emulator` (code jackpal) | Rendu du terminal (`TerminalView`) | `feature:terminal` (étape T5) |
+| Icônes IntelliJ Platform New UI | 2024.1+ | Apache-2.0 — dépôt [`JetBrains/intellij-community`](https://github.com/JetBrains/intellij-community) | VectorDrawable de l'explorateur (`ic_fichier_kotlin`, `ic_fichier_gradle_kts`, `ic_fichier_gradle`, `ic_fichier_properties`, `ic_fichier_toml`, `ic_fichier_java`, `ic_fichier_xml`, `ic_fichier_manifest`, `ic_fichier_markdown`, `ic_fichier_json`, `ic_fichier_config`, `ic_dossier`, `ic_gradle`) | `core:ui` (depuis v0.63.0, C0) |
+| Icônes Android Studio | 2024.1+ | Apache-2.0 — dépôt [`JetBrains/android`](https://github.com/JetBrains/android) | VectorDrawable spécifiques Android (`android-file`, `android-module`, `manifest-file`, etc. — utilisation prévue pour C1+) ) | `core:ui` (depuis v0.63.0, C0) |
 
 ## Notes de vérification (2026-09-23)
 
