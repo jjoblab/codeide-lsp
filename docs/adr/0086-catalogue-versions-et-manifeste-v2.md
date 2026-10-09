@@ -24,7 +24,7 @@ que le dépôt publit. Valeurs initiales, chacune **justifiée** :
 | `jdkMajor` | `17` | `openjdk-17` est le seul JDK publié par le dépôt APT (vérifié : `Packages` de `codeide-main`) ; le manifeste n'exprime que `requires: jdk>=17` |
 | `jdkPackage` | `openjdk-17` | phase 3 : `pkg install openjdk-17` (§ 12.1 : le JDK est de la responsabilité du prompt 1) |
 | `packageTools` | `curl`, `ca-certificates`, `tar`, `xz-utils`, `unzip` | § 5 phase 2 : outils nécessaires pour télécharger, vérifier et extraire la suite ; extraction `.tar.xz` par `tar`/`xz` du bootstrap (ADR 0084 R4, ADR 0085) |
-| `requiredComponents` | `build-tools@35.0.2`, `platform@android-37.2` | voir § 2 |
+| `requiredComponents` | `build-tools@35.0.2`, `platform@android-36` | voir § 2 |
 | `spaceThresholdBytes` | 1 Gio (seuil plancher), recalculé par le plan | § 5 phase 4 : contrôle d'espace sur la taille totale **résolue** du plan |
 
 Le catalogue est **consommé par les templates** : `android-app`/
@@ -55,7 +55,7 @@ l'architecture ferait retélécharger par AGP un binaire x86_64 inutilisable
 
 **Divergence constatée à signaler au propriétaire** (§ 12 protocole) :
 `platform` et `aapt2` ne figurent pas au manifeste v1 — le prompt 2 doit
-les publier dans le manifeste v2 (composants `platform@android-37.2`,
+les publier dans le manifeste v2 (composants `platform@android-36`,
 éventuellement `aapt2`, sinon le binaire vient du composant `build-tools`,
 § 12.4). Ce dépôt consomme et ne modifie rien dans `codeide-tools`.
 
