@@ -1273,21 +1273,78 @@ poignées stables ; close idempotent ; usage refusé),
 `checkModuleDependencies` conforme (allow-list §5.2 :
 `lsp:java`/`lsp:index`/`lsp:model`).
 
-### 16.2 Lot h2 — branchement éditeur + UI (à faire)
+### 16.2 Lot h2 — branchement éditeur + UI (v0.100.0, livré)
 
-- `feature:editor` : `LspProject(racine)` +
-  `addServerDefinition(session.definition())` +
-  `createEditor(fichier)` → `LspEditor.setEditorView(EditorView)` →
-  `connect()` (cel-lsp mène le cycle LSP ; l'éditeur reçoit
-  complétion/diagnostics/hover) — l'`EditorView` unique de
-  `EditorActivity` (rebranché à la volée par onglet) ;
-- état d'indexation dans l'UI (`session.etatIndexation` — la vue
-  point d'état existante) + action « Réindexer » (`session.reindexer()`)
-  au menu de l'éditeur ;
-- l'alimentation : le flux de sync → `ClasspathResult` BRUT (le client
-  convertit aujourd'hui vers `core:domain` — ajouter l'accesseur
-  protocole côté `tooling:client`, puis `session.appliquerClasspath`)
-  ;
-- le cycle de vie par activité (session ouverte à l'ouverture du
-  projet, close à la fermeture — le test de fuite h1 couvre déjà le
-  contrat).
+**Coutures de l'hôte** (`:lsp:host`) : `SourceClasspathLsp` (fun
+interface — résolution du `ClasspathResult` BRUT pour la session ;
+l'implémentation vit dans le graphe Hilt de l'app, les features ne
+voient que le type de l'hôte) et `DossierIndexLsp` (emplacement du
+stockage partagé injecté — le défaut `~/.codeide/lsp/index` n'a pas de
+sens sous ART où `user.home` n'est pas garanti).
+
+**Liaisons Hilt de l'app** (`ModuleLsp`) : `SourceClasspathLsp` habille
+le NOUVEL accesseur protocole `GradleApiImpl.classpathBrut()`
+(`tooling:client` — le résultat v8 TEL QUEL, sans conversion
+`core:domain` : le domaine garde SA voie pour `lsp-classpath.json`, une
+seule résolution côté serveur — CacheSync) ; `DossierIndexLsp` lie
+`filesDir/codeide/lsp/index` (répertoire privé stable, segments
+auto-guérissants). L'app est le SEUL point où tooling et hôte se
+rencontrent (règle §2.2).
+
+**Le ViewModel** (`EditorViewModel`) : `sessionLsp` (StateFlow — ouverte
+dès que projet + racine FUSE sont connus, AVANT la garde outils : le
+moteur ne dépend pas du tooling ; racine irrésoluble = journal seul,
+l'édition n'est jamais bloquée) ; `nourrirSessionLspSiSyncUtile` après
+CHAQUE sync utile (sync manuelle + revalidation silencieuse — une sync
+restaurée nourrit la session via la revalidation qui suit, SANS geste
+utilisateur) : `source.resoudre(dossier, arguments)` →
+`session.appliquerClasspath(brut)` ; `cheminFuseDe(uri)` (branchement
+d'onglet côté activité) ; changement de projet = ancienne session
+REFERMÉE + nouvelle ouverte ; `onCleared` referme (le contrat de fuite
+est couvert par SessionLspTest h1) ; `ActionEditor.Reindexer` →
+`session.reindexer()`.
+
+**L'activité** (`EditorActivity`) : `CoordonnateurLsp` (interne — le
+LspProject cel-lsp créé UNE fois par session avec
+`session.definition()`, le `LspEditor` de l'onglet actif
+`createEditor("file://…")` + `setEditorView(EditorView)` +
+`setCurrentFilePath` + `connect()` asynchrone, déconnexion au changement
+d'onglet, `shutdown()` à la destruction — miroir MINCE du LspCoordinator
+de l'ancienne app, UN langage) ; branchement ASYNCHRONE après le rendu
+(garde URI anti-re-connexion, course « onglet changé pendant la
+résolution FUSE » refermée en re-vérifiant l'état) ; **barre d'état de
+l'indexation** sous les onglets (la vue `VuePointEtat` RÉUTILISÉE :
+anneau accent en construction, disque vert plein prêt, bordure verte
+partielle, bordure accent en erreur + libellé localisé avec progression
+`faits/total`) ; action « Réindexer » au menu de l'éditeur (visible si
+session vivante) ; l'état d'indexation est chaîné par `flatMapLatest`
+(la collecte MEURT avec sa session).
+
+**Dépendances** : `feature:editor` → `:lsp:host` (allow-list §5.2 —
+exception feature EXPLICITE au trio core:ui/domain/model, même esprit
+que feature:terminal → core:terminal-runtime ; cel-lsp reste interdit
+en dépendance DIRECTE de feature, il arrive par l'`api` de l'hôte,
+traversée documentée §16.1) ; `app` → `:lsp:host` (liaisons Hilt). Le
+moteur vendored est désormais DEXÉ dans l'APK (in-process ART, ADR
+0109 D2 — multidex natif minSdk 26, APK 28,2 Mo debug).
+
+**Tests (8, `LspEditorViewModelTest`)** : ouverture au projet connu
+(racine résoluble), silence honnête sans racine (session absente,
+journal), nourrissage après sync utile (modèle publié), source muette
+(session vivante non nourrie), relocalisation du projet (ancienne fermée
++ nouvelle ouverte sur la NOUVELLE racine), réindexation sans session
+(journal seul), réindexation avec session, `cheminFuseDe`. Vérification
+complète : spotless/detekt/checkModuleDependencies/lint verts, tests
+editor/host/client verts, kover ≥ 80 % (host, client),
+`:app:assembleDebug` vert.
+
+### 16.3 Suite (à faire)
+
+- mesure appareil du bout-en-bout éditeur ↔ moteur (prompt 2 §9 : p95
+  complétion, mémoire) — protocole §11.2 ;
+- lot h3 (éventuel) : diagnostics LSP dans l'onglet Problèmes (le pont
+  cel existe : `setOnDiagnosticsPublishedListener`), navigation
+  inter-fichiers (`setOnNavigateToFileListener`), source décompilée
+  (`LspProject.decompiledSource`) — à arbitrer contre le prompt 3 ;
+- l'écart restant de §16.1 (RemoteEndpoint/gson complet) vit avec
+  l'usage : le branchement in-process d'aujourd'hui n'y passe pas.
