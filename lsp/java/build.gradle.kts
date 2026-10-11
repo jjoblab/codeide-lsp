@@ -81,6 +81,16 @@ dependencies {
     implementation(libs.lsp4j)
     implementation(libs.gson)
 
+    // Étape 3 lot C : tests d'intégration du branchement index disque —
+    // l'ADAPTATEUR de test (Java) consomme :lsp:index (Kotlin) pour
+    // implémenter la SPI jo.lspjava.api.IndexNoms. TEST-ONLY : le cœur
+    // vendored ne dépend d'AUCUN module Kotlin (ADR 0108) — l'adaptateur
+    // de production vivra dans :lsp:host (étape 4). Les coroutines sont
+    // requises au COMPIL du test (l'impl du service est `implementation`
+    // côté :lsp:index — non transitive au compil).
+    testImplementation(project(":lsp:index"))
+    testImplementation(libs.kotlinx.coroutines.core)
+
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

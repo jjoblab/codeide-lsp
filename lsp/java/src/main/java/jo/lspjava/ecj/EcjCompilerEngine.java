@@ -248,7 +248,7 @@ public final class EcjCompilerEngine {
     public EcjCompilerEngine(List<File> sourceRoots,
                              List<File> classpathEntries,
                              String complianceLevel) {
-        this(sourceRoots, classpathEntries, complianceLevel, null);
+        this(sourceRoots, classpathEntries, complianceLevel, null, null);
     }
 
     /**
@@ -260,6 +260,23 @@ public final class EcjCompilerEngine {
                              List<File> classpathEntries,
                              String complianceLevel,
                              java.nio.file.Path jdkHome) {
+        this(sourceRoots, classpathEntries, complianceLevel, jdkHome, null);
+    }
+
+    /**
+     * Constructeur complet — avec index disque branché (étape 3 lot C,
+     * ADR 0111/0108 : l'index est consommé par la SPI publique
+     * {@link jo.lspjava.api.IndexNoms}, le module vendored ne dépend
+     * d'aucun module Kotlin).
+     *
+     * @param indexNoms index disque lié à CE classpath ({@code null} :
+     *                  index mémoire seul, comportement historique)
+     */
+    public EcjCompilerEngine(List<File> sourceRoots,
+                             List<File> classpathEntries,
+                             String complianceLevel,
+                             java.nio.file.Path jdkHome,
+                             jo.lspjava.api.IndexNoms indexNoms) {
         this.sourceRoots = new ArrayList<>();
         if (sourceRoots != null) {
             for (File f : sourceRoots) {
@@ -277,9 +294,19 @@ public final class EcjCompilerEngine {
         }
         this.complianceLevel = complianceOf(complianceLevel);
         this.jdkHome = jdkHome;
+        this.indexNoms = indexNoms;
     }
 
     private final java.nio.file.Path jdkHome;
+
+    /**
+     * Index disque branché (étape 3 lot C, ADR 0111) — {@code null} si
+     * aucun (index mémoire seul). Lié au classpath courant : tout
+     * replaceAll de contexte reconstruit l'environnement index, qui
+     * reçoit CETTE référence (l'hôte garantit la cohérence des cycles
+     * de vie — l'index survit aux remplacements de contexte).
+     */
+    private final jo.lspjava.api.IndexNoms indexNoms;
 
     /**
      * GRADLE_USER_HOME ({@code ~/.gradle} du layout CodeIDE) — là où le LSP
@@ -1233,7 +1260,7 @@ public final class EcjCompilerEngine {
         // attendent le verrou synchronized de resolveUnit().
         synchronized (indexLock) {
             if (index != null) return; // double-checked
-            index = new EcjCompilerEnvironment(sourceRoots, classpathJars, jdkHome);
+            index = new EcjCompilerEnvironment(sourceRoots, classpathJars, jdkHome, indexNoms);
             // Instrumentation « zéro devinette » — via le logger (jamais
             // stdout : in-process Android, polluerait logcat sans filtrage).
             int skipped = 0;

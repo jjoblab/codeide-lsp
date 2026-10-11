@@ -779,7 +779,7 @@ de lot (dépôt vert, tests verts).
 |---|---|---|---|
 | A | D3 lot 1 — réécriture des 3 shims compat (niveau A, priorité absolue) + renommage `ArtCompat*` + package `jo.lspjava.ecj.compat` + patcher réaligné | 0.94.0 | **livré** |
 | B | Renommage §7 intégral — package `jo.lspjava.jdt` → `jo.lspjava.ecj`, `Jdt*` → `Ecj*` (table §7), `CompletionPrefixMatcher` → `EcjPrefixMatcher`, `BindingParseCache` → `EcjParseCache` | 0.95.0 | **livré** |
-| C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (localiser/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT | 0.96.0 | à faire |
+| C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (jarDe/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT, réouverture chaude sans index mémoire | 0.96.0 | **livré** |
 | D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.x | à faire |
 | E | Moteur par module — verrou global → périmètre module | 0.97.0 | à faire |
 | F | Correctif « 0 item » NOM + banc moteur (cible p95 < 100 ms) + suite de non-régression portée | 0.98.0 | à faire |
@@ -843,7 +843,7 @@ deviennent `invalidateEcjEngine`/`isEcjInitialized` ; les mentions
 provenance projet de référence (`{@code JdtResolver}`…) restent VOLONTAIREMENT
 (elles documentent l'audit D3). `:lsp:java` 277 tests verts.
 
-### 15.4 Lot C — branchement de l'index (à faire, architecture arrêtée)
+### 15.4 Lot C — branchement de l'index (v0.96.0, livré)
 
 Le cœur Java vendored reste SANS dépendance Gradle vers `:lsp:index` :
 il expose une **SPI publique `jo.lspjava.api.IndexNoms`** (requêtes +
@@ -884,3 +884,68 @@ d'intégration Java dans `:lsp:java`, `testImplementation(project(
   (ecj-art) selon l'option retenue par le propriétaire (D3 reste
   « PROPOSÉ — décision propriétaire », l'option 1 est suivie par
   défaut).
+
+### 15.4.1 Lot C — détails de l'implémentation (v0.96.0)
+
+- **SPI `jo.lspjava.api.IndexNoms`** (public, Java pur) : `estPret`/
+  `ajouterObservateurPret` (notifié immédiatement si déjà prêt),
+  `jarDe` (le jar porteur — null pour un conteneur illisible côté
+  moteur), `nomsParPrefixe` (nom simple → FQCN porteurs, préfixe
+  sensible), `estPaquet`/`sousPaquetsDirects` (noms COMPLETS —
+  conversion en segments relative côté moteur, documentée)/
+  `typesDansPaquet`, `membresStatiques` (public+static, imports
+  statiques). Thread-safe par contrat ; observateur fautif attrapé
+  par l'implémentation.
+- **Voies de `EcjCompilerEnvironment`** :
+  - `find`/`binaryType` à PRÊT : `EcjLocateCache.locateBinary(fqcn,
+    sondeIndexDisque)` — le prober EST `jarDe` (négatif définitif
+    côté jars, repli du type englobant `$` conservé) ; octets par
+    `classBytesParChemin` (pool LRU de handles RawZipReader CLÉ PAR
+    CHEMIN — un seul budget de descripteurs pour les voies mémoire et
+    index). Hors PRÊT : voie mémoire inchangée (substrat du repli).
+  - `findTypesByPrefix` à PRÊT : graines `nomsParPrefixe` (recherche
+    binaire) — graine = `indexPrefix()` du matcher, DEUX variantes de
+    casse du premier caractère (l'index trie binaire-sensible, le
+    matcher matche insensible), limite adaptée (hump ×20 pour le
+    rappel dispersé, plain ×8), post-filtre par le matcher gradué.
+    **Écart documenté** : candidats SUBSTRING côté jars non servis à
+    PRÊT (grade démoté, produit du balayage intégral W3) ; jrt
+    (desktop) et sources les gardent — la suite de non-régression
+    (CompletionRegressionTest) reste verte (le premier item matche
+    toujours par préfixe, les items rendus matchent tous).
+  - `isPackage`/`subPackages`/`directTypesInPackage`/`fqnsForSimpleName`
+    : côté jars par l'index à PRÊT (repli mémoire à la moindre erreur
+    de l'index — jamais de propagation), sources et jrt inchangés.
+  - **Construction** : index attaché + DÉJÀ prêt → `buildJarIndex`
+    SAUTÉ (réouverture chaude : zéro snapshot/index de noms/sets
+    mémoire — la voie « ouverture index chaud < 1,5 s ») ; sinon
+    construit (substrat du repli par sondage pendant la construction).
+    `hasBinarySource` compte l'index branché ; `hasRealRClasses`
+    reste faux à PRÊT-sans-mémoire (inutile : R résout par l'autorité).
+  - **P7/P8** : observateur PRÊT → `locateCache.clear()` ; observable
+    par `debugLocateCacheSize()` (tests).
+- **`CompilationEnvironment.setIndexNoms`** : attache (idempotent —
+  ré-attacher la même instance ne re-invalide pas) et invalide le
+  moteur dérivé ; `EcjCompilerEngine` gagne le constructeur complet
+  (5 arguments) qui propage.
+- **Adaptateur de test** (`AdaptateurIndexNoms`, Java sur les classes
+  Kotlin réelles) : `ServiceIndexDisque` (stockage temporaire,
+  parallélisme 1) + `vuePour(ClasspathInstantane)` + surveillance de
+  la transition par fil (observateurs P7/P8) ; clé de segment =
+  sha256 du contenu du jar (« test:… »). `FauxIndexNoms` : PRÊT
+  déclenché manuellement (transition déterministe — le vrai index
+  construit en ~10 ms, impossible d'attacher pendant la fenêtre de
+  façon stable), jarDe délègue au vrai (l'autorité de contenu reste
+  exacte), compteur d'appels.
+- **Fixtures** : jar compilé AU VOL par `javax.tools` (4 classes :
+  `alpha.Alpha` avec champ+méthode statiques publics, `alpha.
+  AlphaVoisin`, `alpha.sous.Profond`, `beta.Beta`) — zéro dépendance
+  à android.jar ou au cache Gradle : les 4 tests d'intégration
+  tournent PARTOUT (CI incluse), contrairement aux tests android.jar
+  (skippés ici). Tests : parité (findTypesByPrefix sur 6 préfixes +
+  insensible, fqnsForSimpleName, subPackages, directTypesInPackage,
+  isPackage, diagnose équivalente sur une source qui importe le
+  jar) ; autorité à PRÊT (binaryType via jarDe, négatif définitif,
+  membresStatiques) ; réouverture chaude (0 entrée mémoire,
+  complétion/paquets/résolution/isLikelyUsable OK) ; transition
+  (négatif mémorisé → purge → jarDe appelé, classes connues OK).

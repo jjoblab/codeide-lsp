@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import jo.lspjava.api.IndexNoms;
 import jo.lspjava.ecj.compat.ArtCompatInputStream;
 
 /**
@@ -111,6 +112,22 @@ final class EcjCompilerEnvironment {
      */
     private final EcjLocateCache locateCache = new EcjLocateCache();
 
+    /**
+     * Index disque branché (étape 3 lot C, ADR 0111) — {@code null} si
+     * aucun : toutes les requêtes vivent alors de l'index mémoire seul
+     * (comportement historique, repli intégral). Non-null : à l'état
+     * PRÊT le localisateur est AUTORITATIF (négatifs sans sondage) et
+     * les requêtes de découverte (préfixe, paquets, types) sont servies
+     * par l'index disque ; tant que la construction n'a pas fini, la
+     * sonde mémoire reste le substrat (repli par sondage, ADR 0111 §8).
+     *
+     * <p>L'observateur PRÊT vide le {@link EcjLocateCache} à la
+     * transition (P7/P8 : un négatif mémorisé pendant la fenêtre de
+     * construction doit se guérir) — l'autorité passe alors à
+     * {@link IndexNoms#jarDe}.</p>
+     */
+    private final IndexNoms indexNoms;
+
     /** Cache inverse jar (Path) → index dans les listes parallèles. */
     private final java.util.Map<Path, Integer> jarIdxByPath =
             new java.util.HashMap<>();
@@ -195,17 +212,39 @@ final class EcjCompilerEnvironment {
     private final boolean jrtAvailable;
 
     EcjCompilerEnvironment(List<Path> sourceRoots, List<Path> classpathJars) {
-        this(sourceRoots, classpathJars, null);
+        this(sourceRoots, classpathJars, null, null);
     }
 
     EcjCompilerEnvironment(List<Path> sourceRoots, List<Path> classpathJars,
                            java.nio.file.Path jdkHome) {
+        this(sourceRoots, classpathJars, jdkHome, null);
+    }
+
+    EcjCompilerEnvironment(List<Path> sourceRoots, List<Path> classpathJars,
+                           java.nio.file.Path jdkHome, IndexNoms indexNoms) {
         this.sourceRoots = new ArrayList<>(sourceRoots);
         this.classpathJars = new ArrayList<>(classpathJars);
         this.jdkHome = jdkHome != null ? jdkHome
                 : Paths.get(System.getProperty("java.home", ""));
         this.jrtAvailable = Files.isRegularFile(this.jdkHome.resolve("lib/modules"));
-        buildJarIndex();
+        this.indexNoms = indexNoms;
+        if (indexNoms != null) {
+            // P7/P8 (ADR 0111 §8) : à la transition PRÊT, les négatifs
+            // mémorisés pendant la fenêtre de construction deviennent
+            // périmés — le cache de localisation se vide, l'autorité
+            // passe à l'index. L'implémentation SPI attrape un
+            // observateur fautif (contrat de IndexNoms).
+            indexNoms.ajouterObservateurPret(locateCache::clear);
+        }
+        // Index disque DÉJÀ prêt (réouverture à chaud) : l'index mémoire
+        // n'est PAS construit — requêtes et localisation vivent de
+        // l'index disque et du pool de handles par chemin (économie :
+        // snapshots + index de noms + sets d'entrées). Sinon (pas
+        // d'index, ou construction en cours) : index mémoire construit
+        // comme toujours — c'est le substrat du repli par sondage.
+        if (indexNoms == null || !indexNoms.estPret()) {
+            buildJarIndex();
+        }
     }
 
     /**
@@ -237,17 +276,41 @@ final class EcjCompilerEnvironment {
         //    sur les sets d'entrées ; un type absent ne re-sonde plus JAMAIS
         //    les N jars à chaque résolution.
         String entryName = fqcn.replace('.', '/') + ".class";
-        Integer jarIdx = cachedJarIdx(fqcn);
-        if (jarIdx != null) {
-            byte[] bytes = classBytes(jarIdx, entryName);
-            if (bytes != null) {
-                try {
-                    return new NameEnvironmentAnswer(
-                            ClassFileReader.read(bytes, entryName), null);
-                } catch (Throwable t) {
-                    // Entrée illisible — TRACÉ (zéro déglutition
-                    // silencieuse), puis repli jrt ci-dessous.
-                    logReadFailure(indexedJars.get(jarIdx), entryName, t);
+        if (indexDisquePret()) {
+            // 2a. ÉTAPE 3 (lot C, ADR 0111 §8) : localisateur AUTORITATIF —
+            // le prober du cache devient l'index disque (jarDe). Un
+            // négatif est DÉFINITIF côté jars (la sonde mémoire est
+            // sautée — y compris quand l'index mémoire n'existe pas,
+            // réouverture à chaud) ; les octets se lisent par le pool de
+            // handles PAR CHEMIN. locateBinary garde le repli du type
+            // englobant pour les imbriquées ($).
+            Path jar = locateCache.locateBinary(fqcn, this::sondeIndexDisque);
+            if (jar != null) {
+                byte[] bytes = classBytesParChemin(jar, entryName);
+                if (bytes != null) {
+                    try {
+                        return new NameEnvironmentAnswer(
+                                ClassFileReader.read(bytes, entryName), null);
+                    } catch (Throwable t) {
+                        // Entrée illisible — TRACÉ (zéro déglutition
+                        // silencieuse), puis repli jrt ci-dessous.
+                        logReadFailure(jar, entryName, t);
+                    }
+                }
+            }
+        } else {
+            Integer jarIdx = cachedJarIdx(fqcn);
+            if (jarIdx != null) {
+                byte[] bytes = classBytes(jarIdx, entryName);
+                if (bytes != null) {
+                    try {
+                        return new NameEnvironmentAnswer(
+                                ClassFileReader.read(bytes, entryName), null);
+                    } catch (Throwable t) {
+                        // Entrée illisible — TRACÉ (zéro déglutition
+                        // silencieuse), puis repli jrt ci-dessous.
+                        logReadFailure(indexedJars.get(jarIdx), entryName, t);
+                    }
                 }
             }
         }
@@ -266,6 +329,30 @@ final class EcjCompilerEnvironment {
             }
         }
         return null;
+    }
+
+    /** L'index disque est branché ET prêt (autorité contractuelle). */
+    private boolean indexDisquePret() {
+        return indexNoms != null && indexNoms.estPret();
+    }
+
+    /**
+     * Sonde du localisateur à l'état PRÊT : le jar porteur rendu par
+     * l'index disque. Un conteneur que le moteur ne sait pas lire
+     * directement (AAR non normalisé) rend {@code null} — la classe
+     * n'est PAS résoluble côté moteur par cette voie.
+     *
+     * <p>Les erreurs de l'index sont TRACÉES et rendent {@code null}
+     * (repli jrt) — jamais propagées (l'index ne doit pas casser la
+     * résolution ecj).</p>
+     */
+    private Path sondeIndexDisque(String fqcn) {
+        try {
+            return indexNoms.jarDe(fqcn);
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "jarDe(" + fqcn + ") a levé — repli", t);
+            return null;
+        }
     }
 
     /**
@@ -311,6 +398,17 @@ final class EcjCompilerEnvironment {
             if (Files.isDirectory(root.resolve(rel))) {
                 return true;
             }
+        }
+        // Côté jars : index disque à l'état PRÊT (autorité — fonctionne
+        // aussi quand l'index mémoire n'existe pas), sinon l'index mémoire.
+        if (indexDisquePret()) {
+            try {
+                if (indexNoms.estPaquet(pkg)) return true;
+            } catch (Throwable t) {
+                LOG.log(Level.FINE, "estPaquet(" + pkg + ") a levé — repli mémoire", t);
+                return binaryPackages.contains(pkg);
+            }
+            return isJrtPackage(pkg);
         }
         if (binaryPackages.contains(pkg)) return true;
         return isJrtPackage(pkg);
@@ -377,9 +475,13 @@ final class EcjCompilerEnvironment {
         }
     }
 
-    /** @return true si au moins une source binaire est disponible (jars ou jrt). */
+    /** @return true si au moins une source binaire est disponible (jars
+     *         ou jrt). Un index disque branché compte — même quand
+     *         l'index mémoire n'a pas été construit (réouverture à chaud
+     *         à l'état PRÊT : l'autorité de localisation est l'index). */
     boolean hasBinarySource() {
-        return !jarClassEntries.isEmpty() || jrtAvailable;
+        return !jarClassEntries.isEmpty() || jrtAvailable
+                || (indexNoms != null && !classpathJars.isEmpty());
     }
 
     /**
@@ -397,6 +499,22 @@ final class EcjCompilerEnvironment {
         // via le même CACHE de localisation que find (premier miss seul
         // paie la sonde linéaire).
         String entryName = fqcn.replace('.', '/') + ".class";
+        if (indexDisquePret()) {
+            // Étape 3 lot C : localisateur autoritatif (cf. find 2a).
+            Path jar = locateCache.locateBinary(fqcn, this::sondeIndexDisque);
+            if (jar != null) {
+                byte[] bytes = classBytesParChemin(jar, entryName);
+                if (bytes != null) {
+                    try {
+                        return org.eclipse.jdt.internal.compiler.classfmt
+                                .ClassFileReader.read(bytes, entryName);
+                    } catch (Throwable t) {
+                        LOG.log(Level.FINE, "Entrée de classfile illisible", t);
+                    }
+                }
+            }
+            return null;
+        }
         Integer jarIdx = cachedJarIdx(fqcn);
         if (jarIdx != null) {
             byte[] bytes = classBytes(jarIdx, entryName);
@@ -443,6 +561,15 @@ final class EcjCompilerEnvironment {
     }
 
     /**
+     * @return nombre d'entrées du cache de localisation (positives ET
+     *         négatives) — observabilité du vidage P7/P8 à la transition
+     *         PRÊT (tests du lot C).
+     */
+    int debugLocateCacheSize() {
+        return locateCache.size();
+    }
+
+    /**
      * @return une ligne de bilan par jar du classpath —
      *         {@code nom | OK nClasses [snapshot|handle] | SKIP raison}.
      *         Destiné aux logs LSP côté app (instrumentation sans devinette).
@@ -477,11 +604,17 @@ final class EcjCompilerEnvironment {
     }
 
     /**
-     * Handles RawZipReader persistants (jarIdx → handle), en LRU d'accès
+     * Handles RawZipReader persistants (chemin → handle), en LRU d'accès
      * borné à {@link #MAX_OPEN_JARS} (pool du projet de référence) : l'entrée la
      * moins récemment utilisée est fermée et retirée dès dépassement.
+     *
+     * <p>Clé par CHEMIN (étape 3 lot C) : les lectures de l'index disque
+     * localisent par chemin sans passer par l'index mémoire — le pool
+     * sert alors aussi bien le chemin mémoire (jarIdx résolu en chemin)
+     * que le chemin autoritatif ({@link #classBytesParChemin}), sous un
+     * seul budget de descripteurs.</p>
      */
-    private final Map<Integer, RawZipReader.Handle> jarHandles =
+    private final Map<Path, RawZipReader.Handle> jarHandles =
             new java.util.LinkedHashMap<>(16, 0.75f, true);
 
     /**
@@ -496,26 +629,36 @@ final class EcjCompilerEnvironment {
         //    s'arrête ici, zéro I/O).
         java.util.Map<String, byte[]> snap = jarSnapshots.get(jarIdx);
         if (snap != null) return snap.get(entryName);
-        // 2. Jar volumineux (android.jar…) — handle paresseux réutilisé,
-        //    depuis un POOL LRU borné à MAX_OPEN_JARS (portage du pool de
-        //    JdtEnvironmentCache.kt, projet de référence v3.20) : le handle le moins
-        //    récemment utilisé est refermé dès dépassement. Les lectures
-        //    COMPLÈTENT SOUS LE VERROU (comme projet de référence) : une éviction
-        //    concurrente ne peut jamais refermer un handle en cours de
-        //    lecture — le coût est une serialisation des lectures de gros
-        //    jars, acceptable au regard d'un handle fermé à mi-lecture.
-        //    indexedJars (parallèle EXACT) — JAMAIS
+        // 2. Jar volumineux (android.jar…) — handle paresseux réutilisé
+        //    PAR CHEMIN, depuis un POOL LRU borné à MAX_OPEN_JARS (portage
+        //    du pool de JdtEnvironmentCache.kt, projet de référence v3.20) : le
+        //    handle le moins récemment utilisé est refermé dès dépassement.
+        //    Les lectures COMPLÈTENT SOUS LE VERROU (comme projet de référence) :
+        //    une éviction concurrente ne peut jamais refermer un handle
+        //    en cours de lecture — le coût est une serialisation des
+        //    lectures de gros jars, acceptable au regard d'un handle fermé
+        //    à mi-lecture. indexedJars (parallèle EXACT) — JAMAIS
         //    classpathJars.get(jarIdx) : jarIdx désigne une position dans
         //    les listes parallèles des jars INDEXÉS (cf. javadoc du champ).
+        if (jarIdx >= indexedJars.size()) return null;
+        return classBytesParChemin(indexedJars.get(jarIdx), entryName);
+    }
+
+    /**
+     * Octets d'une entrée d'un jar identifié PAR CHEMIN — la voie de
+     * l'index disque (étape 3 lot C) : le localisateur autoritatif rend
+     * un chemin, les octets se lisent par le même pool LRU de handles
+     * (aucun snapshot requis — la réouverture à chaud n'a PAS construit
+     * l'index mémoire).
+     */
+    private byte[] classBytesParChemin(Path jar, String entryName) {
+        if (jar == null || !Files.isRegularFile(jar)) return null;
         synchronized (jarHandles) {
-            RawZipReader.Handle h = jarHandles.get(jarIdx);
+            RawZipReader.Handle h = jarHandles.get(jar);
             if (h == null) {
-                if (jarIdx >= indexedJars.size()) return null;
-                Path jar = indexedJars.get(jarIdx);
-                if (!Files.isRegularFile(jar)) return null;
                 try {
                     h = RawZipReader.open(jar);
-                    jarHandles.put(jarIdx, h);
+                    jarHandles.put(jar, h);
                     trimJarHandles();
                 } catch (Throwable t) {
                     logReadFailure(jar, "open", t);
@@ -525,8 +668,6 @@ final class EcjCompilerEnvironment {
             try {
                 return h.read(entryName);
             } catch (Throwable t) {
-                Path jar = jarIdx >= 0 && jarIdx < indexedJars.size()
-                        ? indexedJars.get(jarIdx) : null;
                 logReadFailure(jar, entryName, t);
                 return null;
             }
@@ -917,7 +1058,28 @@ final class EcjCompilerEnvironment {
             if (tail.isEmpty() || tail.indexOf('.') >= 0) return; // direct seulement
             out.add(tail);
         };
-        binaryPackages.forEach(consider);
+        // Côté jars : index disque PRÊT (autorité) ou index mémoire.
+        // NOTE : la SPI rend les sous-paquets en NOMS COMPLETS
+        // (« alpha.sous ») — le contrat du moteur rend des SEGMENTS
+        // relatifs au chemin demandé (« sous ») : la conversion se
+        // fait ici (le jrt et l'index mémoire fournissent déjà des
+        // paquets complets au `consider`).
+        boolean indexDisqueUtilise = false;
+        if (indexDisquePret()) {
+            try {
+                for (String sous : indexNoms.sousPaquetsDirects(dotPath)) {
+                    if (sous == null || sous.isEmpty()) continue;
+                    out.add(sous.startsWith(prefixDot)
+                            ? sous.substring(prefixDot.length()) : sous);
+                }
+                indexDisqueUtilise = true;
+            } catch (Throwable t) {
+                LOG.log(Level.FINE, "sousPaquetsDirects a levé — repli mémoire", t);
+            }
+        }
+        if (!indexDisqueUtilise) {
+            binaryPackages.forEach(consider);
+        }
         if (jrtPackages != null) jrtPackages.forEach(consider);
         java.util.List<String> all = new ArrayList<>(out);
         return all.size() > 200 ? new ArrayList<>(all.subList(0, 200)) : all;
@@ -960,8 +1122,23 @@ final class EcjCompilerEnvironment {
             if (fqn.indexOf('$') >= 0) return;
             out.add(fqn);
         };
-        for (java.util.List<String> fqns : simpleNameIndex.values()) {
-            fqns.forEach(consider);
+        // Côté jars : index disque PRÊT (la requête EXACTE « ni plus ni
+        // moins » est native côté index) ou balayage de l'index mémoire.
+        boolean indexDisqueUtilise = false;
+        if (indexDisquePret()) {
+            try {
+                for (String fqn : indexNoms.typesDansPaquet(pkg)) {
+                    if (fqn != null) out.add(fqn);
+                }
+                indexDisqueUtilise = true;
+            } catch (Throwable t) {
+                LOG.log(Level.FINE, "typesDansPaquet a levé — repli mémoire", t);
+            }
+        }
+        if (!indexDisqueUtilise) {
+            for (java.util.List<String> fqns : simpleNameIndex.values()) {
+                fqns.forEach(consider);
+            }
         }
         if (jrtIndex != null) jrtIndex.keySet().forEach(consider);
         for (String fqn : sourceTypesCached()) consider.accept(fqn);
@@ -992,9 +1169,28 @@ final class EcjCompilerEnvironment {
         if (simpleName == null || simpleName.isEmpty()) {
             return new ArrayList<>(dedup);
         }
-        java.util.List<String> exact = simpleNameIndex.get(simpleName);
-        if (exact != null) {
-            dedup.addAll(exact);
+        // Côté jars : index disque PRÊT (recherche binaire par préfixe,
+        // puis filtre EXACT — les noms égaux au simpleName trient AVANT
+        // leurs extensions lexicographiques, donc dans la fenêtre) ;
+        // sinon l'index mémoire (accès direct par clé).
+        if (indexDisquePret()) {
+            try {
+                java.util.Map<String, java.util.List<String>> graines =
+                        nomsDepuisIndex(simpleName, Math.max(64, simpleName.length() * 16));
+                java.util.List<String> exact = graines.get(simpleName);
+                if (exact != null) {
+                    dedup.addAll(exact);
+                }
+            } catch (Throwable t) {
+                LOG.log(Level.FINE, "fqnsForSimpleName: index a levé — repli mémoire", t);
+                java.util.List<String> mem = simpleNameIndex.get(simpleName);
+                if (mem != null) dedup.addAll(mem);
+            }
+        } else {
+            java.util.List<String> exact = simpleNameIndex.get(simpleName);
+            if (exact != null) {
+                dedup.addAll(exact);
+            }
         }
         if (jrtIndex != null) {
             for (String fqn : jrtIndex.keySet()) {
@@ -1029,10 +1225,43 @@ final class EcjCompilerEnvironment {
         // (HashMap) est arbitraire, une coupe pourrait éjecter les candidats
         // essentiels (java.lang.String) au profit de types exotiques. Le
         // parcours complet (~14k entrées) reste sub-ms.
-        for (java.util.Map.Entry<String, java.util.List<String>> e
-                : simpleNameIndex.entrySet()) {
-            if (matcher.matches(e.getKey())) {
-                out.addAll(e.getValue());
+        //
+        // ÉTAPE 3 lot C : à l'état PRÊT, le côté jars vit de l'INDEX DISQUE
+        // (recherche binaire par graine — tue le balayage W3 mesuré :
+        // 109 ms p50 à 250 jars). La graine = indexPrefix() du matcher
+        // (préfixe plain garanti, premier caractère pour le hump), en
+        // DEUX variantes de casse du premier caractère (l'index est
+        // sensible, le matcher matche insensible) ; le matcher gradué
+        // post-filtre (grades réels : EXACT/PREFIX/PREFIX_CI/HUMP).
+        // Écart documenté : les candidats SUBSTRING (grade démoté,
+        // requêtes >= 3 caractères) du côté jars ne sont plus servis à
+        // l'état PRÊT — ils sortaient du balayage intégral W3 ; côté jrt
+        // et sources (ensembles petits), ils restent servis.
+        if (indexDisquePret()) {
+            try {
+                java.util.Map<String, java.util.List<String>> graines =
+                        nomsDepuisIndexGraine(matcher, limit);
+                for (java.util.Map.Entry<String, java.util.List<String>> e
+                        : graines.entrySet()) {
+                    if (matcher.matches(e.getKey())) {
+                        out.addAll(e.getValue());
+                    }
+                }
+            } catch (Throwable t) {
+                LOG.log(Level.FINE, "findTypesByPrefix: index a levé — repli mémoire", t);
+                for (java.util.Map.Entry<String, java.util.List<String>> e
+                        : simpleNameIndex.entrySet()) {
+                    if (matcher.matches(e.getKey())) {
+                        out.addAll(e.getValue());
+                    }
+                }
+            }
+        } else {
+            for (java.util.Map.Entry<String, java.util.List<String>> e
+                    : simpleNameIndex.entrySet()) {
+                if (matcher.matches(e.getKey())) {
+                    out.addAll(e.getValue());
+                }
             }
         }
         // Aussi le jrt (desktop) si scanné.
@@ -1062,6 +1291,78 @@ final class EcjCompilerEnvironment {
         dedup.addAll(out);
         return new ArrayList<>(new ArrayList<>(dedup)
                 .subList(0, Math.min(limit, dedup.size())));
+    }
+
+    /**
+     * Grains de noms depuis l'index disque pour un préfixe EXACT (sensible
+     * à la casse) — deux variantes de casse du premier caractère
+     * (l'index trie en ordre binaire sensible, le matcher du consommateur
+     * matche insensible : « tex » doit atteindre « TextView »).
+     *
+     * <p>Fusionne les porteurs par nom simple (le premier porteur garde
+     * la préséance de classpath — l'ordre des variantes importe peu,
+     * les noms diffèrent par la casse initiale).</p>
+     */
+    private java.util.Map<String, java.util.List<String>> nomsDepuisIndex(
+            String prefixe, int limite) {
+        java.util.Map<String, java.util.List<String>> fusion = new java.util.HashMap<>();
+        for (String graine : variantesCasse(prefixe)) {
+            java.util.Map<String, java.util.List<String>> part =
+                    indexNoms.nomsParPrefixe(graine, limite);
+            if (part == null) continue;
+            for (java.util.Map.Entry<String, java.util.List<String>> e
+                    : part.entrySet()) {
+                fusion.computeIfAbsent(e.getKey(), k -> new ArrayList<>())
+                        .addAll(e.getValue());
+            }
+        }
+        return fusion;
+    }
+
+    /**
+     * Grains pour la complétion : la graine garantie du matcher
+     * ({@link EcjPrefixMatcher#indexPrefix} — préfixe plain complet,
+     * premier caractère pour une requête hump) et sa limite ADAPTÉE :
+     * une requête hump doit balayer une part suffisante de la plage du
+     * premier caractère pour ne pas perdre le rappel (les matches hump
+     * sont dispersés dans la plage triée), une requête plain n'a besoin
+     * que d'une fenêtre au-delà de la limite.
+     */
+    private java.util.Map<String, java.util.List<String>> nomsDepuisIndexGraine(
+            EcjPrefixMatcher matcher, int limit) {
+        String graine = matcher.indexPrefix();
+        int limite;
+        if (graine.isEmpty()) {
+            limite = Math.max(limit * 4, 400);
+        } else if (matcher.isHumpQuery()) {
+            limite = Math.max(limit * 20, 2000);
+        } else {
+            limite = Math.max(limit * 8, 400);
+        }
+        return nomsDepuisIndex(graine, limite);
+    }
+
+    /**
+     * Variantes de casse du premier caractère d'un préfixe (au plus
+     * deux) : {@code "tex"} → {@code ["tex", "Tex"]},
+     * {@code "Tex"} → {@code ["Tex", "tex"]}, {@code ""} →
+     * {@code [""]}. Un caractère sans casse rend une seule variante.
+     */
+    private static java.util.List<String> variantesCasse(String prefixe) {
+        java.util.List<String> variantes = new ArrayList<>(2);
+        if (prefixe == null || prefixe.isEmpty()) {
+            variantes.add("");
+            return variantes;
+        }
+        variantes.add(prefixe);
+        char c0 = prefixe.charAt(0);
+        char autre = Character.isUpperCase(c0)
+                ? Character.toLowerCase(c0)
+                : Character.toUpperCase(c0);
+        if (autre != c0) {
+            variantes.add(autre + prefixe.substring(1));
+        }
+        return variantes;
     }
 
     /**

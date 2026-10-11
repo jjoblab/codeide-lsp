@@ -44,7 +44,40 @@ public final class CompilationEnvironment {
     private volatile java.nio.file.Path gradleUserHome;
 
     /** Moteur ecj dérivé — invalidé quand le classpath change. */
-    private EcjCompilerEngine jdtEngine;
+    private EcjCompilerEngine ecjEngine;
+
+    /**
+     * Index disque branché (étape 3 lot C, ADR 0111) — {@code null} si
+     * aucun. Propagé au moteur dérivé (sa construction en tient compte) ;
+     * l'attacher invalide le moteur courant pour que le prochain
+     * {@link #jdt()} le reconstruise BRANCHÉ.
+     *
+     * <p>L'index est lié à un classpath : l'appelant (hôte de l'étape 4,
+     * tests du lot C) garantit la cohérence — il attache l'index
+     * correspondant au classpath courant et le RÉ-attache après chaque
+     * {@link #replaceAll} effectif (les entrées MODULE du
+     * {@code ClasspathInstantane} sont résolues en sources du frère par
+     * l'appelant, qui construit les listes plates passées à
+     * replaceAll).</p>
+     */
+    private volatile jo.lspjava.api.IndexNoms indexNoms;
+
+    /**
+     * Branche l'index disque (étape 3 lot C) — voir {@link #indexNoms}.
+     * Invalide le moteur courant (le prochain {@link #jdt()} le
+     * reconstruit branché). Idempotent : ré-attacher la MÊME instance
+     * ne re-invalide pas.
+     */
+    public void setIndexNoms(jo.lspjava.api.IndexNoms idx) {
+        if (idx == this.indexNoms) return;
+        this.indexNoms = idx;
+        invalidateEcjEngine();
+    }
+
+    /** L'index disque branché, ou {@code null} (transparence/tests). */
+    public jo.lspjava.api.IndexNoms indexNoms() {
+        return indexNoms;
+    }
 
     public CompilationEnvironment(List<File> sourceDirs, List<File> classpathEntries, String complianceLevel) {
         this.sourceDirs = new ArrayList<>(sourceDirs);
@@ -304,14 +337,14 @@ public final class CompilationEnvironment {
      * diagnostics, hover, complétion, renommage, formatage…
      */
     public synchronized EcjCompilerEngine jdt() {
-        if (jdtEngine == null) {
-            jdtEngine = new EcjCompilerEngine(sourceDirs, classpathEntries,
-                    complianceLevel, jdkHome);
+        if (ecjEngine == null) {
+            ecjEngine = new EcjCompilerEngine(sourceDirs, classpathEntries,
+                    complianceLevel, jdkHome, indexNoms);
             // Propage le GRADLE_USER_HOME au moteur — pour la résolution
             // des noms de paramètres binaires (recherche des -sources.jar).
-            jdtEngine.setGradleUserHome(gradleUserHome);
+            ecjEngine.setGradleUserHome(gradleUserHome);
         }
-        return jdtEngine;
+        return ecjEngine;
     }
 
     /**
@@ -324,13 +357,13 @@ public final class CompilationEnvironment {
      *         et que le moteur n'a pas été invalidé depuis.
      */
     public synchronized boolean isEcjInitialized() {
-        return jdtEngine != null;
+        return ecjEngine != null;
     }
 
     private synchronized void invalidateEcjEngine() {
-        if (jdtEngine != null) {
-            jdtEngine.dispose();
-            jdtEngine = null;
+        if (ecjEngine != null) {
+            ecjEngine.dispose();
+            ecjEngine = null;
         }
     }
 
