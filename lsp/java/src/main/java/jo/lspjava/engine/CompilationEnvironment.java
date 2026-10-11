@@ -9,17 +9,43 @@ import java.util.logging.Logger;
 import jo.lspjava.ecj.EcjCompilerEngine;
 
 /**
- * Environnement de compilation — classpath et racines sources du projet,
- * partagés par tous les services ecj de :lspjava.
+ * Environnement de compilation — UN contexte PAR MODULE Gradle (mission
+ * « LSP Java » étape 3 lot E, docs/LSP_JAVA.md §15.7) : racines sources
+ * et classpath propres à chaque module, moteur {@link EcjCompilerEngine}
+ * dérivé PAR MODULE — son verrou, ses caches (parse, localisation,
+ * fast-diagnose).
  *
  * <p>Le classpath vient du Gradle Tooling (jars des dépendances +
- * android.jar du bootclasspath) ; les racines sources des modules du projet.
- * Le {@link EcjCompilerEngine} en est dérivé paresseusement, et invalidé
- * quand le classpath change. Toute l'analyse passe par le compilateur ecj
- * in-process.</p>
+ * android.jar du bootclasspath) ; les racines sources des modules du
+ * projet. Avant le lot E, UN contexte plat servait tout le projet : une
+ * complétion du module A bloquait le diagnostic du module B (tous les
+ * services du moteur sont {@code synchronized} sur l'instance). Désormais
+ * chaque module a SON moteur — les verrous ne se chevauchent plus, et
+ * l'invalidation du contexte de A (sync Gradle de A) ne vide pas les
+ * caches de B.</p>
  *
- * <p>Toutes les méthodes mutantes sont synchronisées : les listes internes
- * peuvent être lues pendant un remplacement de contexte concurrent.</p>
+ * <p>Le contexte « défaut » (clé {@link #MODULE_DEFAUT}) conserve le
+ * comportement historique : les appels non qualifiés (
+ * {@link #replaceAll}, {@link #jdt()}…) s'y adressent — les services
+ * existants et les tests ne changent PAS (migration en deux commits
+ * verts, §15.7 point 6 : le commit (a) n'altère aucun consommateur).</p>
+ *
+ * <p>Le niveau de compliance, le JDK home et l'index disque
+ * ({@code IndexNoms}) restent PARTAGÉS entre les modules d'un même projet
+ * (une seule plateforme) : les changer invalide TOUS les moteurs. Le
+ * routage fichier → module — quelle clé passer à {@link #jdt(String)} —
+ * est un rôle de l'HÔTE (l'association fichier → module de
+ * {@code :lsp:model}, étape 4) : le moteur ne fait que porter la carte
+ * des contextes. Les segments disque de l'index restent mutualisés
+ * (ADR 0111 §2) — c'est l'ISOLATION mémoire des moteurs qui est
+ * recherchée, pas la duplication de l'index persistant.</p>
+ *
+ * <p>Contrat de verrouillage : les méthodes du contexte défaut sont
+ * synchronisées sur {@code this} (contrat historique inchangé) ; les
+ * méthodes qualifiées verrouillent le contexte DU module visé — le
+ * remplacement du module A n'attend pas celui du module B. Ordre
+ * d'acquisition interdit : un contexte ne prend JAMAIS {@code this} (les
+ * invalidations globales prennent {@code this} puis chaque contexte).</p>
  *
  * @author jo@Dev
  */
@@ -27,12 +53,85 @@ public final class CompilationEnvironment {
 
     private static final Logger LOG = Logger.getLogger("CompilationEnvironment");
 
-    private final List<File> sourceDirs;
-    private final List<File> classpathEntries;
+    /**
+     * Clé du contexte par défaut — les appels non qualifiés
+     * ({@link #jdt()}, {@link #replaceAll(List, List)}…) s'y adressent,
+     * tout comme {@link #jdt(String) jdt(null)} ou une clé vide passée à
+     * une méthode qualifiée. Les chemins Gradle réels commencent par
+     * «&nbsp;:&nbsp;» — jamais de collision.
+     */
+    public static final String MODULE_DEFAUT = "";
+
+    /**
+     * Contexte d'UN module — listes (filtrées, dédupliquées) + moteur
+     * dérivé. MUTÉ sous le verrou du contexte (ou sous {@code this} pour
+     * le contexte défaut — personne d'autre ne verrouille un contexte
+     * défaut par la voie qualifiée : la clé vide y est redirigée).
+     */
+    private static final class ContexteModule {
+        final List<File> sourceDirs = new ArrayList<>();
+        final List<File> classpathEntries = new ArrayList<>();
+
+        /** Moteur dérivé — invalidé quand les listes changent. */
+        EcjCompilerEngine moteur;
+
+        /**
+         * Remplace les listes (déjà filtrées/dédupliquées par l'appelant).
+         *
+         * @return {@code true} si au moins une liste a effectivement
+         *         changé (sinon l'appel est un no-op système — zéro
+         *         invalidation, zéro re-index)
+         */
+        boolean remplacer(List<File> dirs, List<File> jars) {
+            boolean changed = false;
+            if (dirs.size() != sourceDirs.size()
+                    || !sourceDirs.containsAll(dirs)) {
+                sourceDirs.clear();
+                sourceDirs.addAll(dirs);
+                changed = true;
+            }
+            if (jars.size() != classpathEntries.size()
+                    || !classpathEntries.containsAll(jars)) {
+                classpathEntries.clear();
+                classpathEntries.addAll(jars);
+                changed = true;
+            }
+            return changed;
+        }
+
+        /** Dispose le moteur dérivé (idempotent : null-safe). */
+        void invaliderMoteur() {
+            if (moteur != null) {
+                moteur.dispose();
+                moteur = null;
+            }
+        }
+    }
+
+    /** Niveau de compliance partagé (une plateforme par projet). */
     private final String complianceLevel;
 
-    /** Home du JDK fournissant java.* (jrt) — le JDK du terminal sur ART. */
-    private java.nio.file.Path jdkHome;
+    /**
+     * Contexte par défaut — comportement historique (appels non
+     * qualifiés). Ses listes sont gardées par {@code this}.
+     */
+    private final ContexteModule contexteDefaut = new ContexteModule();
+
+    /**
+     * Contextes par module — clé : chemin Gradle du module
+     * («&nbsp;:app&nbsp;», «&nbsp;:core:model&nbsp;»…, TRIMMÉ). Consultation
+     * sans verrou environment ({@code ConcurrentHashMap}) ; chaque
+     * contexte est muté sous SON verrou.
+     */
+    private final java.util.Map<String, ContexteModule> contextes =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Home du JDK fournissant java.* (jrt) — le JDK du terminal sur ART.
+     * Volatile : lu à la construction des moteurs de modules HORS
+     * verrou {@code this} ; écrit sous {@code this}.
+     */
+    private volatile java.nio.file.Path jdkHome;
 
     /**
      * Répertoire racine des caches Gradle ({@code ~/.gradle/caches}), là où
@@ -43,35 +142,32 @@ public final class CompilationEnvironment {
      */
     private volatile java.nio.file.Path gradleUserHome;
 
-    /** Moteur ecj dérivé — invalidé quand le classpath change. */
-    private EcjCompilerEngine ecjEngine;
-
     /**
      * Index disque branché (étape 3 lot C, ADR 0111) — {@code null} si
-     * aucun. Propagé au moteur dérivé (sa construction en tient compte) ;
-     * l'attacher invalide le moteur courant pour que le prochain
-     * {@link #jdt()} le reconstruise BRANCHÉ.
+     * aucun. Propagé à CHAQUE moteur dérivé (défaut et modules) ; les
+     * changer invalide tous les moteurs pour que le prochain
+     * {@link #jdt()} / {@link #jdt(String)} les reconstruise BRANCHÉS.
      *
      * <p>L'index est lié à un classpath : l'appelant (hôte de l'étape 4,
      * tests du lot C) garantit la cohérence — il attache l'index
      * correspondant au classpath courant et le RÉ-attache après chaque
-     * {@link #replaceAll} effectif (les entrées MODULE du
+     * remplacement effectif d'un contexte (les entrées MODULE du
      * {@code ClasspathInstantane} sont résolues en sources du frère par
      * l'appelant, qui construit les listes plates passées à
-     * replaceAll).</p>
+     * {@link #replaceAll} / {@link #remplacerContexteModule(String, List, List)}).</p>
      */
     private volatile jo.lspjava.api.IndexNoms indexNoms;
 
     /**
      * Branche l'index disque (étape 3 lot C) — voir {@link #indexNoms}.
-     * Invalide le moteur courant (le prochain {@link #jdt()} le
-     * reconstruit branché). Idempotent : ré-attacher la MÊME instance
-     * ne re-invalide pas.
+     * Invalide TOUS les moteurs (défaut et modules — chacun est construit
+     * avec CETTE référence ; lot E). Idempotent : ré-attacher la MÊME
+     * instance ne re-invalide pas.
      */
     public void setIndexNoms(jo.lspjava.api.IndexNoms idx) {
         if (idx == this.indexNoms) return;
         this.indexNoms = idx;
-        invalidateEcjEngine();
+        invaliderTousLesMoteurs();
     }
 
     /** L'index disque branché, ou {@code null} (transparence/tests). */
@@ -80,8 +176,8 @@ public final class CompilationEnvironment {
     }
 
     public CompilationEnvironment(List<File> sourceDirs, List<File> classpathEntries, String complianceLevel) {
-        this.sourceDirs = new ArrayList<>(sourceDirs);
-        this.classpathEntries = new ArrayList<>(classpathEntries);
+        contexteDefaut.sourceDirs.addAll(sourceDirs);
+        contexteDefaut.classpathEntries.addAll(classpathEntries);
         this.complianceLevel = complianceLevel;
     }
 
@@ -92,11 +188,15 @@ public final class CompilationEnvironment {
     /**
      * Écouteur de remplacement du contexte.
      *
-     * <p>Notifié après un {@link #replaceAll} effectif (listes réellement
-     * changées + moteur invalidé). Le serveur LSP s'y abonne pour relancer
-     * l'analyse des documents ouverts : les diagnostics obsolètes (classes
-     * « inexistantes » avant le sync) s'effacent seuls dès que le vrai
-     * classpath arrive — sans exiger une frappe de l'utilisateur.</p>
+     * <p>Notifié après un remplacement EFFECTIF — {@link #replaceAll}
+     * (défaut) ou {@link #remplacerContexteModule(String, List, List)}
+     * (module : listes réellement changées + moteur invalidé). Le serveur
+     * LSP s'y abonne pour relancer l'analyse des documents ouverts : les
+     * diagnostics obsolètes (classes « inexistantes » avant le sync)
+     * s'effacent seuls dès que le vrai classpath arrive — sans exiger une
+     * frappe de l'utilisateur. L'auditeur est GLOBAL (pas par module) :
+     * le live-republish actuel ré-analyse tous les documents ouverts ;
+     * l'étape 4 (routage fichier → module) affinera si nécessaire.</p>
      */
     public interface ContextListener {
         void onContextReplaced();
@@ -125,14 +225,14 @@ public final class CompilationEnvironment {
         }
     }
 
-    /** @return vue non modifiable des racines sources courantes. */
+    /** @return vue non modifiable des racines sources courantes (défaut). */
     public synchronized List<File> sourceDirs() {
-        return java.util.Collections.unmodifiableList(new ArrayList<>(sourceDirs));
+        return java.util.Collections.unmodifiableList(new ArrayList<>(contexteDefaut.sourceDirs));
     }
 
-    /** @return vue non modifiable des entrées de classpath courantes. */
+    /** @return vue non modifiable des entrées de classpath courantes (défaut). */
     public synchronized List<File> classpathEntries() {
-        return java.util.Collections.unmodifiableList(new ArrayList<>(classpathEntries));
+        return java.util.Collections.unmodifiableList(new ArrayList<>(contexteDefaut.classpathEntries));
     }
 
     public String complianceLevel() { return complianceLevel; }
@@ -151,8 +251,8 @@ public final class CompilationEnvironment {
     public java.nio.file.Path gradleUserHome() { return gradleUserHome; }
 
     public synchronized void addSourceDir(File dir) {
-        if (dir != null && dir.isDirectory() && !sourceDirs.contains(dir)) {
-            sourceDirs.add(dir);
+        if (dir != null && dir.isDirectory() && !contexteDefaut.sourceDirs.contains(dir)) {
+            contexteDefaut.sourceDirs.add(dir);
             invalidateEcjEngine();
         }
     }
@@ -179,13 +279,13 @@ public final class CompilationEnvironment {
                 }
             }
         }
-        if (filtered.size() == sourceDirs.size()
-                && sourceDirs.containsAll(filtered)) {
+        if (filtered.size() == contexteDefaut.sourceDirs.size()
+                && contexteDefaut.sourceDirs.containsAll(filtered)) {
             // Pas de changement — on évite l'invalidation coûteuse.
             return;
         }
-        sourceDirs.clear();
-        sourceDirs.addAll(filtered);
+        contexteDefaut.sourceDirs.clear();
+        contexteDefaut.sourceDirs.addAll(filtered);
         invalidateEcjEngine();
     }
 
@@ -201,8 +301,8 @@ public final class CompilationEnvironment {
         if (dirs == null || dirs.isEmpty()) return;
         boolean changed = false;
         for (File d : dirs) {
-            if (d != null && d.isDirectory() && !sourceDirs.contains(d)) {
-                sourceDirs.add(d);
+            if (d != null && d.isDirectory() && !contexteDefaut.sourceDirs.contains(d)) {
+                contexteDefaut.sourceDirs.add(d);
                 changed = true;
             }
         }
@@ -220,8 +320,8 @@ public final class CompilationEnvironment {
         if (jars == null || jars.isEmpty()) return;
         boolean changed = false;
         for (File j : jars) {
-            if (j != null && j.isFile() && !classpathEntries.contains(j)) {
-                classpathEntries.add(j);
+            if (j != null && j.isFile() && !contexteDefaut.classpathEntries.contains(j)) {
+                contexteDefaut.classpathEntries.add(j);
                 changed = true;
             }
         }
@@ -230,13 +330,15 @@ public final class CompilationEnvironment {
 
     /**
      * Définit le home du JDK fournissant l'image jrt (classes java.*) —
-     * sur Android/ART, le JDK installé par le terminal. Invalide le moteur.
+     * sur Android/ART, le JDK installé par le terminal. Invalide TOUS
+     * les moteurs (défaut et modules — chacun construit son
+     * {@code jrt-fs} depuis ce home ; lot E).
      */
     public synchronized void setJdkHome(java.nio.file.Path home) {
         if (home == null || home.equals(jdkHome)) return;
         if (!java.nio.file.Files.isRegularFile(home.resolve("lib/modules"))) return;
         this.jdkHome = home;
-        invalidateEcjEngine();
+        invaliderTousLesMoteurs();
     }
 
     /**
@@ -252,26 +354,28 @@ public final class CompilationEnvironment {
      * runtime ART, PAS vers le JDK Termux — et les noms de paramètres des
      * méthodes AndroidX restent à {@code arg0, arg1…}.</p>
      *
-     * <p>Note : n'invalide PAS le moteur ecj — le GRADLE_USER_HOME est lu
-     * paresseusement par {@link EcjBinarySourceNames}, pas par le compilateur.</p>
+     * <p>Note : n'invalide PAS les moteurs ecj (défaut ou modules) — le
+     * GRADLE_USER_HOME est lu paresseusement par
+     * {@link EcjBinarySourceNames}, pas par le compilateur.</p>
      */
     public void setGradleUserHome(java.nio.file.Path gradleUserHome) {
         this.gradleUserHome = gradleUserHome;
     }
 
-    // Note : toutes les méthodes add*/set* sont synchronisées sur this pour
-    // cohérence avec replaceAll (mutation concurrente des listes partagées).
+    // Note : toutes les méthodes add*/set* du contexte défaut sont
+    // synchronisées sur this pour cohérence avec replaceAll (mutation
+    // concurrente des listes partagées).
     public synchronized void addClasspathEntry(File entry) {
         if (entry == null || !entry.isFile()) return;
         // Garde anti-accumulation : un entry déjà présent ne re-déclenche
         // pas d'invalidation (évite re-index complet à chaque seed redondant).
-        if (classpathEntries.contains(entry)) return;
-        classpathEntries.add(entry);
+        if (contexteDefaut.classpathEntries.contains(entry)) return;
+        contexteDefaut.classpathEntries.add(entry);
         invalidateEcjEngine();
     }
 
     /**
-     * Remplacement atomique du contexte de compilation.
+     * Remplacement atomique du contexte de compilation PAR DÉFAUT.
      *
      * <p>Au lieu d'accumuler des entrées en provenance de sources hétérogènes
      * (cache, seeder fallback, résolveur léger… — accumulation qui laisse
@@ -309,18 +413,7 @@ public final class CompilationEnvironment {
         }
         boolean changed = false;
         synchronized (this) {
-            if (dirs.size() != sourceDirs.size()
-                    || !sourceDirs.containsAll(dirs)) {
-                sourceDirs.clear();
-                sourceDirs.addAll(dirs);
-                changed = true;
-            }
-            if (jars.size() != classpathEntries.size()
-                    || !classpathEntries.containsAll(jars)) {
-                classpathEntries.clear();
-                classpathEntries.addAll(jars);
-                changed = true;
-            }
+            changed = contexteDefaut.remplacer(dirs, jars);
             if (changed) {
                 invalidateEcjEngine();
             }
@@ -333,51 +426,211 @@ public final class CompilationEnvironment {
     }
 
     /**
-     * Moteur de compilateur ecj partagé — même classpath/source dirs pour
-     * diagnostics, hover, complétion, renommage, formatage…
+     * Remplacement atomique du contexte d'UN MODULE (lot E, §15.7 point 2)
+     * — sémantiques strictement identiques à {@link #replaceAll} mais
+     * bornées au module demandé :
+     *
+     * <ul>
+     *   <li>listes filtrées (chemins existants) et dédupliquées, puis
+     *       comparées aux listes courantes DU MODULE ;</li>
+     *   <li>remplacement effectif → invalidation du SEUL moteur du module
+     *       (dispose) — les autres moteurs et leurs caches vivent ;</li>
+     *   <li>sync redondant (mêmes listes) → no-op système : zéro
+     *       invalidation, zéro re-index, les auditeurs ne sont pas
+     *       notifiés ;</li>
+     *   <li>changement effectif → les {@link ContextListener} globaux
+     *       sont notifiés (délégation du mécanisme existant, hors
+     *       verrou).</li>
+     * </ul>
+     *
+     * <p>La clé {@code null} ou vide désigne le contexte défaut et est
+     * REDIRIGÉE vers {@link #replaceAll} (aucune ambiguïté : les chemins
+     * Gradle réels commencent par «&nbsp;:&nbsp;»). Un module inconnu est
+     * créé à la volée (contexte vide avant son premier sync —
+     * {@link #jdt(String)} y construit un moteur aux listes vides,
+     * exactement comme le contexte défaut au démarrage).</p>
+     *
+     * @param module      chemin Gradle du module («&nbsp;:app&nbsp;») —
+     *                    null/vide = défaut
+     * @param newSourceDirs      liste complète des racines sources du module
+     *                           (null/vide = vider) — chemins inexistants
+     *                           filtrés
+     * @param newClasspathEntries liste complète des jars du module (idem)
+     */
+    public void remplacerContexteModule(String module,
+                                        java.util.List<File> newSourceDirs,
+                                        java.util.List<File> newClasspathEntries) {
+        if (module == null || module.isBlank()) {
+            replaceAll(newSourceDirs, newClasspathEntries);
+            return;
+        }
+        java.util.List<File> dirs = new ArrayList<>();
+        if (newSourceDirs != null) {
+            for (File d : newSourceDirs) {
+                if (d != null && d.isDirectory() && !dirs.contains(d)) {
+                    dirs.add(d);
+                }
+            }
+        }
+        java.util.List<File> jars = new ArrayList<>();
+        if (newClasspathEntries != null) {
+            for (File j : newClasspathEntries) {
+                if (j != null && j.isFile() && !jars.contains(j)) {
+                    jars.add(j);
+                }
+            }
+        }
+        ContexteModule c = contextes.computeIfAbsent(module.trim(), k -> new ContexteModule());
+        boolean changed;
+        synchronized (c) {
+            changed = c.remplacer(dirs, jars);
+            if (changed) {
+                c.invaliderMoteur();
+            }
+        }
+        // Hors verrou : délégation du mécanisme d'auditeurs existant.
+        if (changed) {
+            fireContextReplaced();
+        }
+    }
+
+    /**
+     * Moteur de compilateur ecj du contexte PAR DÉFAUT — même
+     * classpath/source dirs pour diagnostics, hover, complétion,
+     * renommage, formatage…
      */
     public synchronized EcjCompilerEngine jdt() {
-        if (ecjEngine == null) {
-            ecjEngine = new EcjCompilerEngine(sourceDirs, classpathEntries,
+        if (contexteDefaut.moteur == null) {
+            contexteDefaut.moteur = new EcjCompilerEngine(
+                    contexteDefaut.sourceDirs, contexteDefaut.classpathEntries,
                     complianceLevel, jdkHome, indexNoms);
             // Propage le GRADLE_USER_HOME au moteur — pour la résolution
             // des noms de paramètres binaires (recherche des -sources.jar).
-            ecjEngine.setGradleUserHome(gradleUserHome);
+            contexteDefaut.moteur.setGradleUserHome(gradleUserHome);
         }
-        return ecjEngine;
+        return contexteDefaut.moteur;
     }
 
     /**
-     * Permet de tester si le moteur ecj a déjà été initialisé sans le
-     * construire paresseusement. Utilisé par {@code didChange} pour éviter
-     * de déclencher {@code buildJarIndex} (cold start 2-6 s) sur le thread
-     * LSP4J juste pour invalider un cache inexistant.
+     * Moteur de compilateur ecj D'UN MODULE (lot E, §15.7 point 2) —
+     * construit paresseusement depuis le contexte du module, SON verrou,
+     * SES caches (parse, localisation, fast-diagnose : l'isolation est le
+     * but — les segments disque de l'index restent mutualisés, ADR
+     * 0111 §2). Invalidé par le prochain remplacement EFFECTIF du
+     * contexte de ce module (les autres modules ne sont pas touchés).
+     *
+     * <p>Construit avec le compliance/JDK home/index PARTAGÉS de
+     * l'environnement — un module d'un même projet vit sur la même
+     * plateforme. Un module jamais configuré
+     * ({@link #remplacerContexteModule}) reçoit un contexte vide :
+     * son moteur fonctionne (comme le défaut au démarrage) et sera
+     * invalidé au premier sync du module.</p>
+     *
+     * <p>La clé {@code null} ou vide est redirigée vers {@link #jdt()}
+     * (défaut).</p>
+     *
+     * @param module chemin Gradle du module («&nbsp;:app&nbsp;»)
+     * @return le moteur du module — jamais null
+     */
+    public EcjCompilerEngine jdt(String module) {
+        if (module == null || module.isBlank()) {
+            return jdt();
+        }
+        ContexteModule c = contextes.computeIfAbsent(module.trim(), k -> new ContexteModule());
+        synchronized (c) {
+            if (c.moteur == null) {
+                c.moteur = new EcjCompilerEngine(
+                        c.sourceDirs, c.classpathEntries,
+                        complianceLevel, jdkHome, indexNoms);
+                c.moteur.setGradleUserHome(gradleUserHome);
+            }
+            return c.moteur;
+        }
+    }
+
+    /**
+     * Permet de tester si le moteur ecj du contexte DÉFAUT a déjà été
+     * initialisé sans le construire paresseusement. Utilisé par
+     * {@code didChange} pour éviter de déclencher {@code buildJarIndex}
+     * (cold start 2-6 s) sur le thread LSP4J juste pour invalider un
+     * cache inexistant.
      *
      * @return {@code true} si {@link #jdt()} a déjà été appelé au moins une fois
-     *         et que le moteur n'a pas été invalidé depuis.
+     *         et que le moteur n'a pas été invalidé depuis
      */
     public synchronized boolean isEcjInitialized() {
-        return ecjEngine != null;
+        return contexteDefaut.moteur != null;
     }
 
+    /**
+     * Variante qualifiée de {@link #isEcjInitialized()} (lot E) — le
+     * moteur du MODULE donné est-il déjà construit ? Même usage
+     * (éviter un cold start synchrone sur le thread LSP pour une pure
+     * invalidation de cache).
+     *
+     * <p>La clé {@code null} ou vide est redirigée vers
+     * {@link #isEcjInitialized()}.</p>
+     *
+     * @param module chemin Gradle du module
+     * @return {@code true} si {@link #jdt(String)} a déjà construit le
+     *         moteur de ce module et qu'il n'a pas été invalidé depuis
+     */
+    public boolean isEcjInitialized(String module) {
+        if (module == null || module.isBlank()) {
+            return isEcjInitialized();
+        }
+        ContexteModule c = contextes.get(module.trim());
+        if (c == null) return false;
+        synchronized (c) {
+            return c.moteur != null;
+        }
+    }
+
+    /** Invalidation du moteur du contexte défaut (sous verrou {@code this}). */
     private synchronized void invalidateEcjEngine() {
-        if (ecjEngine != null) {
-            ecjEngine.dispose();
-            ecjEngine = null;
+        contexteDefaut.invaliderMoteur();
+    }
+
+    /**
+     * Invalide le moteur de CHAQUE contexte (défaut + modules) —
+     * {@code setIndexNoms}/{@code setJdkHome}/{@code dispose} (champs
+     * PARTAGÉS qui entrent à la construction de tout moteur). Ordre de
+     * verrou : {@code this} → chaque contexte (jamais l'inverse).
+     */
+    private void invaliderTousLesMoteurs() {
+        synchronized (this) {
+            contexteDefaut.invaliderMoteur();
+        }
+        for (ContexteModule c : contextes.values()) {
+            synchronized (c) {
+                c.invaliderMoteur();
+            }
         }
     }
 
     /**
-     * Libère les ressources natives du moteur ecj (handles de jars ouverts,
-     * FileSystem jrt, ClassLoader du jrt-fs.jar). Appelé par
+     * Libère les ressources des moteurs ecj de TOUS les contextes (défaut
+     * + modules — lot E) : handles de jars ouverts, FileSystem jrt,
+     * ClassLoader du jrt-fs.jar. Appelé par
      * {@link jo.lspjava.lsp.JavaLanguageServer#shutdown()} — sinon le GC
      * d'ART finalise les {@code ZipFile} sans {@code close()}, ce qui
      * déclenche les warnings {@code A resource failed to call ZipFile.close}
      * du CloseGuard.
      *
-     * <p>Idempotent : appels multiples sans effet après le premier.</p>
+     * <p>Les CONTEXTES (listes par module) restent en place : un appel
+     * ultérieur à {@link #jdt()} / {@link #jdt(String)} reconstruit le
+     * moteur du contexte — comme le comportement historique du contexte
+     * défaut. Idempotent : appels multiples sans effet après le premier
+     * (pour les moteurs déjà libérés).</p>
      */
     public synchronized void dispose() {
-        invalidateEcjEngine();
+        // Ordre de verrou : this → contexte (les méthodes qualifiées ne
+        // prennent jamais `this` — aucun interblocage possible).
+        contexteDefaut.invaliderMoteur();
+        for (ContexteModule c : contextes.values()) {
+            synchronized (c) {
+                c.invaliderMoteur();
+            }
+        }
     }
 }

@@ -781,7 +781,7 @@ le dépôt GitHub est la source de vérité durable. Procédure vérifiée
    GRADLE_USER_HOME=/home/z/.gradle` puis `./gradlew --no-daemon
    :lsp:java:test :lsp:testing:test` (le wrapper télécharge Gradle
    9.7.1 ; premier passage ~2 min). **Baseline attendue : `:lsp:java`
-   287 tests, 69 skippés env-dépendants (android.jar absent du bac à
+   295 tests, 69 skippés env-dépendants (android.jar absent du bac à
    sable), `:lsp:testing` 4 (intégration moteur ↔ index, v0.96.3 —
    tournent en CI via koverVerify), `:lsp:index` 59, `:lsp:model` 35,
    `:lsp:ecj-art` 2 — 0 échec.**
@@ -791,8 +791,9 @@ le dépôt GitHub est la source de vérité durable. Procédure vérifiée
    un SDK/Gradle-cache peuplé : à exécuter ailleurs ou à installer
    (cmdline-tools + `platforms;android-34`).
 5. **État précis** : table §15.1 (lots livrés/à faire) ; le détail de
-   chaque lot livré dans §15.2–§15.6 ; le point d'entrée suivant =
-   lot E (moteur par module) — voir §15.7.
+   chaque lot livré dans §15.2–§15.7 ; le lot E est LIVRÉ (commit a,
+   §15.7) — le point d'entrée suivant = lot F2 (banc moteur — jeux de
+   données) ou lot G (D3 lots 2-4, multi-session).
 6. **Conventions de livraison** (au fil de la session) : un lot = un
    commit `feat(lsp-java): v0.X.Y - etape 3 lot …` VERSION_NAME/
    VERSION_CODE bumpés (`version.properties`), CHANGELOG en tête,
@@ -826,7 +827,7 @@ de lot (dépôt vert, tests verts).
 | B | Renommage §7 intégral — package `jo.lspjava.jdt` → `jo.lspjava.ecj`, `Jdt*` → `Ecj*` (table §7), `CompletionPrefixMatcher` → `EcjPrefixMatcher`, `BindingParseCache` → `EcjParseCache` | 0.95.0 | **livré** |
 | C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (jarDe/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT, réouverture chaude sans index mémoire | 0.96.0 | **livré** |
 | D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.1 | **livré** |
-| E | Moteur par module — verrou global → périmètre module | 0.97.0 | à faire |
+| E | Moteur par module — verrou global → périmètre module (commit a : carte de contextes + API qualifiée ; commit b : routage fichier → module, côté hôte — étape 4) | 0.97.0 | **livré (a)** |
 | F | Correctif « 0 item » NOM (contrat jamais-null, livré 0.96.2) + banc moteur (cible p95 < 100 ms — RESTE : jeux de données) | 0.96.2 / à continuer |
 | G | D3 lots 2–4 (réécritures niveau B, ~19 fichiers — à étaler sur plusieurs sessions) | ≥ 0.99.0 | à faire |
 
@@ -926,9 +927,12 @@ compris, ADR 0108 ; la suite vit AU-DESSUS des deux modules, pattern
   conservée et non dégradative (un put sans codegen ne remplace pas
   une entrée avec codegen) ; 4 tests nouveaux (cohabitation, éviction
   LRU, invalidation ciblée, non-dégradation).
-- **E — moteur par module** : un `EcjCompilerEngine` PAR module (son
-  classpath, son verrou) dans `CompilationEnvironment` ; les
-  complétions du module A ne bloquent plus le module B.
+- **E — moteur par module (v0.97.0, commit a livré)** : un
+  `EcjCompilerEngine` PAR module (son classpath, son verrou, ses
+  caches) dans `CompilationEnvironment` ; les complétions du module A
+  ne bloquent plus le module B. Le commit b (routage fichier → module
+  dans `JavaLanguageServer`) exige l'association fichier → module de
+  `:lsp:model` branchée par l'hôte — étape 4 : voir §15.7.
 - **F — « 0 item » NOM (v0.96.2, 1re partie livrée) + banc moteur
   (reste)** : le symptôme était le CONTRAT — `complete()` rendait
   `null` sur les contextes non capturés par conception (nom de
@@ -1012,7 +1016,7 @@ compris, ADR 0108 ; la suite vit AU-DESSUS des deux modules, pattern
   complétion/paquets/résolution/isLikelyUsable OK) ; transition
   (négatif mémorisé → purge → jarDe appelé, classes connues OK).
 
-### 15.7 Lot E — moteur par module (à faire, design arrêté)
+### 15.7 Lot E — moteur par module (commit a LIVRÉ v0.97.0 ; commit b reporté à l'étape 4)
 
 Objectif (§10) : le verrou global → périmètre MODULE. État actuel :
 `CompilationEnvironment` porte UN contexte plat (sourceDirs +
@@ -1046,6 +1050,50 @@ Design retenu :
    B — l'un ne bloque plus l'autre), isolation des caches
    (invalidation de A ne vide pas B), reprise du test existant
    EcjCompilerEngineConcurrencyTest en version bi-module.
+
+**Livraison (commit a, v0.97.0)** — design appliqué avec deux écarts
+documentés :
+
+- **État interne** : `ContexteModule` privé (sourceDirs,
+  classpathEntries, moteur) ; carte `ConcurrentHashMap` clé = chemin
+  Gradle TRIMMÉ ; le contexte défaut est un champ dédié (PAS dans la
+  carte) gardé par `this` — les méthodes qualifiées à clé vide/null y
+  sont REDIRIGÉES (aucune ambiguïté : les chemins Gradle commencent
+  par `:`). Ordre de verrou : `this` → contexte, jamais l'inverse.
+- **Écart 1 (compliance/jdkHome/IndexNoms partagés)** : le design
+  listait ces trois champs PAR contexte ; ils vivent au niveau
+  ENVIRONNEMENT (une seule plateforme par projet — tous les moteurs
+  sont construits avec) et les changer invalide TOUS les moteurs
+  (test `attacherLIndexInvalideDefautEtModules`). Un futur besoin
+  par module n'exige que de descendre ces champs dans
+  `ContexteModule` — aucune surface publique ne bougerait.
+- **Écart 2 (auditeurs globaux)** : « délégation du ContextListener
+  par module » = le mécanisme EXISTANT (liste globale, notification
+  hors verrou) est déclenché aussi par les remplacements de modules —
+  le live-republish ré-analyse tous les documents ouverts ; un
+  auditeur PAR module n'a pas de consommateur avant l'étape 4 (le
+  routage y décidera).
+- **Commit b NON branchable (arrêt au commit a, conformément au
+  design point 6)** : `JavaLanguageServer` reste mono-workspace à
+  contexte plat (workspaceFolders lu mais non exploité — note en
+  creux dans `initialize()`), et l'association fichier → module
+  (`AssociationFichier` de `:lsp:model`) arrive avec l'HÔTE de
+  l'étape 4. L'API qualifiée (`remplacerContexteModule`,
+  `jdt(module)`, `isEcjInitialized(module)`) est prête à être
+  consommée : le commit b sera l'affaire de l'étape 4, avec le
+  branchement de production (adaptateur `:lsp:host`).
+- **Tests (8, `MoteurParModuleTest`)** : verrou par moteur
+  (déterministe : monitor de A TENU pendant que le diagnostic de B
+  passe — avec un moteur unique, le délai expirerait) ; isolation des
+  caches (re-sync de A : moteur de A reconstruit cache vide, moteur
+  de B MÊME instance cache rempli) ; no-op système d'un sync
+  redondant (même moteur, zéro notification) ; remplacement effectif
+  (nouveau moteur + exactement une notification) ; invalidation
+  globale à l'attache d'index (+ idempotence conservée) ; `dispose()`
+  libère défaut ET modules (reconstruction possible après) ;
+  redirection clé vide/null ; mix concurrent bi-module (4+4 threads,
+  8×12 itérations diagnostics/résolutions/hovers — zéro exception,
+  cohérence par moteur). Baseline : `:lsp:java` 295 tests.
 
 ### 15.8 Lot F2 — banc moteur (à faire)
 
