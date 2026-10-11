@@ -761,6 +761,49 @@ et étape 5 (validation appareil §11.2).
 
 ## 15. Étape 3 — intégration du moteur (v0.94.0+)
 
+### 15.0 Reprendre l'étape 3 dans une session nouvelle (mode d'emploi)
+
+L'environnement de l'agent peut être RÉINITIALIÉ entre deux sessions :
+le dépôt GitHub est la source de vérité durable. Procédure vérifiée
+(session du 2026-10-11, lots A→F1 livrés ainsi) :
+
+1. **Cloner** : `git clone https://<token>@github.com/jjoblab/CodeIDE.git`
+   (token fourni par le propriétaire — révoqué après les missions) ;
+   `git log --oneline -8` doit montrer les lots livrés
+   (`v0.94.0` shims D3 lot 1, `v0.95.0` renommage §7, `v0.96.0`
+   branchement index lot C, `v0.96.1` parse cache lot D, `v0.96.2`
+   correctif 0-item lot F1).
+2. **JDK** : le bac à sable n'a qu'un JRE — télécharger Temurin 21
+   dans `/home/z/jdks/` (le `env.sh` du dépôt pointe
+   `/home/z/jdks/jdk-21.0.12.1+1`) :
+   `curl -sL -o jdk21.tar.gz "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse" && tar xzf jdk21.tar.gz`.
+3. **Gradle** : `export JAVA_HOME=/home/z/jdks/jdk-21.0.12.1+1
+   GRADLE_USER_HOME=/home/z/.gradle` puis `./gradlew --no-daemon
+   :lsp:java:test` (le wrapper télécharge Gradle 9.7.1 ; premier
+   passage ~2 min). **Baseline attendue : `:lsp:java` 291 tests,
+   69 skippés env-dépendants (android.jar absent du bac à sable),
+   `:lsp:index` 59, `:lsp:model` 35, `:lsp:ecj-art` 2 — 0 échec.**
+4. **Android SDK : absent du bac à sable** — les tests android.jar se
+   skippent proprement (Assumptions) ; le banc moteur (lot F2) et la
+   recette des jeux (`scripts/lsp-index/construire-jeux.sh`) exigent
+   un SDK/Gradle-cache peuplé : à exécuter ailleurs ou à installer
+   (cmdline-tools + `platforms;android-34`).
+5. **État précis** : table §15.1 (lots livrés/à faire) ; le détail de
+   chaque lot livré dans §15.2–§15.6 ; le point d'entrée suivant =
+   lot E (moteur par module) — voir §15.7.
+6. **Conventions de livraison** (au fil de la session) : un lot = un
+   commit `feat(lsp-java): v0.X.Y - etape 3 lot …` VERSION_NAME/
+   VERSION_CODE bumpés (`version.properties`), CHANGELOG en tête,
+   entrée AGENTS.md (`- v0.X.Y : **mission « LSP Java » étape 3 (lot
+   …)**` insérée AU-DESSUS de l'entrée précédente), LSP_JAVA.md
+   §15.1 mis à jour (statut **livré**), tests verts AVANT commit,
+   push immédiat (le travail non poussé est perdu au reset).
+7. **Règles du dépôt** : lire AGENTS.md (règles impératives, style
+   javadoc français, « zéro déglutition silencieuse », JUL) ; le
+   module vendored est exempté detekt/spotless (ADR 0108) ; ne JAMAIS
+   reformater les sources vendored.
+
+
 > **Mission** : prompt 2 §7.1/§7.3 ; plan §10. Livrables : le traitement
 > D3 par lots (§5.3) + renommage §7 au fil des lots ; l'environnement de
 > noms du moteur adossé à `:lsp:index` (complétion par préfixe — tue
@@ -962,3 +1005,49 @@ d'intégration Java dans `:lsp:java`, `testImplementation(project(
   membresStatiques) ; réouverture chaude (0 entrée mémoire,
   complétion/paquets/résolution/isLikelyUsable OK) ; transition
   (négatif mémorisé → purge → jarDe appelé, classes connues OK).
+
+### 15.7 Lot E — moteur par module (à faire, design arrêté)
+
+Objectif (§10) : le verrou global → périmètre MODULE. État actuel :
+`CompilationEnvironment` porte UN contexte plat (sourceDirs +
+classpath) et UN `EcjCompilerEngine` dérivé (tous ses services
+`synchronized` — UNE complétion du module A bloque le module B).
+
+Design retenu :
+1. `CompilationEnvironment` porte une map de contextes PAR module —
+   clé : chemin Gradle du module (`:app`) — chaque contexte =
+   (sourceDirs, classpathEntries, compliance, jdkHome, IndexNoms) ;
+   le contexte par défaut (comportement actuel) reste pour les
+   appels non qualifiés (compat, tests).
+2. NOUVELLE API : `remplacerContexteModule(String module, List<File>
+   sources, List<File> classpath)` (replaceAll par module, mêmes
+   sémantiques d'invalidation) + `jdt(String module)` + délégation du
+   `ContextListener` existant par module.
+3. Le fichier → module : la future `AssociationFichier` de
+   `:lsp:model` (étape 1) au niveau hôte (étape 4) ; côté moteur, le
+   paramètre module est explicite.
+4. Chaque moteur garde SES caches (parse, locate, fast-diagnose) :
+   l'isolation est le but (les segments disque restent mutualisés —
+   ADR 0111 §2).
+5. `dispose()` de CompilationEnvironment dispose TOUS les moteurs.
+6. Migration en DEUX commits verts : (a) introduction de la map +
+   API qualifiée, le contexte unique devient le module "défaut"
+   (aucun changement pour les consommateurs) ; (b) JavaLanguageServer
+   route par module (nécessite l'entrée module côté LSP — à coordonner
+   avec l'étape 4 si l'association fichier→module n'est pas encore
+   branchable : dans ce cas arrêter au commit (a) et documenter).
+7. Tests : concurrence inter-modules (complétion A pendant diagnose
+   B — l'un ne bloque plus l'autre), isolation des caches
+   (invalidation de A ne vide pas B), reprise du test existant
+   EcjCompilerEngineConcurrencyTest en version bi-module.
+
+### 15.8 Lot F2 — banc moteur (à faire)
+
+Port du banc d'étude (BancMesure.java — hors dépôt) dans le dépôt :
+source set `bench` de `:lsp:java` (JavaExec comme `:lsp:index:bench`,
+JVM `-Xmx2g -XX:+UseSerialGC`), scénario NOM sur les jeux §12
+(recette `scripts/lsp-index/construire-jeux.sh`) — mesurer complétion
+types p50/p95 AVANT (moteur sans index) vs APRÈS (branché, lot C) :
+la cible §9 est p95 < 100 ms. Mesurer aussi diagnose chaud et le tas.
+Contrainte : les jeux exigent android.jar/Gradle-cache (absents du
+bac à sable — cf. §15.0.4) ; exécuter ailleurs ou installer le SDK.
