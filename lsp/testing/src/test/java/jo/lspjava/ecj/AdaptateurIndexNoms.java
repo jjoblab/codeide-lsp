@@ -80,15 +80,28 @@ final class AdaptateurIndexNoms implements IndexNoms {
      * Construit l'index des JARS donnés (séquentiel, stockage temporaire)
      * et rend l'adaptateur IMMÉDIATEMENT — la construction vit en
      * arrière-plan, {@link #estPret()} passe à true à la transition.
+     *
+     * <p>Budget de cache par DÉFAUT ({@code 32 Mio}) — l'overload
+     * {@link #enConstruction(Path, List, long)} permet au banc de le
+     * régler (l'ensemble de travail décodé d'un corpus LOURD dépasse le
+     * budget — l'éviction LRU fait alors re-décoder à chaque requête
+     * globale ; le banc documente l'arbitrage).</p>
      */
     static AdaptateurIndexNoms enConstruction(Path stockage,
                                                List<Path> jars) {
+        return enConstruction(stockage, jars, 32L * 1024 * 1024);
+    }
+
+    /** Variante à budget de cache explicite (banc lot F2). */
+    static AdaptateurIndexNoms enConstruction(Path stockage,
+                                               List<Path> jars,
+                                               long budgetCacheOctets) {
         // Racine des coroutines de test — annulable depuis fermer().
         Job racine = JobKt.Job(null);
         CoroutineScope scope = CoroutineScopeKtHelper.pourTests(racine);
         ServiceIndexDisque service = new ServiceIndexDisque(
                 stockage.toFile(), scope, Dispatchers.getIO(),
-                1, 32L * 1024 * 1024);
+                1, budgetCacheOctets);
         List<EntreeClasspathInstantane> entrees = new ArrayList<>(jars.size());
         for (Path jar : jars) {
             File f = jar.toFile();
@@ -131,6 +144,15 @@ final class AdaptateurIndexNoms implements IndexNoms {
         }
         throw new AssertionError("index non construit à temps : "
                 + vue.getEtat().getValue());
+    }
+
+    /**
+     * État courant de la vue (phase, progression, avertissements) —
+     * exclusif au banc ({@code F2}) : diagnostic honnête quand la
+     * construction ne termine pas PRÊT.
+     */
+    jo.codeide.lsp.index.EtatIndex etat() {
+        return vue.getEtat().getValue();
     }
 
     private void surveiller() {

@@ -9,8 +9,13 @@ package jo.codeide.lsp.index
  * budget seul reste admis (un cache vide qui refuse TOUT ne sert à
  * rien : il évince alors tous les autres).
  *
- * L'accès aux segments rafraîchit leur horodatage disque (LRU du
- * nettoyage, [EntrepotSegments.toucher]).
+ * Le rafraîchissement d'horodatage DISQUE (LRU du nettoyage,
+ * [EntrepotSegments.toucher]) est AMORTI : il n'arrive au plus qu'une
+ * fois par segment et par [SEUIL_TOUCHER_MS] — un toucher à CHAQUE
+ * accès faisait une écriture disque par segment visité, et les requêtes
+ * GLOBALES (paquets, localisation négative) visitent TOUS les segments :
+ * 130–300 ms par requête à 250 jars, mesuré par le banc moteur (lot F2,
+ * jeu lourd) — le chemin de lecture ne doit JAMAIS écrire.
  */
 internal class CacheSegments(
     private val budgetOctets: Long,
@@ -21,6 +26,9 @@ internal class CacheSegments(
 
     /** Empreintes refusées à la lecture (corruption — pas de re-lecture). */
     private val refuses = mutableSetOf<String>()
+
+    /** Dernier rafraîchissement DISQUE par empreinte (amortissement). */
+    private val derniersTouchers = HashMap<String, Long>()
 
     /** Octets actuellement comptés dans le budget. */
     @get:Synchronized
@@ -47,7 +55,7 @@ internal class CacheSegments(
         surCorruption: (empreinte: String, raison: String) -> Unit,
     ): SegmentDecode? {
         lru[empreinte]?.let {
-            entrepot.toucher(empreinte)
+            toucherAmorti(empreinte)
             return it
         }
         val empreinteDejaRefusee = refuses.contains(empreinte)
@@ -70,8 +78,22 @@ internal class CacheSegments(
                 }
             }
         inserer(empreinte, segment)
-        entrepot.toucher(empreinte)
+        toucherAmorti(empreinte)
         return segment
+    }
+
+    /**
+     * Rafraîchit l'horodatage disque au plus une fois par segment et par
+     * [SEUIL_TOUCHER_MS] — l'ordre LRU MÉMOIRE vit dans `lru` (accès),
+     * le disque n'a pas besoin de suivre chaque requête.
+     */
+    private fun toucherAmorti(empreinte: String) {
+        val maintenant = System.currentTimeMillis()
+        val dernier = derniersTouchers[empreinte] ?: 0L
+        if (maintenant - dernier >= SEUIL_TOUCHER_MS) {
+            entrepot.toucher(empreinte)
+            derniersTouchers[empreinte] = maintenant
+        }
     }
 
     /** Invalide le refus mémorisé d'un segment (après reconstruction). */
@@ -79,6 +101,7 @@ internal class CacheSegments(
     internal fun invaliderRefus(empreinte: String) {
         refuses.remove(empreinte)
         lru.remove(empreinte)
+        derniersTouchers.remove(empreinte)
     }
 
     /** Vide le cache (fin de vie, transition d'état). */
@@ -86,6 +109,7 @@ internal class CacheSegments(
     internal fun vider() {
         lru.clear()
         refuses.clear()
+        derniersTouchers.clear()
     }
 
     /** Insère un segment en respectant le budget (évicition LRU). */
@@ -116,5 +140,8 @@ internal class CacheSegments(
     private companion object {
         private const val CAPACITE_INITIALE: Int = 64
         private const val FACTEUR_CHARGE: Float = 0.75f
+
+        /** Amortissement du rafraîchissement disque (10 min). */
+        private const val SEUIL_TOUCHER_MS: Long = 10 * 60 * 1000L
     }
 }

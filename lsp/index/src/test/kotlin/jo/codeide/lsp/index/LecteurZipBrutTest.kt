@@ -73,4 +73,51 @@ class LecteurZipBrutTest {
             }
         assertTrue(erreur != null)
     }
+
+    @Test
+    fun `un jar VIDE (classes-jar d'AAR wrapper) est légitime`() {
+        // 22 octets d'EOCD, 0 entrée — le classes.jar d'un AAR sans code
+        // (leakcanary-android 2.14, constaté par le banc lot F2 sur le jeu
+        // lourd) : ce jar N'EST PAS corrompu, il s'ouvre avec zéro entrée
+        // (régression : « répertoire central hors bornes » faussait la
+        // phase finale en PARTIEL — jamais PRÊT).
+        val octets =
+            byteArrayOf(
+                0x50,
+                0x4b,
+                0x05,
+                0x06,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+            )
+        lecteur.depuisOctets(octets).use { poignee ->
+            assertEquals(0, poignee.noms.size)
+            assertNull(poignee.lire("quoi/que/ce/soit.class"))
+        }
+
+        // Même contrat côté fichier (jar extrait sur disque par la
+        // normalisation du banc/production).
+        val fichier = File.createTempFile("lsp-index", ".jar")
+        fichier.deleteOnExit()
+        fichier.writeBytes(octets)
+        lecteur.ouvrir(fichier).use { poignee ->
+            assertEquals(0, poignee.noms.size)
+        }
+    }
 }

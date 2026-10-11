@@ -782,18 +782,25 @@ le dépôt GitHub est la source de vérité durable. Procédure vérifiée
    :lsp:java:test :lsp:testing:test` (le wrapper télécharge Gradle
    9.7.1 ; premier passage ~2 min). **Baseline attendue : `:lsp:java`
    295 tests, 69 skippés env-dépendants (android.jar absent du bac à
-   sable), `:lsp:testing` 4 (intégration moteur ↔ index, v0.96.3 —
-   tournent en CI via koverVerify), `:lsp:index` 59, `:lsp:model` 35,
-   `:lsp:ecj-art` 2 — 0 échec.**
-4. **Android SDK : absent du bac à sable** — les tests android.jar se
-   skippent proprement (Assumptions) ; le banc moteur (lot F2) et la
-   recette des jeux (`scripts/lsp-index/construire-jeux.sh`) exigent
-   un SDK/Gradle-cache peuplé : à exécuter ailleurs ou à installer
-   (cmdline-tools + `platforms;android-34`).
+   sable), `:lsp:testing` 12 (4 intégration moteur ↔ index v0.96.3 +
+   8 utilitaires du banc v0.98.0 — tournent en CI via koverVerify),
+   `:lsp:index` 60 (dont régression « jar vide » v0.98.0), `:lsp:model`
+   35, `:lsp:ecj-art` 2 — 0 échec.**
+4. **Android SDK** : installé dans ce bac à sable à
+   `/home/z/android-sdk` (cmdline-tools + `platforms;android-37.2` +
+   `build-tools;36.0.0` via `scripts/setup-env.sh` — après un reset,
+   le relancer avec `JDK_HOME_CIBLE=/home/z/jdks/jdk-21.0.12.1+1`).
+   Le cache Gradle est peuplé par `:app:assembleDebug` ; les jeux du
+   banc moteur se reconstruisent par
+   `scripts/lsp-index/construire-jeux.sh` (recette versionnée §12),
+   puis `./gradlew :lsp:testing:bench` (§15.8). Les tests android.jar
+   restent skippés proprement sans SDK (Assumptions).
 5. **État précis** : table §15.1 (lots livrés/à faire) ; le détail de
-   chaque lot livré dans §15.2–§15.7 ; le lot E est LIVRÉ (commit a,
-   §15.7) — le point d'entrée suivant = lot F2 (banc moteur — jeux de
-   données) ou lot G (D3 lots 2-4, multi-session).
+   chaque lot livré dans §15.2–§15.8 ; les lots E (moteur par module)
+   et F (correctif + banc) sont LIVRÉS — le point d'entrée suivant =
+   **étape 4** (hôte `:lsp:host` : `SessionLsp`, branchement cel-lsp,
+   budget d'index dérivé du modèle — cf. §15.8 point 3) ou lot G
+   (D3 lots 2–4, multi-session).
 6. **Conventions de livraison** (au fil de la session) : un lot = un
    commit `feat(lsp-java): v0.X.Y - etape 3 lot …` VERSION_NAME/
    VERSION_CODE bumpés (`version.properties`), CHANGELOG en tête,
@@ -828,7 +835,7 @@ de lot (dépôt vert, tests verts).
 | C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (jarDe/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT, réouverture chaude sans index mémoire | 0.96.0 | **livré** |
 | D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.1 | **livré** |
 | E | Moteur par module — verrou global → périmètre module (commit a : carte de contextes + API qualifiée ; commit b : routage fichier → module, côté hôte — étape 4) | 0.97.0 | **livré (a)** |
-| F | Correctif « 0 item » NOM (contrat jamais-null, livré 0.96.2) + banc moteur (cible p95 < 100 ms — RESTE : jeux de données) | 0.96.2 / à continuer |
+| F | Correctif « 0 item » NOM (contrat jamais-null, 0.96.2) + banc moteur livré : cible p95 < 100 ms TENUE (27,7 ms lourd APRÈS) + 3 correctifs d'index découverts par le banc (§15.8) | 0.96.2 / 0.98.0 | **livré** |
 | G | D3 lots 2–4 (réécritures niveau B, ~19 fichiers — à étaler sur plusieurs sessions) | ≥ 0.99.0 | à faire |
 
 **Écart assumé et documenté** (lot B) : le plan §7 prévoyait le renommage
@@ -933,18 +940,22 @@ compris, ADR 0108 ; la suite vit AU-DESSUS des deux modules, pattern
   ne bloquent plus le module B. Le commit b (routage fichier → module
   dans `JavaLanguageServer`) exige l'association fichier → module de
   `:lsp:model` branchée par l'hôte — étape 4 : voir §15.7.
-- **F — « 0 item » NOM (v0.96.2, 1re partie livrée) + banc moteur
-  (reste)** : le symptôme était le CONTRAT — `complete()` rendait
-  `null` sur les contextes non capturés par conception (nom de
+- **F — « 0 item » NOM (v0.96.2, livré) + banc moteur (v0.98.0,
+  LIVRÉ — §15.8)** : le symptôme était le CONTRAT — `complete()`
+  rendait `null` sur les contextes non capturés par conception (nom de
   déclaration, annotation en recovery, position après `[]`), null que
   les appelants avalaient en NPE (« 0 items » au banc). Corrigé :
   liste vide honnête partout (6 tests de non-régression sur jar
-  compilé au vol). RESTE : port du banc moteur (latences NOM p50/p95
-  avant/après index — cible p95 < 100 ms §9) — requiert les jeux de
-  données (`scripts/lsp-index/construire-jeux.sh` — Android SDK ou
-  cache Gradle peuplé) indisponibles dans le bac à sable de cette
-  session ; à exécuter en environnement outillé, avec le protocole
-  §11.2 sur appareil à l'étape 5.
+  compilé au vol). Le banc moteur est PORTÉ (`BancMoteur` +
+  `:lsp:testing:bench`, jeux reconstitués — SDK installé par
+  `scripts/setup-env.sh`, cache peuplé par `:app:assembleDebug`) et
+  EXÉCUTÉ : cible §9 p95 < 100 ms TENUE (27,7 ms lourd APRÈS vs
+  38,9 AVANT, même machine/corpus) ; il a en outre découvert TROIS
+  défauts d'index corrigés dans le lot (jar vide d'AAR wrapper refusé
+  → PARTIEL permanent ; écriture mtime à chaque hit de cache ;
+  budget plat 30 Mo ≠ cible par jar → thrash mesuré — le banc passe
+  un budget proportionnel, l'hôte étape 4 dérivera le budget du
+  modèle). Protocole appareil (§11.2) : étape 5.
 - **G — D3 lots 2–4** : ~19 fichiers niveau B à réécrire depuis
   spécification (§5.3), à étaler sur plusieurs sessions ; lot 4
   (ecj-art) selon l'option retenue par le propriétaire (D3 reste
@@ -1095,13 +1106,93 @@ documentés :
   8×12 itérations diagnostics/résolutions/hovers — zéro exception,
   cohérence par moteur). Baseline : `:lsp:java` 295 tests.
 
-### 15.8 Lot F2 — banc moteur (à faire)
+### 15.8 Lot F2 — banc moteur (v0.98.0, livré)
 
-Port du banc d'étude (BancMesure.java — hors dépôt) dans le dépôt :
-source set `bench` de `:lsp:java` (JavaExec comme `:lsp:index:bench`,
-JVM `-Xmx2g -XX:+UseSerialGC`), scénario NOM sur les jeux §12
-(recette `scripts/lsp-index/construire-jeux.sh`) — mesurer complétion
-types p50/p95 AVANT (moteur sans index) vs APRÈS (branché, lot C) :
-la cible §9 est p95 < 100 ms. Mesurer aussi diagnose chaud et le tas.
-Contrainte : les jeux exigent android.jar/Gradle-cache (absents du
-bac à sable — cf. §15.0.4) ; exécuter ailleurs ou installer le SDK.
+Port du banc d'étude dans le dépôt : `BancMoteur.java` vit dans le
+source set de TEST de `:lsp:testing` (paquet `jo.lspjava.ecj` — accès
+package-private à `AdaptateurIndexNoms`), tâche
+`:lsp:testing:bench` (JVM séparée par jeu × mode, `-Xmx2g
+-XX:+UseSerialGC`, ProcessBuilder, jamais dans la chaîne de
+vérification ; réglages `-PbancJeux/-PbancModes/-PbancIterations`).
+Scénarios recréés d'après §4.2/§11.1 (le `BancMesure.java` d'étude
+était hors dépôt) : complétion NOM (types, préfixe `B` en position
+d'instruction — la métrique §9), complétion membre, diagnose premier
+appel / memo / édition confinée, tas, poignées, dispose, index disque
+froid + reprise. Protocole : 30 itérations, 3 échauffements (la cible
+porte sur le régime chaud ; le premier appel est mesuré séparément) ;
+corpus NORMALISÉ (AAR → `classes.jar` extrait — les deux modes voient
+les mêmes jars, la production normalise à la résolution v0.92) ;
+clés de segments par empreinte de contenu.
+
+**Écart au design initial** : le banc vit dans `:lsp:testing` et non
+dans un source set `bench` de `:lsp:java` (prévu §15.8 d'origine) —
+la leçon v0.96.3 s'applique (section 5.2/ADR 0108 : le module vendored
+ne référence AUCUN module interne, banc compris) ; `:lsp:testing` est
+le point de contact sanctionné moteur ↔ index.
+
+**Jeux** (recette `scripts/lsp-index/construire-jeux.sh`, SDK
+android-37.2 installé par `scripts/setup-env.sh`, cache peuplé par
+`:app:assembleDebug`) : petit = 9 jars uniques (android.jar + androidx,
+dédupliqué), moyen = 31 jars uniques (classpath debug réel de `:app`,
+v0.97.0 — l'étude comptait 73 entrées avec doublons de chemins),
+lourd = 248 jars uniques (250 artefacts du cache, 125 AAR normalisés).
+
+**Résultats** (sandbox 2 cœurs, JVM 2g/SerialGC — ordres de grandeur,
+pas des constantes ; la comparaison significative est AVANT/APRÈS à
+corpus et machine ÉGAUX) :
+
+| Métrique | petit AV | petit AP | moyen AV | moyen AP | lourd AV | lourd AP |
+|---|---:|---:|---:|---:|---:|---:|
+| Index mémoire / disque froid (ms) | 186 / — | — / 764 | 250 / — | — / 741 | 1 506 / — | — / 9 571 |
+| Reprise disque (ms) | — | 60 | — | 27 | — | 369 |
+| Premier diagnose (ms) | 623 | 757 | 646 | 900 | 622 | 986 |
+| Diagnose édité p95 (ms) | 33 | 36 | 33 | 33 | 10 | 28 |
+| **Complétion NOM p50 (ms)** | 3,7 | 3,9 | 2,5 | 3,1 | 11,8 | **6,1** |
+| **Complétion NOM p95 (ms)** | 25,3 | 28,1 | 7,7 | 24,8 | 38,9 | **27,7** |
+| Complétion membre p95 (ms) | 3,4 | 8,2 | 7,9 | 11,4 | 37,2 | 27,6 |
+| Tas stable / après dispose (Mo) | 23 / 12 | 23 / 13 | 24 / 12 | 20 / 13 | 141 / 12 | 100 / 13 |
+
+Lecture contre la cible §9 (complétion types p95 < 100 ms) :
+**TENUE sur les trois jeux** (maximum observé 38,9 ms AVANT lourd).
+À l'échelle, l'APRÈS gagne partout (p95 27,7 vs 38,9, p50 6,1 vs
+11,8, tas 100 vs 141 Mo — plus de snapshots par jar) ; sur petit et
+moyen, l'AVANT reste plus rapide (corpus minuscule : le surcoût par
+requête de l'index ne se rembourse pas) — l'index disque paie son
+froid par la REPRISE (60/27/369 ms) et le tas. Le protocole appareil
+(§11.2) reste pour l'étape 5.
+
+**Trois découvertes du banc — corrigées dans ce lot** :
+
+1. **Jar vide légitime refusé** (`:lsp:index`) : le `classes.jar` d'un
+   AAR « wrapper » sans code (leakcanary-android 2.14, 22 octets
+   d'EOCD) était rejeté « répertoire central hors bornes » par
+   `LecteurZipBrut` → la construction terminait PARTIEL, jamais PRÊT
+   (repli permanent en production). Corrigé : 0 entrée = jar valide,
+   segment vide (test `un jar VIDE (classes-jar d'AAR wrapper) est
+   légitime`).
+2. **Écriture disque à chaque hit de cache** (`:lsp:index`) :
+   `CacheSegments.obtenir` rafraîchissait le mtime du segment À
+   CHAQUE accès (LRU du nettoyage des orphelins) — les requêtes
+   globales (paquets, localisation négative) visitent tous les
+   segments : écriture sur le chemin de LECTURE, +130–300 ms par
+   requête à 248 segments. Corrigé : rafraîchissement AMORTI (au plus
+   une fois par segment et 10 min — l'ordre LRU mémoire vit dans la
+   carte).
+3. **Budget de cache PLAT vs cible PAR JAR** (`:lsp:index`, mesuré) :
+   à 248 segments l'ensemble de travail décodé (~61 Mo) dépasse le
+   budget par défaut (30 Mo) — l'éviction LRU fait re-décoder à
+   CHAQUE requête globale : complétion p95 **452–536 ms**, diagnose
+   édité p95 **523–593 ms** (le compromis « p50 124 ms » documenté
+   ADR 0111 §8.4, ici aggravé par la suppression du toucher-disque).
+   Résident (budget proportionnel ~512 Kio/jar), les mêmes requêtes
+   tiennent en millisecondes. Le banc APRÈS passe donc un budget
+   PROPORTIONNEL au corpus (plancher 32 Mio) — la cible §9 « tas
+   < 30 Mo / 100 jars » EST un budget par jar ; **l'hôte de
+   production (étape 4) dérivera le budget du modèle** (arbitrage
+   documenté, la refonte par-structure du cache reste une évolution
+   possible).
+
+Observation de fin de vie : le champ `indexNoms` du moteur est FINAL
+— `dispose()` ne peut pas le détacher ; l'hôte doit lâcher moteur ET
+index (le banc mesure le dispose références mortes : 12–13 Mo partout,
+poignées 45–47 — contrat « 0 ressource orpheline » tenu).

@@ -163,7 +163,12 @@ internal class LecteurZipBrut {
                     ?: throw IOException("EOCD introuvable (zip tronqué ou non-zip)")
             val nbEntrees = OctetsIndex.u16Petit(fenetre, positionEocd + EOCD_NB_ENTREES)
             var decalageCd = OctetsIndex.u32Petit(fenetre, positionEocd + EOCD_DECALAGE_CD).toLong()
-            if (decalageCd + TAILLE_ENTREE_CD > fin) {
+            // Jar VIDE (0 entrée, 22 octets d'EOCD) : légitime — le
+            // classes.jar d'un AAR « wrapper » sans code (leakcanary
+            // 2.14, constaté par le banc lot F2 sur le jeu lourd). Aucune
+            // entrée à lire, le segment sera simplement vide — PAS une
+            // corruption.
+            if (nbEntrees > 0 && decalageCd + TAILLE_ENTREE_CD > fin) {
                 throw IOException("répertoire central hors bornes")
             }
             for (i in 0 until nbEntrees) {
