@@ -1,0 +1,505 @@
+# LSP Java — étude de l'étape 0 (v0.91.0)
+
+> **Mission** : prompt 2 « LSP Java : modèle de projet, indexation des
+> classpaths/sourcesets et intégration ». Ce document est le livrable
+> d'analyse de l'étape 0 : vérification des constats W1–W10 **avec
+> mesures**, écarts constatés sur les hypothèses du prompt, audit de
+> provenance reconstitué, décisions D1–D5 (ADR 0108–0112), plan de
+> renommage, étude d'extractibilité, cibles recalées et plan ajusté.
+> **Aucun code de production** n'a été écrit pour cette étape.
+
+---
+
+## 1. Rappel de l'objectif
+
+Doter CodeIDE d'un serveur LSP Java fiable et rapide **sur l'appareil**,
+dont la qualité dépend d'une connaissance exacte et rapidement
+interrogeable du classpath et des sourcesets de chaque module — comme
+Android Studio après une synchronisation. Fonctions visées : diagnostics,
+complétion, hover, signature help, aller à la définition, références,
+renommage, formatage, organisation des imports, quick-fixes, inlay hints,
+coloration sémantique, repli de code.
+
+Matériel : `lsp-java-module.zip` (modules `lspjava` 19 423 lignes de
+Java main / 48 fichiers, 9 747 lignes de tests / 42 fichiers, `ecj-art`
+468 lignes ; dépendances `org.eclipse.jdt.core 3.40.0` patché,
+`lsp4j 0.21.2`, `gson 2.10.1`) et `reference/app-lsp/` (câblage de
+l'ancienne version, lecture seule).
+
+---
+
+## 2. Écarts constatés sur les hypothèses du prompt (§1 : « vérifie-les »)
+
+Le prompt pose ses constats comme hypothèses de travail. Cinq écarts
+substantiels ont été mesurés ; le premier est **critique** pour
+l'étape 1.
+
+### 2.1 CRITIQUE — le serveur actuel ne livre PAS de classpath pour les modules Android
+
+Le prompt §6 affirme : « La donnée par module existe donc ; elle n'est
+pas consommée par un LSP. » **Vérification : faux pour tout module
+Android.** Le modèle `IdeaProject` (exactement ce que
+`ClasspathHandler` résout via la Tooling API — même appel, même Gradle
+9.7.1) a été interrogé sur le dépôt CodeIDE lui-même :
+
+- 34 modules renvoyés ; **26 modules Android ont ZÉRO** racine source,
+  ZÉRO dépendance (`:app`, `core:ui`, `core:storage`, `core:database`,
+  toutes les `feature:*`, `tooling:client`, `applog-runtime`,
+  `terminal-runtime`…) ;
+- seuls les 8 modules Kotlin **JVM purs** ont du contenu
+  (`core:domain`, `core:model`, `core:testing`, `tooling:api`,
+  `tooling:protocol`, `tooling:server`, `tooling:testing`,
+  `generateur`) — au total 13 fichiers uniques (kotlin-stdlib,
+  coroutines, serialization, junit, hamcrest, javax.inject,
+  annotations), soit un classpath inutilisable pour du Java Android ;
+- **pourquoi le test d'intégration passe** : `ServeurIntegrationTest`
+  utilise le fixture `multi-module` des tests tooling, un projet
+  `plugins { java }` **pur JVM** (`app` + `lib`) — le cas AGP n'a jamais
+  été exercé. AGP ne publie pas ses configurations dans le modèle idea
+  par défaut.
+
+**Conséquence (étape 1)** : la source du classpath doit être étendue.
+Options à arbitrer à l'étape 1 : **(A)** résoudre le modèle
+`AndroidProject` d'AGP via la Tooling API (artifact
+`com.android.tools.build:builder-model`, licence Apache-2.0 AOSP —
+l'approche historique d'Android Studio ; fournit par variante le
+`bootClasspath` = `android.jar`, les jars, les dépendances) ;
+**(B)** un plugin/model-builder injecté côté serveur (init script via
+`withArguments`) exportant un modèle dédié CodeIDE ; **C)** garder
+IdeaProject pour les modules JVM et croiser avec (A) pour les modules
+Android. Recommandation : **(A)+(C)**, avec normalisation AAR côté
+serveur (§2.2).
+
+### 2.2 AAR livrés tels quels (confirmé, ADR 0058)
+
+`ClasspathHandler` livre le chemin du `.aar` avec `kind=AAR` — l'ADR
+0058 assume : « l'explosion du bytecode interne reste le périmètre du
+LSP qui le consomme ». L'ancienne version recevait des jars déjà
+normalisés. **La normalisation (extraction `classes.jar` + `libs/*.jar`)
+doit vivre quelque part** : recommandation — dans le serveur de tooling
+(une fois, à la résolution) plutôt que dans l'app, car le banc montre
+que le jeu « lourd » réel est à **76 % d'AAR** (191/250 entrées après
+normalisation) : sans extraction, l'index n'a simplement rien à lire.
+
+### 2.3 Champs du protocole jamais remplis
+
+`ClasspathModule.fichiersGeneres`, `androidJar`, `ignore`,
+`raisonIgnore`, `avertissements` existent dans `Messages.kt` mais ne
+sont **jamais remplis** par `ClasspathHandler` (toujours
+`null`/défauts). Le prompt les présentait comme disponibles. Étape 1 :
+les remplir côté serveur (via le modèle AGP de §2.1 pour
+`androidJar`/`fichiersGeneres`) ou les retirer du contrat jusqu'à ce
+qu'ils le soient.
+
+### 2.4 L'audit de provenance fourni est ABSENT de l'archive
+
+Le prompt annonce `audit-provenance-lsp-java.md` comme matériel fourni.
+**Il n'est pas dans l'archive** (137 fichiers, aucun `.md` d'audit). Il
+a été reconstitué intégralement (§5) — les constats annoncés se sont
+avérés exacts aux nuances de méthode près, mais l'étape 0 ne disposait
+pas du §5 (options) ni du §7 (ordre de traitement) annoncés ; ils ont
+été reconstruits.
+
+### 2.5 Le nombre de variantes « splicées » est 3–5, pas 4
+
+W8 (§3) : le code construit **3 variantes sans point, 5 après un point**
+(+2 synthétiques en dernier recours) ; les commentaires du module
+disent « 2 à 4 ». Le `break` au rang 2 réduit le cas nominal à **une
+seule** résolution. La lenteur à la frappe vient surtout de la
+combinaison (variantes × résolution complète × cache à entrée unique
+évincée à chaque `put`), pas du seul nombre.
+
+### 2.6 Complément vérifié — cel-lsp disponible à la version épinglée (§6 du prompt, règle 9)
+
+JitPack, tag `3.41.0` de `jjoblab/code-editor` : build **ok**, modules
+`cel-core`, `cel-lsp`, `cel-lsp-api`, `cel-ui` ; `cel-lsp-3.41.0.pom`
+et `.aar` résolus (HTTP 200). Dépendances de `cel-lsp` :
+kotlin-stdlib 2.2.10, **lsp4j 0.22.0** (runtime), gson — noter l'écart
+de version avec `lspjava` (**lsp4j 0.21.2**) : l'étape 4 devra aligner
+(ou isoler) les deux.
+
+---
+
+## 3. Vérification W1–W10 (code du module vendored, lecture + preuves)
+
+Résumé des verdicts — détails et extraits dans le journal de travail ;
+chaque verdict cite fichier et lignes.
+
+| # | Affirmation | Verdict | Nuance essentielle |
+|---|---|---|---|
+| W1 | Index mémoire, reconstruit, jamais persisté | **Confirmé** | Reconstruction CONDITIONNELLE (replaceAll no-op si listes identiques) ; préchauffe dès `initialized()` ; didOpen non bloquant (vide + retry 50 ms) atténue le « gel UI » — le coût reste payé intégralement (premier `resolveUnit`) |
+| W2 | Structures coûteuses non interrogeables | **Partiel** | `simpleNameIndex` (nom simple → FQNs), `locateCache` et `jarIdxByPath` sont O(1) ; les requêtes par PRÉFIXE et par PAQUET balayent tout (confirmé) ; snapshot 2,5 Mo/jar, jar entier abandonné au-delà |
+| W3 | Complétion de types en balayage linéaire | **Confirmé (mesuré)** | Balayage triple : jars sans plafond, `jrtIndex.keySet()` plafonné à `limit*5` PENDANT le balayage, sources sans plafond ; croissance mesurée 17→57→113 ms (p50) de 20 à 250 jars (§4) |
+| W4 | Index sources par TTL, pas par événements | **Confirmé** | TTL 10 000 ms, `Files.walk(root, 8)` par racine, rafraîchissement PARESSEUX à l'accès ; `didChangeWatchedFiles` n'invalide que le cache de parse ; rename/navigation font des walks illimités non cachés |
+| W5 | Classpath plat, ni module ni sourceset | **Confirmé** | Listes plates + conformité unique « 17 » (constante) ; `WorkspaceModel` (référence) aplatit modules+sourcesets en LinkedHashSet, le nom du sourceset est perdu, pas de api/impl, pas de main/test |
+| W6 | Aucune empreinte de classpath | **Confirmé (aggravé)** | Aucun hash, **ni mtime ni taille** : un jar reconstruit au même chemin avec mêmes listes n'invalide RIEN ; invalidation purement structurelle (comparaison de chemins) |
+| W7 | Modèle persisté sans validation de fraîcheur | **Confirmé** | `.codeide/workspace-model.json` version 2, filtrage des fichiers morts, sinon « utilisé tel quel » (commentaire « un modèle périmé vaut TOUJOURS mieux qu'un LSP aveugle ») ; état index prêt/en cours interne seulement (isIndexReady/preWarm), aucune notification LSP ; repli = plateforme seedée |
+| W8 | Concurrence et caches | **Partiel** | `resolveUnit` synchronized (verrou global) confirmé ; 3–5 variantes splicées (pas 4) mais `break` au rang 2 → 1 résolution nominale ; BindingParseCache à entrée unique confirmé (évince à chaque put, asymétrie codegen) ; files 3 s/15 s/15 s, debounce 50 ms confirmés |
+| W9 | Lectures binaires | **Partiel** | Pool LRU de **24 poignées** persistantes avec lectures sérialisées (l'affirmation « réouverture transitoire à chaque lecture » est inexacte pour l'index) ; les lectures transitoires vivent dans `JdtBinarySourceNames` (sources.jar) ; RawZipReader = RandomAccessFile + Inflater, motivation CloseGuard ~2 259 warnings/session documentée |
+| W10 | Code généré et sources mixtes | **Partiel** | `hasRealRClasses` réel (scan binaire, downgrade ERROR→HINT honnête) ; « R.java stub régénéré » = commentaire seulement (plus de génération de stubs) ; AUCUN traitement BuildConfig/ViewBinding/Hilt/Room/KSP/kapt ; AUCUN pont Java→Kotlin non compilé (résolution `.java` et jars uniquement) |
+
+Bugs historiques à ne pas réintroduire (§4.3 du prompt) : tous
+retrouvés dans le code avec leurs correctifs — FQCN « racine la plus
+profonde d'abord » (`fqcnFor`), shims ART (`ecj-art`), types imbriqués
+par le jar englobant (`locateBinary` re-sonde le préfixe avant `$`),
+CloseGuard (RawZipReader), `workspaceFolders` lu mais ignoré
+(commentaire du code).
+
+---
+
+## 4. Mesures de référence (banc JVM)
+
+### 4.1 Conditions
+
+JVM de bureau OpenJDK 21.0.12 (Temurin), 2 cœurs, tas max 2 Go,
+`-XX:+UseSerialGC` (le plus proche d'un appareil bas de gamme), Linux
+cgroup ~4 Go. Trois jeux de données RÉELS (§12) :
+**petit** 20 jars (44,3 Mo dont android.jar 41,8) · **moyen** 73 jars
+(54,5 Mo — classpath debug réel de `:app` CodeIDE, AAR normalisés) ·
+**lourd** 250 jars (149,7 Mo — projet Compose synthétique résolu par
+Gradle, 191 AAR normalisés). Scénario `MainActivity` (349 caractères,
+le repro historique) + `Panier` (~180 lignes). Itérations 30, p50/p95.
+Limites assumées : cache OS chaud au premier passage (le « froid »
+mesuré est JVM-froide/JIT-froid, pas disque-froid) ; pas de couche
+LSP4J ni UI (coût moteur seul) ; pas d'appareil (procédure §11.2).
+
+### 4.2 Résultats
+
+| Métrique | petit (20) | moyen (73) | lourd (250) |
+|---|---:|---:|---:|
+| Index mémoire, JVM froide (ms) | 214 | 322 | 1 086 |
+| Reconstruction même JVM (ms) — coût d'un replaceAll | 98 | 219 | 794 |
+| Premier diagnose (ensureIndex + ecj) (ms) | 835 | 913 | 1 627 |
+| Diagnose chaud p50 / p95 (ms) | 14 / 38 | 12 / 43 | 23 / 46 |
+| Complétion MEMBRE `b.` p50 / p95 (ms) | 0 / 6 | 0 / 5 | 0 / 5 |
+| Complétion NOM (types) p50 / p95 (ms) | 18 / 54 | 54 / 78 | **109 / 140** |
+| Complétion IMPORT p50 / p95 (ms) | 1 / 5 | 1 / 3 | 4 / 26 |
+| Frappe simulée (complétion+diagnose par touche) p50 / p95 (ms) | 30 / 64 | 69 / 160 | 128 / 150 |
+| **+1 dépendance** : moteur neuf + 1er diagnose (ms) | 257 | 396 | **1 178** |
+| Tas après index / état stable (Mo) | 9 / 25 | 19 / 36 | 108 / 131 |
+| Poignées de fichiers après index / stable | 28 / 30 | 28 / 33 | 28 / 42 |
+| Noms simples indexés / paquets | 4 945 / 433 | 7 084 / 623 | 23 327 / 1 878 |
+| Après `dispose()` : tas / poignées | 12 / 28 | 13 / 28 | 13 / 28 |
+
+### 4.3 Lecture des chiffres contre les cibles du prompt (§9)
+
+- **Ouverture, index « chaud » < 1,5 s** : sur JVM de bureau, le statu
+  quo ne tient le délai que pour petit/moyen (835/913 ms) et **échoue
+  déjà à 250 jars (1 627 ms)** — sans couche LSP4J ni UI. Sur ART
+  (3–5× plus lent sur ces chemins, et GC plus coûteux), tous les cas
+  échouent. La **persistance disque (ADR 0111) est indispensable**,
+  pas une optimisation.
+- **Complétion de types p95 < 100 ms quelle que soit la taille** :
+  violée dès 250 jars sur bureau (140 ms) ; la croissance est
+  clairement super-linéaire en pratique (18→54→109 en p50 pour ×12,5
+  jars) — conforme à W3. Les requêtes préfixe/approximation sur index
+  trié sont la seule réponse structurante.
+- **Frappe : aucun travail LSP sur le thread principal** : côté moteur,
+  la complétion+diagnose par touche (30/64 → 128/150 ms) multipliée par
+  ART confirme que 1–5 résolutions complètes par frappe ne tiendront
+  pas : cache de parse multi-entrées (W8) et réduction des variantes
+  restent nécessaires même après l'index disque.
+- **Tas imputable à l'index < 30 Mo pour 100 jars** : le statu quo
+  consomme 19 Mo pour 73 jars mais 108–131 Mo pour 250 — le budget
+  snapshot (2,5 Mo/jar, W2) est le principal responsable. L'index disque
+  + cache de blocs borné est la seule voie pour tenir la borne.
+- **Ajout d'une dépendance : seul le nouveau jar indexé** : aujourd'hui
+  +1 jar = 257/396/1 178 ms de reconstruction TOTALE (W1 mesuré). Le
+  segment par jar (ADR 0111) répond exactement à cette cible.
+- **Poignées de fichiers plafonnées** : le pool LRU de 24 fait déjà un
+  plafond constant (28–42 descripteurs au total) — comportement à
+  conserver, à re-vérifier avec l'index disque (fichiers mappés).
+- **Fermeture : toutes ressources libérées** : `dispose()` ramène le tas
+  à ~13 Mo et les poignées à 28 — le module vendored est propre sur ce
+  point ; le futur `lsp:host` devra le prouver par test de fuite (§10).
+
+Notes de lecture : le p95 « frappe » du moyen (160 ms) > lourd (150 ms)
+illustre la variance GC/JIT sur 2 cœurs — les chiffres sont des ordres
+de grandeur reproductibles, pas des constantes. La complétion NOM rend
+**0 item** dans le scénario du banc (reproduit le symptôme « got 0
+items » de l'ancienne version) : comportement préexistant du module sur
+ce contexte, indépendant des performances — à corriger à l'étape 3.
+
+---
+
+## 5. Audit de provenance reconstitué (D3 — ADR 0110)
+
+### 5.1 Méthode
+
+projet de référence (auteur tiers, GPL-3.0) cloné en lecture seule (depth 1) ;
+comparaison automatique des 48 fichiers main du module vendored contre
+l'index des fichiers projet de référence (appariement par nom, manuel pour les
+ratés) ; métriques : **lignes identiques normalisées** (trim, non
+vides, commentaires inclus — les en-têtes de licence comptent) et
+**Jaccard des jetons** du corps de code (commentaires exclus).
+Rejouable : `audit_provenance.py` (§11.1).
+
+### 5.2 Résultats
+
+- **Niveau A confirmé** : `RuntimeVersion` 69 % lignes / 0,93 Jaccard ;
+  `StackWalker` 40 % / 0,89 ; `InputStreamCompat` 60 % / 0,57
+  (sous-ensemble). (L'audit absent annonçait « 61/61 » — écart de
+  méthode, même conclusion.)
+- **Niveau B** : 31 fichiers mentionnent projet de référence ; ressemblance
+  textuelle faible (0,08–0,26 lignes, Jaccard 0,01–0,46) MAIS
+  dérivation démontrée : commentaires citant les classes d'origine
+  (`JdtRename`, `JdtEnvironmentCache`, `JavaProblemCodes`,
+  `JavaActions`, `CompletionRanker`…) et **constantes numériques
+  identiques** (score : 1000/500/200/120/300/200/400 entre
+  `CompletionRanker.kt` et `JdtCompletionEngine`).
+- **ecj-art** : passes d'origine retrouvées dans le build-logic de
+  projet de référence (`RelocateTypesInJar.kt`, `EclipseStreamArtPass.kt`) ;
+  recoupement textuel faible, dicté par l'API ASM.
+- **Six noms de fichiers identiques** : `JdtCodeFolder`,
+  `JdtSemanticHighlighter`, `JdtSourceUnit`, `RuntimeVersion`,
+  `StackWalker`, `InputStreamCompat`.
+- **Contre-exemple utile** : `JdtLocateCache` (LRU exact) n'est PAS la
+  `LruMap` du projet de référence (CLOCK) — même idée, implémentations
+  distinctes : la frontière « idée non protégeable / expression
+  protégée » passe bien là.
+
+### 5.3 Plan de traitement par fichier (sous l'option 1 — réécriture cloisonnée ; à acter par le propriétaire)
+
+Ordre de traitement (les renommages §7 suivent chaque lot, compilation
+et tests verts à chaque lot) :
+
+**Lot 1 — réécrire depuis spécification (niveau A, priorité absolue,
+petit volume)** : `compat/RuntimeVersion`, `compat/StackWalker`,
+`compat/InputStreamCompat` — spéc = javadoc public du JDK ; nouveaux
+noms §7 ; constantes redéterminées par mesure (pas recopiées).
+
+**Lot 2 — réécrire (niveau B, recoupement ou dérivation significative)**
+: `JdtCompletionEngine` (partie scoring/ranker : constantes à
+redéterminer par banc de tri de complétion), `JavaProblemFamily`,
+`CodeActionService`, `JdtCodeFolder`, `JdtSourceUnit`,
+`JdtPostfixTemplates`, `JdtLiveTemplates`, `JdtFormatter`,
+`JdtInlayHints`, `JdtImportOrganizer`, `JdtSemanticHighlighter`,
+`JdtRenameEngine`, `BindingParseCache`, `CompletionPrefixMatcher`,
+`JdtBinarySourceNames`, `Diagnostic`, `CancelToken`,
+`OperationCanceledException`, et la partie « pool de poignées +
+snapshots » de `JdtCompilerEnvironment` (dérivée de
+`JdtEnvironmentCache`) — pour chaque fichier : écrire la spécification
+de comportement SANS lire le code tiers (les tests de non-régression
+du module servent de filet), puis implémenter.
+
+**Lot 3 — conserver avec justification** (implémentation propre,
+dérivation faible ou idée générique) : `RawZipReader` (motivation née
+des logs device de CodeIDE, implémentation indépendante),
+`SourceFocuser` (technique de java-language-server, tierce aux deux
+projets), `JdtFastDiagnose` (mécanisme propre : corps à longueur
+constante, repli conservateur), `JdtEngineScheduler` (design propre,
+files + supersession + watchdog), `JdtLocateCache` (voir §5.2),
+`ClassFileStubBuilder`, `JdtAst`, `JdtNavigationEngine`,
+`JdtSignatureHelp`, `JdtCompilerEngine` (pipeline ecj propre ;
+`fqcnFor` = correctif device CodeIDE), `CompilationEnvironment`
+(classpath plat — de toute façon remplacé par `lsp:model`),
+façades LSP4J (`JavaLanguageServer`, `JavaTextDocumentService`,
+`JavaWorkspaceService`, `ServerCapabilitiesProvider`, services
+`Diagnostic/Hover/Navigation`), `api/*` (types de données génériques).
+
+**Lot 4 — ecj-art** : réécrire les passes selon la documentation ASM
+(licence BSD) si l'option 1 est retenue ; conserver tel quel si
+autorisation (option 2).
+
+**Suppressions prévisibles** (remplacées par les nouvelles couches,
+pas de la réécriture D3) : `CompilationEnvironment` (→ `lsp:model`),
+la persistance `WorkspaceModelStore` côté référence (→ persistance
+versionnée de `lsp:model`), `WorkspaceModel` (→ snapshots typés).
+
+---
+
+## 6. Décisions D1–D5
+
+| Décision | ADR | Statut |
+|---|---|---|
+| D1 — politique de langage : module vendored Java exempté, nouvelles couches Kotlin, conversion conditionnelle | 0108 | accepté |
+| D2 — modèle de processus : in-process ART par défaut, transport abstrait, bascule possible sur mesure appareil | 0109 | accepté (à confirmer par mesure) |
+| D3 — provenance et licence : audit reconstitué, 4 options soumises au propriétaire, aucune publication avant règlement | 0110 | **PROPOSÉ — décision propriétaire** |
+| D4 — index disque : segments PAR JAR, format binaire versionné, fusion à la requête, corruption non fatale | 0111 | accepté |
+| D5 — plateforme : android.jar seul pour les modules Android, conformité par module, src.zip pour java.* | 0112 | accepté |
+
+---
+
+## 7. Plan de renommage (table ancien → nouveau)
+
+Exécution **après** le traitement D3 lot par lot (prompt §3), par
+refactoring, compilation et tests verts à chaque lot. Le préfixe
+retenu est **`Ecj`** (honnête : ces classes adaptent ecj/JDT) — il
+évite par construction les noms identiques à projet de référence
+(`CompletionEngine`, `PrefixMatcher`, `ImportOrganizer`,
+`SignatureHelp`, `LiveTemplates`, `PostfixTemplates`,
+`JdtEnvironmentCache`…). Les shims deviennent `ArtCompat*`.
+
+| Ancien | Nouveau | Motif |
+|---|---|---|
+| package `jo.lspjava.jdt` | `jo.lspjava.ecj` | retrait de la référence JDT du nom de package |
+| `JdtCompletionEngine` | `EcjCompletionEngine` | ≠ `CompletionEngine` (projet de référence ide-core) |
+| `JdtCompilerEngine` | `EcjCompilerEngine` | préfixe |
+| `JdtCompilerEnvironment` | `EcjCompilerEnvironment` | préfixe |
+| `JdtEngineScheduler` | `EcjEngineScheduler` | préfixe |
+| `JdtRenameEngine` | `EcjRenameEngine` | ≠ `JdtRename` (projet de référence) |
+| `JdtNavigationEngine` | `EcjNavigationEngine` | préfixe |
+| `JdtFastDiagnose` | `EcjFastDiagnose` | préfixe |
+| `JdtSignatureHelp` | `EcjSignatureHelp` | ≠ `SignatureHelp` (projet de référence api) |
+| `JdtInlayHints` | `EcjInlayHints` | ≠ `JdtInlayHintService` |
+| `JdtSemanticHighlighter` | `EcjSemanticHighlighter` | **nom de fichier identique à projet de référence** |
+| `JdtCodeFolder` | `EcjCodeFolder` | **nom de fichier identique à projet de référence** |
+| `JdtSourceUnit` | `EcjSourceUnit` | **nom de fichier identique à projet de référence** |
+| `JdtPostfixTemplates` | `EcjPostfixTemplates` | ≠ `PostfixTemplates` (projet de référence) |
+| `JdtLiveTemplates` | `EcjLiveTemplates` | ≠ `LiveTemplates` (projet de référence) |
+| `JdtFormatter` | `EcjFormatter` | ≠ `JdtFormattingService` |
+| `JdtImportOrganizer` | `EcjImportOrganizer` | ≠ `ImportOrganizer` (projet de référence api) |
+| `JdtBinarySourceNames` | `EcjBinarySourceNames` | préfixe |
+| `JdtLocateCache` | `EcjLocateCache` | préfixe |
+| `JdtAst` | `EcjAst` | préfixe |
+| `compat/RuntimeVersion` | `ArtCompatVersion` | **réécrit de toute façon (niveau A)** |
+| `compat/StackWalker` | `ArtCompatStackWalker` | **réécrit de toute façon (niveau A)** |
+| `compat/InputStreamCompat` | `ArtCompatInputStream` | **réécrit de toute façon (niveau A)** |
+| `CompletionPrefixMatcher` | `EcjPrefixMatcher` | cohérence, ≠ `PrefixMatcher` (projet de référence) |
+| `BindingParseCache` | `EcjParseCache` | réécrit lot 2, précise « parse » |
+
+Sans changement (aucun préfixe Jdt, aucun nom identique à projet de référence) :
+`RawZipReader`, `SourceFocuser`, `ClassFileStubBuilder`, `CancelToken`,
+`OperationCanceledException`, `CompilationEnvironment` (supprimé à
+terme), `JavaLanguageServer`, `JavaTextDocumentService`,
+`JavaWorkspaceService`, `ServerCapabilitiesProvider`,
+`CodeActionService`, `DiagnosticService`, `HoverService`,
+`JavaProblemFamily`, `NavigationService`, `api/*`,
+`EcjArtPatcher` (ecj-art). Les noms définitifs seront arrêtés au
+moment du lot concerné ; cette table est le plan de travail.
+
+---
+
+## 8. Étude d'extractibilité en bibliothèque indépendante
+
+**Coût** : faible aujourd'hui — le module est déjà une entité autonome
+(sans dépendance Android ni CodeIDE, API publique `jo.lspjava.api.*`,
+JUL sans slf4j, publication Maven envisagée dans son propre
+`build.gradle`). Ce qui manque : CI de publication, API gelée,
+séparation documentée cœur/adaptation (`ecj-art` reste un artefact de
+build), et surtout **le règlement D3** — la licence interdit toute
+publication tant que les niveaux A/B ne sont pas traités ou autorisés.
+
+**Bénéfice attendu** : aucun consommateur identifié en dehors de
+CodeIDE (les futurs LSP Kotlin et XML ont leurs propres moteurs et ne
+consommeraient que le *modèle de projet* et *l'index*, qui appartiennent
+aux couches Kotlin, pas à ce moteur). La crédibilité « bibliothèque
+publique » ne pèse pas face au risque licence.
+
+**Décision** : **extraire plus tard, pas maintenant.** Les garde-fous
+design extractible restent : zéro dépendance CodeIDE/Android dans le
+cœur, API publique minimale stable, `lsp:index` et `lsp:model` conçus
+JVM-purs (réutilisables par les LSP Kotlin/XML futurs — c'est la vraie
+mutualisation). Re-évaluation après le règlement D3 et l'étape 3.
+
+---
+
+## 9. Cibles non fonctionnelles — recalage
+
+Cibles §9 du prompt, position statu quo mesurée (bureau ; ART ≈ 3–5×) :
+
+| Cible | Statu quo (bureau) | Statut |
+|---|---|---|
+| Ouverture index chaud < 1,5 s | 835–1 627 ms (sans LSP4J/UI) | **inatteignable sans persistance** |
+| Complétion membres p95 < 150 ms | 5–6 ms | déjà tenue (moteur) |
+| Complétion types/imports p95 < 100 ms | 78–140 ms | **violée dès 250 jars** — requiert index par préfixe |
+| Frappe : 0 travail LSP sur main ; 0 image perdue | n/a (pas d'UI au banc) | à valider étape 4 |
+| +1 dépendance → seul le nouveau jar indexé | 257–1 178 ms (tout repayé) | **violée** — segment par jar (ADR 0111) |
+| Tas index < 30 Mo / 100 jars | 19 Mo / 73 jars ; 108–131 Mo / 250 | **structurellement hors borne** — budget snapshot |
+| Poignées constantes | 28–42 (pool LRU 24) | tenue — à conserver |
+| Corruption segment → jamais de crash | n/a (pas d'index disque) | contrat ADR 0111 |
+| Fermeture : 0 ressource orpheline | dispose() propre (13 Mo / 28 FD) | tenue — à prouver par test étape 4 |
+
+Ajustement proposé (à confirmer sur appareil à l'étape 3) : la cible
+d'ouverture « index chaud < 1,5 s » devient la cible de l'**étape 2**
+(index disque) mesurée sur les mêmes jeux ; la complétion de types p95
+< 100 ms devient la cible de l'**étape 3** (environnements de noms
+adossés à l'index).
+
+---
+
+## 10. Plan ajusté des étapes suivantes
+
+- **Étape 1 — modèle de projet LSP** (`lsp:model`, Kotlin) : comme
+  prévu au prompt, PLUS le nouveau livrable critique révélé par §2.1 :
+  **étendre la source du classpath pour les modules Android**
+  (options A/C : modèle AGP `builder-model` via Tooling API, IdeaProject
+  conservé pour les JVM purs), remplir `androidJar`/`fichiersGeneres`/
+  `ignore` côté serveur, normaliser les AAR à la résolution (§2.2).
+  Snapshots immuables, empreintes par contenu (W6), association
+  fichier→module (package + sourceset), persistance versionnée VALIDÉE
+  (taille/mtime des jars — corrige W7). Critère prompt inchangé.
+- **Étape 2 — index disque** (`lsp:index`) : selon ADR 0111 ; états,
+  progression, repli par sondage ; banc avant/après sur les trois jeux
+  (cibles : +1 dépendance = indexation du seul jar ; reprise < 1,5 s).
+- **Étape 3 — intégration du moteur** (`lsp:java` vendored selon D1) :
+  traitement D3 par lots (§5.3) + renommage (§7) au fil des lots ;
+  environnement de noms adossé à l'index (complétion par préfixe —
+  tue W3) ; cache de parse multi-entrées ; moteur par module (verrou
+  global → périmètre module) ; suite de non-régression portée ;
+  correctif du « 0 item » du scénario NOM.
+- **Étape 4 — hôte, cycle de vie, éditeur** (`lsp:host`) : `SessionLsp`
+  (transport abstrait D2), branchement `cel-lsp` (vérifié §2.6 —
+  aligner lsp4j 0.21.2/0.22.0), état d'indexation dans l'UI + action
+  « Réindexer », test de fuite à la fermeture (prompt 3).
+- **Étape 5 — performance et validation appareil** : protocole §11.2
+  exécuté, optimisations mesurées, `docs/LSP_JAVA.md` complété,
+  `CHANGELOG.md`, `AGENTS.md`.
+
+---
+
+## 11. Banc de mesure reproductible
+
+### 11.1 Procédure JVM (rejouable)
+
+1. Projet de banc : `/home/z/my-project/work/bench-lsp-java` —
+   `settings.gradle` incluant `:lspjava`, `:ecj-art` (copiés INTACTS du
+   zip fourni, seule adaptation : `javaexec`→`ProcessBuilder` dans le
+   `build.gradle` du module pour Gradle 9.7.1, sources non touchées) et
+   `:bench` (`BancMesure.java` — index/diagnose/complétions/frappe/
+   +1 dépendance, tas et poignées ; `BancTooling.java` — dump IdeaProject).
+2. Jeux de données (§12) : `datasets/{petit,moyen,lourd}/manifeste.txt`.
+3. Exécution : `scripts/executer_banc.sh` (JVM séparée par jeu,
+   `-Xmx2g -XX:+UseSerialGC`, itérations 30) →
+   `resultats/banc-<jeu>.json` + `banc-complet.log`.
+4. Audit de provenance rejouable : `scripts/audit_provenance.py` (clone
+   projet de référence depth 1 requis).
+5. Génération des jeux : `scripts/construire_jeux.py` (rapport
+   `dependencies` + localisation cache Gradle) et
+   `scripts/construire_jeux_fichiers.py` (liste de fichiers résolus) ;
+   projet Compose : `/home/z/my-project/work/projet-lourd-compose`.
+
+Les chemins ci-dessus sont ceux de la session d'étude (hors dépôt) ;
+les scripts sont conservés dans `scripts/` du projet de travail. À
+l'étape 2, le banc sera porté dans le dépôt (module de test dédié ou
+tâche documentée) avec les jeux reconstituables par une recette
+versionnée.
+
+### 11.2 Procédure appareil (protocole écrit — exécution aux étapes 3+)
+
+Appareils : milieu de gamme (8 Go, Android 13+) et entrée de gamme.
+Préparation : installer l'APK debug, cloner le projet de test, ouvrir,
+laisser la sync + le classpath se préparer. Mesures (via l'écran
+Diagnostic/état d'indexation prévu étape 4, journal `AppLogger`
+expurgé et chronométrage vidéo 60 i/s pour les frappes) : ouverture à
+froid (première indexation), à chaud (réouverture), ajout d'une
+dépendance (une seule bibliothèque ajoutée au build), sync Gradle
+complète, création d'un type puis complétion le référençant, fermeture/
+réouverture, bascule d'écrans. Consigner : latences p50/p95 par
+contexte, tas (Runtime.totalMemory−free + `dumpsys meminfo` du
+processus), poignées (`/proc/<pid>/fd | wc -l` via terminal), images
+perçues. Comparer aux cibles §9 à chaque étape.
+
+---
+
+## 12. Jeux de données
+
+| Jeu | Entrées | Taille | Origine | Particularités |
+|---|---|---|---|---|
+| petit | 20 | 44,3 Mo | android.jar + 19 jars de la chaîne androidx de base du moyen | reproduit le repro historique (~20 jars des commentaires W1) |
+| moyen | 73 | 54,5 Mo | **classpath `debugCompileClasspath` réel de `:app` CodeIDE** (rapport Gradle + cache modules-2, 49 jars extraits d'AAR) | projet moyen réel, conforme aux « 91+2 » de l'ancienne session à 20 jars près (jeux non publiés de la session device) |
+| lourd | 250 | 149,7 Mo | projet Compose synthétique résolu par Gradle (BOM 2025.09.00, material3, navigation, room, hilt, coil, retrofit, camera, media3, work, datastore, mlkit, firebase, commons, jackson…) | **191 AAR normalisés (76 %)** — représentatif d'une vraie app lourde ; 23 327 noms simples indexés |
+
+Le jar « +1 dépendance » du banc (`datasets/extra/extra-banc.jar`,
+604 Ko) est volontairement hors manifestes.
+
