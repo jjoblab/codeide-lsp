@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import jo.lspjava.jdt.JdtCompilerEngine;
+import jo.lspjava.ecj.EcjCompilerEngine;
 
 /**
  * Environnement de compilation — classpath et racines sources du projet,
@@ -14,7 +14,7 @@ import jo.lspjava.jdt.JdtCompilerEngine;
  *
  * <p>Le classpath vient du Gradle Tooling (jars des dépendances +
  * android.jar du bootclasspath) ; les racines sources des modules du projet.
- * Le {@link JdtCompilerEngine} en est dérivé paresseusement, et invalidé
+ * Le {@link EcjCompilerEngine} en est dérivé paresseusement, et invalidé
  * quand le classpath change. Toute l'analyse passe par le compilateur ecj
  * in-process.</p>
  *
@@ -44,7 +44,7 @@ public final class CompilationEnvironment {
     private volatile java.nio.file.Path gradleUserHome;
 
     /** Moteur ecj dérivé — invalidé quand le classpath change. */
-    private JdtCompilerEngine jdtEngine;
+    private EcjCompilerEngine jdtEngine;
 
     public CompilationEnvironment(List<File> sourceDirs, List<File> classpathEntries, String complianceLevel) {
         this.sourceDirs = new ArrayList<>(sourceDirs);
@@ -120,7 +120,7 @@ public final class CompilationEnvironment {
     public synchronized void addSourceDir(File dir) {
         if (dir != null && dir.isDirectory() && !sourceDirs.contains(dir)) {
             sourceDirs.add(dir);
-            invalidateJdtEngine();
+            invalidateEcjEngine();
         }
     }
 
@@ -153,7 +153,7 @@ public final class CompilationEnvironment {
         }
         sourceDirs.clear();
         sourceDirs.addAll(filtered);
-        invalidateJdtEngine();
+        invalidateEcjEngine();
     }
 
     /**
@@ -173,7 +173,7 @@ public final class CompilationEnvironment {
                 changed = true;
             }
         }
-        if (changed) invalidateJdtEngine();
+        if (changed) invalidateEcjEngine();
     }
 
     /**
@@ -192,7 +192,7 @@ public final class CompilationEnvironment {
                 changed = true;
             }
         }
-        if (changed) invalidateJdtEngine();
+        if (changed) invalidateEcjEngine();
     }
 
     /**
@@ -203,7 +203,7 @@ public final class CompilationEnvironment {
         if (home == null || home.equals(jdkHome)) return;
         if (!java.nio.file.Files.isRegularFile(home.resolve("lib/modules"))) return;
         this.jdkHome = home;
-        invalidateJdtEngine();
+        invalidateEcjEngine();
     }
 
     /**
@@ -220,7 +220,7 @@ public final class CompilationEnvironment {
      * méthodes AndroidX restent à {@code arg0, arg1…}.</p>
      *
      * <p>Note : n'invalide PAS le moteur ecj — le GRADLE_USER_HOME est lu
-     * paresseusement par {@link JdtBinarySourceNames}, pas par le compilateur.</p>
+     * paresseusement par {@link EcjBinarySourceNames}, pas par le compilateur.</p>
      */
     public void setGradleUserHome(java.nio.file.Path gradleUserHome) {
         this.gradleUserHome = gradleUserHome;
@@ -234,7 +234,7 @@ public final class CompilationEnvironment {
         // pas d'invalidation (évite re-index complet à chaque seed redondant).
         if (classpathEntries.contains(entry)) return;
         classpathEntries.add(entry);
-        invalidateJdtEngine();
+        invalidateEcjEngine();
     }
 
     /**
@@ -289,7 +289,7 @@ public final class CompilationEnvironment {
                 changed = true;
             }
             if (changed) {
-                invalidateJdtEngine();
+                invalidateEcjEngine();
             }
         }
         // Hors verrou : notifie les abonnés d'un changement effectif
@@ -303,9 +303,9 @@ public final class CompilationEnvironment {
      * Moteur de compilateur ecj partagé — même classpath/source dirs pour
      * diagnostics, hover, complétion, renommage, formatage…
      */
-    public synchronized JdtCompilerEngine jdt() {
+    public synchronized EcjCompilerEngine jdt() {
         if (jdtEngine == null) {
-            jdtEngine = new JdtCompilerEngine(sourceDirs, classpathEntries,
+            jdtEngine = new EcjCompilerEngine(sourceDirs, classpathEntries,
                     complianceLevel, jdkHome);
             // Propage le GRADLE_USER_HOME au moteur — pour la résolution
             // des noms de paramètres binaires (recherche des -sources.jar).
@@ -323,11 +323,11 @@ public final class CompilationEnvironment {
      * @return {@code true} si {@link #jdt()} a déjà été appelé au moins une fois
      *         et que le moteur n'a pas été invalidé depuis.
      */
-    public synchronized boolean isJdtInitialized() {
+    public synchronized boolean isEcjInitialized() {
         return jdtEngine != null;
     }
 
-    private synchronized void invalidateJdtEngine() {
+    private synchronized void invalidateEcjEngine() {
         if (jdtEngine != null) {
             jdtEngine.dispose();
             jdtEngine = null;
@@ -345,6 +345,6 @@ public final class CompilationEnvironment {
      * <p>Idempotent : appels multiples sans effet après le premier.</p>
      */
     public synchronized void dispose() {
-        invalidateJdtEngine();
+        invalidateEcjEngine();
     }
 }

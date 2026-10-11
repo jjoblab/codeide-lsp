@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (Manifest, R) — pas des mots-clés.</p>
  *
  * <p>Ce test valide que la chaîne LSP4J + JavaLanguageServer +
- * JdtCompletionEngine traite correctement la séquence didChange →
+ * EcjCompletionEngine traite correctement la séquence didChange →
  * completion. Si le client envoie dans cet ordre, le serveur répond
  * correctement.</p>
  *

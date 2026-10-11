@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Vérification BOUT-EN-BOUT des kinds LSP côté serveur : la
- * chaîne complète {@code JdtCompletionEngine → api.CompletionItem.Kind →
+ * chaîne complète {@code EcjCompletionEngine → api.CompletionItem.Kind →
  * CompletionItemKind LSP4J (+ champ data pour les annotations)} — c'est
  * ce que le badge de type du popup consomme côté client.
  *

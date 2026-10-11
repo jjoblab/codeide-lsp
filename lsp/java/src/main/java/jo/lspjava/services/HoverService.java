@@ -2,7 +2,7 @@ package jo.lspjava.services;
 
 import jo.lspjava.engine.CompilationEnvironment;
 import jo.lspjava.engine.OperationCanceledException;
-import jo.lspjava.jdt.JdtCompilerEngine;
+import jo.lspjava.ecj.EcjCompilerEngine;
 
 import java.util.logging.Logger;
 
@@ -32,7 +32,7 @@ public final class HoverService {
      */
     public String hoverAt(String filePath, String source, int offset) {
         try {
-            JdtCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdt();
             if (!jdt.isLikelyUsable()) return null;
             return jdt.hoverAt(filePath, source, offset);
         } catch (OperationCanceledException e) {

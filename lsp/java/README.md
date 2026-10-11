@@ -32,7 +32,7 @@ reste requis et suit son cours à l'étape 3.
 
 - `jo.lspjava.api` — API publique (types de résultat purs, sans lsp4j) ;
 - `jo.lspjava.engine` — environnement de compilation et ordonnanceur ;
-- `jo.lspjava.jdt` — moteur ecj (le plus gros du module) ;
+- `jo.lspjava.ecj` — moteur ecj (le plus gros du module) ;
 - `jo.lspjava.ecj.compat` — shims ART (cibles du patcher `:lsp:ecj-art`, réécrits D3 lot 1 — `ArtCompatVersion`, `ArtCompatStackWalker`, `ArtCompatInputStream`) ;
 - `jo.lspjava.lsp`, `jo.lspjava.services` — façade LSP4J.
 
@@ -44,8 +44,8 @@ Handler JUL vers `AppLogger`/logcat (pont livré à l'étape 4).
 Suite JUnit 5 (42 fichiers) conservée comme **suite de non-régression**
 (prompt 2 §4.1) : `AndroidClasspathReproTest`, `RealClasspathDeviceReproTest`,
 `DeviceFqcnReproTest`, `SubpackageDiagnosticTest`, `SubpackageGoldenRulesTest`,
-`JdtEngineSchedulerTest`, `JdtCompilerEngineConcurrencyTest`, `RawZipReaderTest`,
-`JdtLocateCacheTest`, `BindingParseCacheTest`, `CompletionRegressionTest`,
+`EcjEngineSchedulerTest`, `EcjCompilerEngineConcurrencyTest`, `RawZipReaderTest`,
+`EcjLocateCacheTest`, `EcjParseCacheTest`, `CompletionRegressionTest`,
 `BinaryDefinitionFallbackTest`, `DecompiledSourceTest`,
 `JavaLanguageServerLifecycleTest`, `ImportCompletionIntegrationTest`,
 `CompatShimsTest` — plus les tests d'accompagnement.

@@ -778,7 +778,7 @@ de lot (dépôt vert, tests verts).
 | Lot | Contenu | Version | Statut |
 |---|---|---|---|
 | A | D3 lot 1 — réécriture des 3 shims compat (niveau A, priorité absolue) + renommage `ArtCompat*` + package `jo.lspjava.ecj.compat` + patcher réaligné | 0.94.0 | **livré** |
-| B | Renommage §7 intégral — package `jo.lspjava.jdt` → `jo.lspjava.ecj`, `Jdt*` → `Ecj*` (table §7), `CompletionPrefixMatcher` → `EcjPrefixMatcher`, `BindingParseCache` → `EcjParseCache` | 0.95.0 | à faire |
+| B | Renommage §7 intégral — package `jo.lspjava.jdt` → `jo.lspjava.ecj`, `Jdt*` → `Ecj*` (table §7), `CompletionPrefixMatcher` → `EcjPrefixMatcher`, `BindingParseCache` → `EcjParseCache` | 0.95.0 | **livré** |
 | C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (localiser/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT | 0.96.0 | à faire |
 | D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.x | à faire |
 | E | Moteur par module — verrou global → périmètre module | 0.97.0 | à faire |
@@ -831,15 +831,17 @@ Les réécritures D3 lots 2+ cibleront directement les noms définitifs.
   constantes `Option`). `:lsp:java` 277 tests verts, `:lsp:ecj-art`
   2 tests verts.
 
-### 15.3 Lot B — renommage §7 (à faire)
+### 15.3 Lot B — renommage §7 (v0.95.0, livré)
 
-Table d'exécution : `git mv` des fichiers + retouches de déclaration +
-sed des références (imports, javadocs, tests) + compilation/tests
-verts. Les noms définitifs sont ceux de la table §7. Les fichiers de
-test porteurs du préfixe `Jdt` suivent (ex.
-`JdtCompilerEngineConcurrencyTest` → `EcjCompilerEngineConcurrencyTest`)
-pour que le nom du test désigne la classe testée. Le package du
-patcher `jo.lspjava.jdtpatch` ne figure pas dans la table §7 : inchangé.
+Exécuté comme prévu : `git mv` (23 fichiers principaux + 27 tests,
+historique préservé), retouches de déclaration, remplacement des
+références (imports, javadocs, noms de tests). 65 fichiers
+textuellement mis à jour. Vérifications : plus AUCUNE occurrence de
+`jo.lspjava.jdt` dans le code (l'étiquette source des diagnostics
+suit : `"jo.lspjava.ecj"`) ; `invalidateJdtEngine`/`isJdtInitialized`
+deviennent `invalidateEcjEngine`/`isEcjInitialized` ; les mentions
+provenance projet de référence (`{@code JdtResolver}`…) restent VOLONTAIREMENT
+(elles documentent l'audit D3). `:lsp:java` 277 tests verts.
 
 ### 15.4 Lot C — branchement de l'index (à faire, architecture arrêtée)
 

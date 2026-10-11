@@ -8,7 +8,7 @@ package jo.lspjava.engine;
  * <p><strong>Motivation :</strong> un diagnose ecj en cours retient le verrou
  * {@code resolveUnit} jusqu'à sa fin — une complétion interactive arrive
  * derrière et gèle la frappe pendant toute la durée du parse restant.
- * La supersession du {@link JdtEngineScheduler} annule les tâches encore
+ * La supersession du {@link EcjEngineScheduler} annule les tâches encore
  * en file ; rien ne coupe la tâche déjà démarrée — d'où cette exception.</p>
  *
  * <p><strong>Mécanisme (annulation COOPÉRATIVE, pas de chirurgie ECJ) :</strong>
@@ -22,7 +22,7 @@ package jo.lspjava.engine;
  *
  * <p><strong>Conséquence volontaire :</strong> aucun arbre n'est mis en cache
  * après annulation ({@code resolveUnit} retourne null sans toucher au
- * {@code BindingParseCache}) — la frappe suivante reparse proprement sur le
+ * {@code EcjParseCache}) — la frappe suivante reparse proprement sur le
  * texte à jour.</p>
  *
  * <p>C'est exactement le pattern {@code CancelChecker} injecté dans

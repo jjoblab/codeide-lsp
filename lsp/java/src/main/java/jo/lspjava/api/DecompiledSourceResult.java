@@ -6,10 +6,10 @@ package jo.lspjava.api;
  * décompilé) d'un FQN binaire, transportée au client {@code :cel-lsp}.
  *
  * <p>Le serveur ({@code :lspjava}) appelle
- * {@link jo.lspjava.jdt.JdtCompilerEngine#decompiledSource(String)} :
+ * {@link jo.lspjava.ecj.EcjCompilerEngine#decompiledSource(String)} :
  * source attachée (src.zip du JDK, -sources.jar du classpath, caches Gradle)
  * en priorité — fidélité maximale ; sinon stub décompilé depuis le
- * ClassFileReader du binaire ({@link jo.lspjava.jdt.ClassFileStubBuilder}).
+ * ClassFileReader du binaire ({@link jo.lspjava.ecj.ClassFileStubBuilder}).
  * Quand ni l'un ni l'autre n'est disponible, le champ {@code source} est
  * {@code null} : l'app host en avise l'utilisateur (Snackbar « Source
  * décompilée indisponible »).</p>

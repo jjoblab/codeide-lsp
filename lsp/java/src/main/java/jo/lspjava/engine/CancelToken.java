@@ -4,7 +4,7 @@ package jo.lspjava.engine;
  * Token d'annulation coopératif — pattern {@code CancelToken} du projet de référence,
  * porté en Java.
  *
- * <p>Le moteur synchronisé de {@link JdtCompilerEngine} est un point de
+ * <p>Le moteur synchronisé de {@link EcjCompilerEngine} est un point de
  * rupture : une seule requête à la fois, sans priorité ni annulation. Si le
  * modèle Gradle arrive (balayage des racines sources du renommage
  * multi-fichiers, potentiellement des secondes), la complétion de

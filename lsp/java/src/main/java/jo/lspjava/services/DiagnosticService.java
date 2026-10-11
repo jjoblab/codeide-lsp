@@ -3,7 +3,7 @@ package jo.lspjava.services;
 import jo.lspjava.api.*;
 import jo.lspjava.engine.CancelToken;
 import jo.lspjava.engine.CompilationEnvironment;
-import jo.lspjava.engine.JdtEngineScheduler;
+import jo.lspjava.engine.EcjEngineScheduler;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,7 +47,7 @@ public final class DiagnosticService {
      * <p><strong>Supersession coopérative :</strong> un appel pour un
      * fichier annule la passe PRÉCÉDENTE en vol sur ce même fichier (token
      * {@code prev.cancel()}), puis s'exécute sous son PROPRE token borné par
-     * {@link JdtEngineScheduler#ANALYSIS_TIMEOUT_MS} — coupé aussi si sa
+     * {@link EcjEngineScheduler#ANALYSIS_TIMEOUT_MS} — coupé aussi si sa
      * propre passe explose la borne temps (fichier pathologique). Complète la
      * supersession « file d'attente » assurée par le scheduler : une tâche
      * DÉJÀ DÉMARRÉE est elle aussi coupée.</p>
@@ -61,7 +61,7 @@ public final class DiagnosticService {
             return List.of();
         }
         try (CancelToken token = CancelToken.timeout(
-                JdtEngineScheduler.ANALYSIS_TIMEOUT_MS,
+                EcjEngineScheduler.ANALYSIS_TIMEOUT_MS,
                 java.util.concurrent.TimeUnit.MILLISECONDS)) {
             // Coupure COOPÉRATIVE de la passe antérieure en vol —
             // polling pur dans les checkpoints, jamais d'interruption du

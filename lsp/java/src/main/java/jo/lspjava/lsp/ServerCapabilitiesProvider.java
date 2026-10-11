@@ -107,7 +107,7 @@ public final class ServerCapabilitiesProvider {
         caps.setInlayHintProvider(true);
 
         // Folding — régions Java (imports repliés par défaut, corps/blocs/
-        // commentaires multi-lignes), portage JdtCodeFolder du projet de référence.
+        // commentaires multi-lignes), portage EcjCodeFolder du projet de référence.
         // Le client tire un foldingRange après chaque publication de
         // diagnostics (même cadencement que semanticTokens).
         caps.setFoldingRangeProvider(true);
@@ -118,7 +118,7 @@ public final class ServerCapabilitiesProvider {
         // 4=interface, 6=parameter/7=variable, 8=property, 9/10=méthode).
         // Le client tire textDocument/semanticTokens/full après chaque
         // publication de diagnostics ; le serveur calcule sur la lane
-        // ANALYSIS du JdtEngineScheduler (jamais devant la complétion).
+        // ANALYSIS du EcjEngineScheduler (jamais devant la complétion).
         org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions semOpts =
                 new org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions();
         org.eclipse.lsp4j.SemanticTokensLegend legend = new org.eclipse.lsp4j.SemanticTokensLegend(

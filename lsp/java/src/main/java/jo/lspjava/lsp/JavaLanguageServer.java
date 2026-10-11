@@ -162,7 +162,7 @@ public final class JavaLanguageServer implements NavLanguageServer {
         // Pré-chauffe l'index de classpath en arrière-plan : la construction
         // démarre dès initialized(), ainsi au moment où l'utilisateur ouvre
         // un fichier l'index est déjà prêt (ou en cours de construction — le
-        // didOpen attendra, mais le verrou synchronized de JdtCompilerEngine
+        // didOpen attendra, mais le verrou synchronized de EcjCompilerEngine
         // n'est pas tenu pendant la construction).
         try {
             environment.jdt().preWarmIndex();

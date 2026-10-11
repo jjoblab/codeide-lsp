@@ -65,7 +65,7 @@ public final class JavaWorkspaceService implements WorkspaceService {
                                 java.nio.charset.StandardCharsets.UTF_8)
                         : uri;
                 // Invalide le cache de parse si le moteur est initialisé.
-                if (environment.isJdtInitialized()) {
+                if (environment.isEcjInitialized()) {
                     environment.jdt().invalidateParseCache(filePath);
                     LOG.fine("didChangeWatchedFiles: invalidated parse cache for " + filePath);
                 }

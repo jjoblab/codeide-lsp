@@ -400,7 +400,7 @@ public final class CodeActionService {
                     new org.eclipse.jdt.internal.compiler.ast.TypeDeclaration[1];
             final org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration[] bestMethod =
                     new org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration[1];
-            jo.lspjava.jdt.JdtAst.traverseResilient(cud,
+            jo.lspjava.ecj.EcjAst.traverseResilient(cud,
                     new org.eclipse.jdt.internal.compiler.ASTVisitor() {
                         private boolean covers(int start, int end) {
                             return start >= 0 && end >= start
