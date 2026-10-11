@@ -629,3 +629,130 @@ prêtes ; l'étape 3 branchera l'environnement de noms du moteur vendored
 sur l'index (le `ClasspathInstantane` remplace le classpath plat de
 `CompilationEnvironment`), l'étape 4 le câblage `SessionLsp`/cel-lsp et
 l'état d'indexation UI, l'étape 5 la validation appareil (§11.2).
+
+---
+
+## 14. Étape 2 — index disque (v0.93.0, livrée)
+
+> **Mission** : prompt 2 §7.2, ADR 0111. Livrable : le module `:lsp:index`
+> (Kotlin JVM pur, ADR 0108) — un segment PAR JAR sur le disque, la fusion
+> LSM à la requête, le format binaire versionné, la construction en
+> arrière-plan avec états/progression, le nettoyage, et le banc
+> avant/après sur les trois jeux avec recette versionnée.
+
+### 14.1 Ce qui a été livré
+
+- **Format CIDX** (binaire, gros-boutien, versionné — `EcrivainSegment`/
+  `LecteurSegment`) : en-tête `magie + version + drapeaux + crc32 + clé +
+  conteneur + stats source (W7) + compteurs + table des sections` ; sections
+  ENTRÉES/PAQUETS/NOMS SIMPLES (préfixe partagé u8+u16), MEMBRES (offsets
+  par classe, sentinelle `0` = absent), CHAÎNES (table dédupliquée),
+  ORIGINES (AAR : jar interne porteur). Écriture ATOMIQUE (`.tmp` unique +
+  renommage + fsync). Corruption d'un segment ⇒ refus propre de CE segment
+  (crc/magie/version/clé/stats), reconstruction paresseuse — migration de
+  version = ré-indexation paresseuse, jamais de crash (tests aller-retour,
+  troncature, crc, version, clé, stats).
+- **Clés de segments** (`ClesSegments`) : nom de fichier opaque
+  `sha256(empreinte).idx` dans le stockage partagé
+  `~/.codeide/lsp/index/segments/` (injectable — l'hôte Android fournira
+  son répertoire à l'étape 4) ; AAR ⇒ `aar:<sha256(empreinte|jars
+  internes)>` ; dossier ⇒ signature d'arborescence (chemin relatif,
+  taille, horodatage — ADR 0111 §10).
+- **Lecteur ZIP brut** (`LecteurZipBrut`) : équivalent Kotlin du
+  `RawZipReader` vendored — `RandomAccessFile` + `Inflater`, AUCUN
+  `java.util.zip.ZipFile` (CloseGuard, ADR 0111 §6) ; sources fichier ET
+  octets en mémoire (jars internes d'AAR). ZIP petit-boutien (APPNOTE
+  §4.1.1 — constat : les signatures/entiers ZIP se lisent en
+  petit-boutien, bug corrigé avant les tests).
+- **Analyseur de fichiers de classe** (`AnalyseurClassFile`) : pool de
+  constantes minimal (Utf8 seuls conservés, Long/Double deux slots),
+  drapeaux de classe, champs et méthodes — extensions `java.members` /
+  `java.membersByOwner`.
+- **Analyseur de classpath** (`AnalyseurClasspathSysteme`) : jar (clé =
+  empreinte W6), AAR NORMALISÉ à l'indexation (classes.jar puis libs,
+  premier porteur gagnant, origines par entrée), dossier (signature) ;
+  prédicat de REPRISE injecté par le service (seul un jar manquant est
+  analysé — cible « +1 dépendance ») ; jar illisible ⇒ écart signalé,
+  jamais de crash.
+- **Vue d'index** (`VueIndex`) : FUSION LSM À LA REQUÊTE — union ORDONNÉE
+  des segments du classpath, premier porteur gagnant ; extensions servies :
+  `java.classLocator` (binaire, négatif autoritatif à l'état PRÊT),
+  `java.classNames` (borne inférieure + marche bornée — tue le balayage
+  W3), `java.packages`, `java.packageTypes` (« ni plus ni moins »),
+  `java.members`, `java.membersByOwner` (imports statiques). Lectures
+  passent par le **cache LRU borné** (30 Mo par défaut, octets comptés,
+  refus mémorisés, invalidation après reconstruction).
+- **Service** (`ServiceIndexDisque`) : construction en arrière-plan
+  (parallélisme `min(4, cœurs/2)`, annulable — l'état reste CONSTRUCTION,
+  jamais de faux PRÊT), états `{construction, prêt, partiel, erreur}` en
+  `StateFlow` avec progression par jar et comptes de reprises ;
+  auto-guérison (crc détecté à la lecture ⇒ reconstruction de CE segment
+  seul, anti-rebond) ; segments mutualisés entre modules (écritures
+  atomiques concurrentes au pire en double, contenu identique) ;
+  entrées MODULE non indexées (l'identité du frère vit dans son snapshot,
+  préséance sources > sortie réglée par le consommateur).
+- **Nettoyage** (`NettoyageSegments`) : orphelins par âge (jours de grâce,
+  âge = dernier ACCÈS), budget disque global (LRU des orphelins —
+  longueur lue AVANT suppression, bug corrigé), référencés jamais
+  amputés, dépassement restant SIGNALÉ.
+- **Banc + recette versionnée** : tâche `:lsp:index:bench` (JavaExec,
+  JVM `-Xmx2g -XX:+UseSerialGC` comme §11.1) ;
+  `scripts/lsp-index/construire-jeux.sh` (moyen = classpath
+  `debugCompileClasspath` réel de `:app` via rapport + cache modules-2 ;
+  petit = android.jar + jars androidx du moyen ; lourd = 250 premiers
+  artefacts jar+AAR du cache Gradle, tri déterministe — 122 AAR : la
+  normalisation AAR est exercée) ; `extra/extra-banc.jar` pour le +1.
+
+### 14.2 Banc avant/après (sandbox 4 Go, JVM 2 Go/SerialGC)
+
+| Mesure | petit (14) | moyen (83) | lourd (250) | AVANT (étude §4) |
+|---|---|---|---|---|
+| Index froid | 573 ms | 491 ms | 9 180 ms | 214/322/1 086 ms |
+| **Reprise à chaud** | **7 ms** | **10 ms** | **25 ms** | reconstruction 98/219/794 ms |
+| **+1 dépendance** | **85 ms** | **89 ms** | **87 ms** | 257/396/1 178 ms tout repayé |
+| Localiser négatif p50/p95 | 0,66/5,6 ms | 3,0/12 ms | 124/134 ms | n/a (balayages) |
+| Préfixe p50/p95 | 0,16/1,1 ms | 1,7/4,1 ms | 0,76/7,1 ms | complétion types 18/54/109 ms |
+| Cache LRU | 4,2 Mo | 2,9 Mo | 29,7 Mo | 19/—/108-131 Mo non bornés |
+| État final | PRÊT | PRÊT | PARTIEL (AAR sans jar interne — signalé) | n/a |
+
+**Cibles ADR 0111 tenues** : +1 dépendance = indexation du seul jar
+nouveau (les ~85 ms couvrent la validation d'en-tête des autres segments
+— 0 re-analyse) ; reprise < 1,5 s (25 ms à 250 entrées, 60× sous la
+cible) ; cache < 30 Mo (borné PAR CONSTRUCTION, 250 entrées tenues dans
+le budget). La complétion par préfixe p50 passe à 0,16-1,7 ms (recherche
+binaire par segment — W3 tué côté index). Le localisateur NÉGATIF p50 du
+jeu lourd (124 ms) reflète l'éviction LRU au budget (rechargements) :
+c'est le compromis du budget tas — les négatifs autoritatifs à l'état
+PRÊT éviteront ces sondages répétés côté moteur (étape 3), et l'étape 5
+mesurera sur appareil.
+
+### 14.3 Écarts et décisions documentés
+
+- **Jeux recalés par la recette** : moyen = 83 entrées (classpath COURANT
+  de `:app` — 73 à l'étude : le dépôt a gagné des dépendances depuis) ;
+  petit = 14 (13 jars androidx localisés dans le cache par le rapport) ;
+  lourd = 250 artefacts du cache dont 49 % d'AAR (l'étude résolvait un
+  projet Compose à 76 % d'AAR — la résolution d'un consommateur JVM
+  bute sur l'ambiguïté de variantes Compose jvm/androidJvm, la recette
+  retenue est le balayage déterministe du cache, équivalente en volume
+  et en exercice de la normalisation AAR).
+- **Froid lourd 9,2 s** : le jeu retenu contient des artefacts plus gros
+  que celui de l'étude (AAR complets androidx, ~15 ko classes chacun) ;
+  la construction est en arrière-plan et ne bloque RIEN (repli par
+  sondage — les requêtes vivent dès les premiers segments prêts).
+- **Le localisateur n'est PAS autoritatif pendant la construction** :
+  les négatifs requièrent le repli par sondage (ADR 0111 §8) — le
+  consommateur de l'étape 3 vide ses caches de localisation à la
+  transition PRÊT (P7/P8).
+- **`octetsCache` public** : transparence du budget (affichable par
+  l'UI de l'étape 4, mesuré par le banc).
+
+### 14.4 Suite — étape 3 (intégration du moteur)
+
+L'environnement de noms du moteur vendored se branche sur l'index : le
+`ClasspathInstantane` remplace le classpath plat de `CompilationEnvironment`
+(les entrées MODULE résolues par les sources du frère), la complétion par
+préfixe et les imports statiques consomment `nomsParPrefixe`/
+`membresStatiques`, le `JdtLocateCache` se vide à la transition PRÊT.
+Puis étape 4 (hôte, `SessionLsp`, état d'indexation UI, test de fuite)
+et étape 5 (validation appareil §11.2).

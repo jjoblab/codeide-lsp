@@ -77,3 +77,42 @@
 - Les empreintes de classpath (W6) vivent dans `lsp:model` (étape 1) :
   l'empreinte d'un module = la combinaison ordonnée des clés de ses
   segments.
+
+## Mise en œuvre (v0.93.0 — étape 2, livrée)
+
+Le module `:lsp:index` implémente ce contrat (détail : docs/LSP_JAVA.md
+§14). Points arrêtés pendant l'implémentation :
+
+1. **Emplacement du stockage partagé** : `~/.codeide/lsp/index/segments/`
+   en JVM (l'emplacement est INJECTÉ par le constructeur — l'hôte
+   Android de l'étape 4 fournira le répertoire applicatif, jamais un
+   chemin deviné).
+2. **Format** : « CIDX », gros-boutien, sections numérotées (catalogue
+   ouvert — `java.sources` de §7.3 restera pour l'étape 3), membres
+   décodés PARESSEUSEMENT (le bloc reste brut — un gros segment ne
+   déclenche pas des centaines de milliers d'objets), offsets de membres
+   décalés de 1 (la sentinelle 0 = absent ne peut pas confondre le
+   premier bloc réel).
+3. **Reprise rapide** : l'en-tête SEUL est validé à la re-ouverture
+   (magie, version, clé, stats W7 — pas le crc) : 250 segments se
+   valident en 25 ms (cible tenue avec 60× de marge) ; la corruption
+   est attrapée à la lecture complète et AUTO-GUÉRIE (reconstruction de
+   CE segment, anti-rebond, refus mémorisé entre-temps).
+4. **Lecture bornée** : cache LRU par segment DÉCODÉ (octets comptés,
+   budget 30 Mo) — le compromis mesuré au jeu lourd : les négatifs en
+   éviction rechargent des segments (p50 124 ms) ; à l'état PRÊT le
+   consommateur cesse de sonder et les négatifs deviennent gratuits.
+5. **Le lourd du banc** (recette versionnée) : 250 artefacts du cache
+   Gradle (49 % d'AAR — la normalisation §10 est exercée) ; la
+   résolution d'un consommateur JVM d'un projet Compose bute sur
+   l'ambiguïté de variantes `jvm`/`androidJvm` des artefacts Compose —
+   le balayage déterministe du cache est retenu (équivalent en volume,
+   documenté dans LSP_JAVA.md §14.3).
+6. **ZIP petit-boutien** : les signatures et entiers du format ZIP se
+   lisent en PETIT-boutien (APPNOTE §4.1.1) — le `LecteurZipBrut` Kotlin
+   implémente les deux boutismes explicitement (`OctetsIndex`), le
+   format CIDX reste gros-boutien (`DataOutputStream`).
+
+Résultats du banc (§14.2) : reprise 7/10/25 ms ; +1 dépendance
+85/89/87 ms (vs 257/396/1 178 ms tout repayé avant) ; cache borné
+4,2/2,9/29,7 Mo.
