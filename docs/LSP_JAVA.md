@@ -1196,3 +1196,98 @@ Observation de fin de vie : le champ `indexNoms` du moteur est FINAL
 — `dispose()` ne peut pas le détacher ; l'hôte doit lâcher moteur ET
 index (le banc mesure le dispose références mortes : 12–13 Mo partout,
 poignées 45–47 — contrat « 0 ressource orpheline » tenu).
+
+---
+
+## 16. Étape 4 — hôte, cycle de vie, éditeur (v0.99.0+, en cours)
+
+Plan §10 : `SessionLsp` (transport abstrait D2, ADR 0109), branchement
+`cel-lsp` (aligner lsp4j 0.21.2/0.22.0 — écart §2.6), état d'indexation
+dans l'UI + action « Réindexer », test de fuite à la fermeture
+(prompt 3). Découpage en lots livrables :
+
+### 16.1 Lot h1 — le module `:lsp:host` (v0.99.0, livré)
+
+**`SessionLsp`** — la façade aux frontières nettes (ADR 0109) :
+`appliquerClasspath(ClasspathResult)` (post-sync v8), `reindexer()`
+(l'action « Réindexer »), `serveur()` (UN `JavaLanguageServer` LSP4J
+par connexion — le supplier du transport), `definition()` (le
+branchement cel-lsp in-process :
+`LanguageServerDefinition("java")` + `InProcessStreamConnectionProvider`),
+`modele`/`etatIndexation` (flux publics DÉCOUPLÉS des types internes de
+`:lsp:index` — `PhaseIndexation`/`EtatIndexation` sont à l'hôte), et
+`close()` : scope de coroutines annulé, moteurs (défaut + modules)
+disposés, modèle vidé — usage ultérieur REFUSÉ explicitement.
+
+**`OrchestrateurLsp`** (interne) — le triptyque :
+1. **Modèle** : `ConvertisseurModeleLsp.depuisClasspathResult` (v8,
+   ADR 0113) → `ProjetLsp` publié dans `DepotModeleLsp` ;
+2. **Index** : UNE vue FUSION sur l'union des classpaths (ADR 0111 §3
+   — l'empreinte de contenu fait la déduplication : deux modules
+   partageant un jar partagent le MÊME segment) ; entrées `MODULE` non
+   indexées (l'identité du frère vit dans son propre instantané) et
+   `DOSSIER` non plus en ce premier branchement (les sources du frère
+   couvrent ses types — écart documenté, évolution possible) ;
+   **budget de cache dérivé du modèle** (leçon §15.8 point 3 : ~512
+   Kio par entrée, plancher 30 Mio — croissance monotone : le service
+   n'est recréé que si le corpus dépasse le budget courant, les
+   segments persistant, zéro ré-indexation) ;
+   sync redondant = no-op chaud (empreinte de l'union inchangée →
+   même adaptateur → `setIndexNoms` idempotent → moteurs conservés).
+3. **Moteurs** : UN contexte PAR module via l'API qualifiée du lot E
+   (`remplacerContexteModule`) — racines sources = les siennes
+   (principal + générés) + celles des frères déclarés en entrée
+   `MODULE` (résolution en sources du frère, motif lot C, un niveau,
+   pas transitif) ; classpath = ses jars existants ; modules `ignore`
+   comptés, sans contexte.
+
+**`AdaptateurIndexNoms`** (interne) — l'adaptateur de PRODUCTION de la
+SPI (l'homologue de test vit dans `:lsp:testing` v0.96.3) : empreintes
+du MODÈLE (pas de relecture sha256), transition PRÊT par collecte du
+`StateFlow` dans le scope de la session (pas de fil surveillant),
+contrat P7/P8 (notification unique, PARTIEL/ERREUR = repli jamais
+autorité).
+
+**`LecteurStatistiquesFichierDisque`** — la première implémentation
+réelle de la couture injectable de `:lsp:model` (existe/taille/mtime/
+empreintePartielle — lecture bornée manuelle : `readNBytes` est API
+33, minSdk 26 visé).
+
+**Alignement lsp4j (écart §2.6 tranché : ALIGNER)** : `:lsp:host`
+déclare lsp4j explicitement (`:lsp:java` le porte en `implementation`
+— choix vendored) ; la résolution prend **0.22.0** (imposée par
+cel-lsp). `AlignementLsp4jTest` prouve le moteur binaire 0.21.2 SOUS
+0.22.0 : cycle complet initialize/initialized/didOpen/completion/
+shutdown/exit + version résolue vérifiée. La voie RemoteEndpoint/gson
+complète vivra avec le branchement h2.
+
+**Tests (9)** : `OrchestrateurLspTest` (modèle/modules/2 moteurs
+distincts/résolution frère/complétion via l'index/PRÊT/sync
+redondant/ignorés/budget par jar), `SessionLspTest` (**test de fuite**
+— le serveur est COLLECTABLE après close : la chaîne
+serveur→environnement→moteurs→adaptateur→cache LRU meurt AVEC la
+session, les locales comprises — le champ `indexNoms` du moteur est
+FINAL, §15.8 : garder la session vivante garderait la chaîne ;
+poignées stables ; close idempotent ; usage refusé),
+`AlignementLsp4jTest`. kover ≥ 80 %, detekt/spotless/lint verts,
+`checkModuleDependencies` conforme (allow-list §5.2 :
+`lsp:java`/`lsp:index`/`lsp:model`).
+
+### 16.2 Lot h2 — branchement éditeur + UI (à faire)
+
+- `feature:editor` : `LspProject(racine)` +
+  `addServerDefinition(session.definition())` +
+  `createEditor(fichier)` → `LspEditor.setEditorView(EditorView)` →
+  `connect()` (cel-lsp mène le cycle LSP ; l'éditeur reçoit
+  complétion/diagnostics/hover) — l'`EditorView` unique de
+  `EditorActivity` (rebranché à la volée par onglet) ;
+- état d'indexation dans l'UI (`session.etatIndexation` — la vue
+  point d'état existante) + action « Réindexer » (`session.reindexer()`)
+  au menu de l'éditeur ;
+- l'alimentation : le flux de sync → `ClasspathResult` BRUT (le client
+  convertit aujourd'hui vers `core:domain` — ajouter l'accesseur
+  protocole côté `tooling:client`, puis `session.appliquerClasspath`)
+  ;
+- le cycle de vie par activité (session ouverte à l'ouverture du
+  projet, close à la fermeture — le test de fuite h1 couvre déjà le
+  contrat).
