@@ -782,7 +782,7 @@ de lot (dépôt vert, tests verts).
 | C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (jarDe/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT, réouverture chaude sans index mémoire | 0.96.0 | **livré** |
 | D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.1 | **livré** |
 | E | Moteur par module — verrou global → périmètre module | 0.97.0 | à faire |
-| F | Correctif « 0 item » NOM + banc moteur (cible p95 < 100 ms) + suite de non-régression portée | 0.98.0 | à faire |
+| F | Correctif « 0 item » NOM (contrat jamais-null, livré 0.96.2) + banc moteur (cible p95 < 100 ms — RESTE : jeux de données) | 0.96.2 / à continuer |
 | G | D3 lots 2–4 (réécritures niveau B, ~19 fichiers — à étaler sur plusieurs sessions) | ≥ 0.99.0 | à faire |
 
 **Écart assumé et documenté** (lot B) : le plan §7 prévoyait le renommage
@@ -880,8 +880,18 @@ d'intégration Java dans `:lsp:java`, `testImplementation(project(
 - **E — moteur par module** : un `EcjCompilerEngine` PAR module (son
   classpath, son verrou) dans `CompilationEnvironment` ; les
   complétions du module A ne bloquent plus le module B.
-- **F — « 0 item » NOM + banc moteur** : reproduire au banc porté
-  (rouge), corriger, mesurer la cible p95 < 100 ms.
+- **F — « 0 item » NOM (v0.96.2, 1re partie livrée) + banc moteur
+  (reste)** : le symptôme était le CONTRAT — `complete()` rendait
+  `null` sur les contextes non capturés par conception (nom de
+  déclaration, annotation en recovery, position après `[]`), null que
+  les appelants avalaient en NPE (« 0 items » au banc). Corrigé :
+  liste vide honnête partout (6 tests de non-régression sur jar
+  compilé au vol). RESTE : port du banc moteur (latences NOM p50/p95
+  avant/après index — cible p95 < 100 ms §9) — requiert les jeux de
+  données (`scripts/lsp-index/construire-jeux.sh` — Android SDK ou
+  cache Gradle peuplé) indisponibles dans le bac à sable de cette
+  session ; à exécuter en environnement outillé, avec le protocole
+  §11.2 sur appareil à l'étape 5.
 - **G — D3 lots 2–4** : ~19 fichiers niveau B à réécrire depuis
   spécification (§5.3), à étaler sur plusieurs sessions ; lot 4
   (ecj-art) selon l'option retenue par le propriétaire (D3 reste

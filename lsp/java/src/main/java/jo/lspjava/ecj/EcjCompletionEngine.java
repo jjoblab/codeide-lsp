@@ -133,7 +133,12 @@ public final class EcjCompletionEngine {
 
     private List<CompletionItem> completeImpl(String filePath, String source,
                                               int offset, StringBuilder trace) {
-        if (EcjCompilerEngine.DISABLED) return null;
+        // CONTRAT (lot F, étape 3) : complete() ne rend JAMAIS null —
+        // un contexte non capturé (nom de déclaration, annotation en
+        // recovery…) rend une liste VIDE honnête. L'ancien null était
+        // avalé en NPE par les appelants et se manifestait comme le
+        // « 0 item » du banc (étude §4.3 — symptôme « got 0 items »).
+        if (EcjCompilerEngine.DISABLED) return new ArrayList<>();
 
         int caret = Math.max(0, Math.min(offset, source.length()));
 
@@ -322,7 +327,9 @@ public final class EcjCompletionEngine {
                 return textual;
             }
         }
-        return best;
+        // CONTRAT : jamais null (cf. en tête de completeImpl). Les appels
+        // suivants peuvent trier — liste VIDE mutable.
+        return best != null ? best : new ArrayList<>();
     }
 
     /**
