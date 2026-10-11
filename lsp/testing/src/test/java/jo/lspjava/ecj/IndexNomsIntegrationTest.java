@@ -34,7 +34,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Tests d'intégration du BRANCHEMENT index disque (étape 3 lot C,
  * ADR 0111 §8 ; docs/LSP_JAVA.md §15.4) — le moteur vendored consomme
  * l'index Kotlin {@code :lsp:index} à travers la SPI
- * {@link jo.lspjava.api.IndexNoms}.
+ * {@link jo.lspjava.api.IndexNoms}. La suite vit dans le module
+ * {@code :lsp:testing} (v0.96.3 — au-dessus du moteur et de l'index,
+ * pattern {@code :tooling:testing} : le cœur vendored ne dépend
+ * d'AUCUN module interne, test compris, ADR 0108).
  *
  * <p><strong>Fixtures :</strong> un jar RÉEL compilé à l'exécution
  * (javac du JDK de test — aucune dépendance à android.jar ou au cache

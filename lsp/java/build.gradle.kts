@@ -62,38 +62,13 @@ configurations {
 
 val eclipseArtDir = layout.buildDirectory.dir("eclipse-art")
 
-dependencies {
-    // jdt.core = DOM + formateur Eclipse ; son graphe compile-scope apporte
-    // ecj (compilateur interne), core.runtime (+ equinox.common, osgi,
-    // contenttype, jobs…), core.resources, core.filesystem, org.eclipse.text.
-    "eclipseRaw"(libs.eclipse.jdt.core)
-    "eclipsePatcher"(project(":lsp:ecj-art"))
-
-    // ★ Jars Eclipse patchés pour ART — compile + runtime. Propagent aux
-    // consommateurs (runtimeElements) qui les dexent dans l'APK. Le fileTree
-    // est évalué paresseusement ; les tâches de compilation/test dépendent
-    // de patchEclipseForArt (cf. ci-dessous).
-    // ★ api (pas implementation) : les consommateurs utilisent AUSSI l'AST
-    // ecj directement (SymbolIndexer) — les jars Eclipse doivent être sur
-    // leur classpath de compilation.
-    api(fileTree(eclipseArtDir) { include("*.jar") })
-
-    implementation(libs.lsp4j)
-    implementation(libs.gson)
-
-    // Étape 3 lot C : tests d'intégration du branchement index disque —
-    // l'ADAPTATEUR de test (Java) consomme :lsp:index (Kotlin) pour
-    // implémenter la SPI jo.lspjava.api.IndexNoms. TEST-ONLY : le cœur
-    // vendored ne dépend d'AUCUN module Kotlin (ADR 0108) — l'adaptateur
-    // de production vivra dans :lsp:host (étape 4). Les coroutines sont
-    // requises au COMPIL du test (l'impl du service est `implementation`
-    // côté :lsp:index — non transitive au compil).
-    testImplementation(project(":lsp:index"))
-    testImplementation(libs.kotlinx.coroutines.core)
-
-    testImplementation(libs.junit.jupiter)
-    testRuntimeOnly(libs.junit.platform.launcher)
-}
+// Le patcheur est déclaré AVANT les dépendances : le fileTree api des
+// jars patchés (ci-dessous) porte builtBy(patchEclipseForArt) —
+// l'ordonnancement voyage AVEC la dépendance de fichiers, garantissant
+// aux CONSOMMATEURS (:lsp:testing, v0.96.3) que le patcher a produit
+// les jars avant toute tâche qui résolvent ce classpath (compilation,
+// tests). Les dependsOn explicites de fin de script restent en doublon
+// de sécurité pour les tâches de CE module.
 
 /**
  * Réécrit chaque jar Eclipse du graphe jdt.core pour le runtime Android.
@@ -163,6 +138,43 @@ val patchEclipseForArt =
         classpathPatcher.from(configurations["eclipsePatcher"])
         dossierSortie.set(eclipseArtDir)
     }
+
+dependencies {
+    // jdt.core = DOM + formateur Eclipse ; son graphe compile-scope apporte
+    // ecj (compilateur interne), core.runtime (+ equinox.common, osgi,
+    // contenttype, jobs…), core.resources, core.filesystem, org.eclipse.text.
+    "eclipseRaw"(libs.eclipse.jdt.core)
+    "eclipsePatcher"(project(":lsp:ecj-art"))
+
+    // ★ Jars Eclipse patchés pour ART — compile + runtime. Propagent aux
+    // consommateurs (runtimeElements) qui les dexent dans l'APK. Le fileTree
+    // est évalué paresseusement ; builtBy(patchEclipseForArt) fait voyager
+    // l'ordonnancement AVEC la dépendance de fichiers : les tâches de CE
+    // module et des CONSOMMATEURS (:lsp:testing) exécutent le patcher en
+    // premier (v0.96.3 — les dépendances de fichiers portent leurs
+    // dépendances de tâches).
+    // ★ api (pas implementation) : les consommateurs utilisent AUSSI l'AST
+    // ecj directement (SymbolIndexer) — les jars Eclipse doivent être sur
+    // leur classpath de compilation.
+    api(fileTree(eclipseArtDir) {
+        include("*.jar")
+        builtBy(patchEclipseForArt)
+    })
+
+    implementation(libs.lsp4j)
+    implementation(libs.gson)
+
+    // Étape 3 lot C (v0.96.3) : la suite d'intégration du branchement
+    // index disque (AdaptateurIndexNoms + IndexNomsIntegrationTest) vit
+    // dans :lsp:testing — la CI a rejeté le testImplementation(project(
+    // ":lsp:index")) posé au lot C (checkModuleDependencies, section 5.2 :
+    // le module vendored ne dépend d'AUCUN module interne, test compris
+    // — ADR 0108). Le cœur de ce module reste autonome : AUCUNE
+    // dépendance de projet ici, test ou production.
+
+    testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.platform.launcher)
+}
 
 // Le jar patché doit exister avant de compiler/tester/packager ce module
 // (le moteur importe org.eclipse.jdt.internal.compiler.* et le formateur

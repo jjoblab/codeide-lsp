@@ -32,11 +32,14 @@ import java.util.logging.Logger;
  * ({@code :lsp:index}, Kotlin) — étape 3 lot C.
  *
  * <p>Rôle : prouver le BRANCHEMENT réel (le moteur Java consomme
- * l'index Kotlin à travers la SPI) dans les tests d'intégration du
- * module vendored. L'adaptateur de PRODUCTION vivra dans
- * {@code :lsp:host} (étape 4) : il traduira le {@code ClasspathInstantane}
- * du modèle (entrées MODULE résolues en sources du frère, AAR déjà
- * normalisés v8) et branchera la vue sur le répertoire applicatif.</p>
+ * l'index Kotlin à travers la SPI) dans la suite d'intégration
+ * {@code :lsp:testing} (v0.96.3 — module de test AU-DESSUS du moteur
+ * et de l'index, pattern {@code :tooling:testing} : le cœur vendored
+ * ne porte aucune dépendance interne, test compris). L'adaptateur de
+ * PRODUCTION vivra dans {@code :lsp:host} (étape 4) : il traduira le
+ * {@code ClasspathInstantane} du modèle (entrées MODULE résolues en
+ * sources du frère, AAR déjà normalisés v8) et branchera la vue sur
+ * le répertoire applicatif.</p>
  *
  * <p>La clé de segment est l'empreinte W6 du modèle : cet adaptateur de
  * test dérive une clé STABLE par jar (contenu identique = clé

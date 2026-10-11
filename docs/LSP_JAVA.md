@@ -779,10 +779,12 @@ le dépôt GitHub est la source de vérité durable. Procédure vérifiée
    `curl -sL -o jdk21.tar.gz "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse" && tar xzf jdk21.tar.gz`.
 3. **Gradle** : `export JAVA_HOME=/home/z/jdks/jdk-21.0.12.1+1
    GRADLE_USER_HOME=/home/z/.gradle` puis `./gradlew --no-daemon
-   :lsp:java:test` (le wrapper télécharge Gradle 9.7.1 ; premier
-   passage ~2 min). **Baseline attendue : `:lsp:java` 291 tests,
-   69 skippés env-dépendants (android.jar absent du bac à sable),
-   `:lsp:index` 59, `:lsp:model` 35, `:lsp:ecj-art` 2 — 0 échec.**
+   :lsp:java:test :lsp:testing:test` (le wrapper télécharge Gradle
+   9.7.1 ; premier passage ~2 min). **Baseline attendue : `:lsp:java`
+   287 tests, 69 skippés env-dépendants (android.jar absent du bac à
+   sable), `:lsp:testing` 4 (intégration moteur ↔ index, v0.96.3 —
+   tournent en CI via koverVerify), `:lsp:index` 59, `:lsp:model` 35,
+   `:lsp:ecj-art` 2 — 0 échec.**
 4. **Android SDK : absent du bac à sable** — les tests android.jar se
    skippent proprement (Assumptions) ; le banc moteur (lot F2) et la
    recette des jeux (`scripts/lsp-index/construire-jeux.sh`) exigent
@@ -905,9 +907,13 @@ il expose une **SPI publique `jo.lspjava.api.IndexNoms`** (requêtes +
 4. `membresStatiques(fqcn)` — les imports statiques.
 
 Le fil Kotlin (adaptateur `VueIndex` → `IndexNoms`) vit côté
-`:lsp:index` en source de test/banc dans un premier temps (tests
-d'intégration Java dans `:lsp:java`, `testImplementation(project(
-":lsp:index"))`) ; le branchement de production arrive à l'étape 4
+`:lsp:index` en source de test/banc dans un premier temps ; la suite
+d'intégration Java vit dans le module dédié **`:lsp:testing`**
+(v0.96.3 — le `testImplementation(project(":lsp:index"))` posé dans
+`:lsp:java` au lot C a été REJETÉ par la CI au `checkModuleDependencies` :
+section 5.2, le module vendored ne dépend d'AUCUN module interne, test
+compris, ADR 0108 ; la suite vit AU-DESSUS des deux modules, pattern
+`:tooling:testing`) ; le branchement de production arrive à l'étape 4
 (`:lsp:host`). `CompilationEnvironment` expose
 `setIndexNoms(IndexNoms)` et propage au moteur dérivé.
 
