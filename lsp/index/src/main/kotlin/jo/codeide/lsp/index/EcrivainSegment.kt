@@ -94,7 +94,17 @@ internal class EcrivainSegment {
         fichier: File,
     ) {
         val octets = serialiser(donnees)
-        val temporaire = File(fichier.parentFile, fichier.name + "-" + ProcessHandle.current().pid() + ".tmp")
+        // Le nom temporaire est UNIQUE PAR ÉCRITURE (pid + thread + nano) :
+        // deux constructions concurrentes du MÊME contenu (vues distinctes)
+        // écriraient sinon le même .tmp — collision de renommage, l'une
+        // échouerait en ERREUR (constaté sur CI).
+        val temporaire =
+            File(
+                fichier.parentFile,
+                fichier.name + "-" + ProcessHandle.current().pid() + "-" + Thread.currentThread().threadId() + "-" +
+                    System.nanoTime() +
+                    ".tmp",
+            )
         FileOutputStream(temporaire).use { sortie ->
             sortie.write(octets)
             sortie.fd.sync()
