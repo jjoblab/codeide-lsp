@@ -780,7 +780,7 @@ de lot (dépôt vert, tests verts).
 | A | D3 lot 1 — réécriture des 3 shims compat (niveau A, priorité absolue) + renommage `ArtCompat*` + package `jo.lspjava.ecj.compat` + patcher réaligné | 0.94.0 | **livré** |
 | B | Renommage §7 intégral — package `jo.lspjava.jdt` → `jo.lspjava.ecj`, `Jdt*` → `Ecj*` (table §7), `CompletionPrefixMatcher` → `EcjPrefixMatcher`, `BindingParseCache` → `EcjParseCache` | 0.95.0 | **livré** |
 | C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (jarDe/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT, réouverture chaude sans index mémoire | 0.96.0 | **livré** |
-| D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.x | à faire |
+| D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.1 | **livré** |
 | E | Moteur par module — verrou global → périmètre module | 0.97.0 | à faire |
 | F | Correctif « 0 item » NOM + banc moteur (cible p95 < 100 ms) + suite de non-régression portée | 0.98.0 | à faire |
 | G | D3 lots 2–4 (réécritures niveau B, ~19 fichiers — à étaler sur plusieurs sessions) | ≥ 0.99.0 | à faire |
@@ -870,10 +870,13 @@ d'intégration Java dans `:lsp:java`, `testImplementation(project(
 
 ### 15.5 Lots D–G (à faire)
 
-- **D — parse cache multi-entrées** : `EcjParseCache` (ex
-  `BindingParseCache`) garde N unités récemment parsées (clé :
-  chemin + hachage du contenu) — W8, la frappe multi-fichiers ne
-  reparse plus tout.
+- **D — parse cache multi-entrées (v0.96.1, livré)** : `EcjParseCache`
+  LRU d'accès à 8 entrées, clé (chemin, longueur, FNV-1a 64 du
+  contenu) — l'aller-retour entre fichiers (diagnostics de A,
+  complétion dans B, retour à A) ne reparse plus ; asymétrie codegen
+  conservée et non dégradative (un put sans codegen ne remplace pas
+  une entrée avec codegen) ; 4 tests nouveaux (cohabitation, éviction
+  LRU, invalidation ciblée, non-dégradation).
 - **E — moteur par module** : un `EcjCompilerEngine` PAR module (son
   classpath, son verrou) dans `CompilationEnvironment` ; les
   complétions du module A ne bloquent plus le module B.

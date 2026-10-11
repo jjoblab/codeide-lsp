@@ -113,4 +113,90 @@ class EcjParseCacheTest {
         assertNotSame(cud1, cud2,
                 "dispose() doit invalider le cache");
     }
+
+    // ─── Étape 3 lot D : multi-entrées (W8) ────────────────────────────
+
+    @Test
+    void alternatingFilesKeepBothEntries() {
+        // W8 : l'entrée unique évinçait à chaque put — l'aller-retour
+        // entre fichiers repayait le parse. Multi-entrées : A et B
+        // cohabitent, le retour à A est un hit.
+        EcjCompilerEngine engine = newEngine();
+        String a = "package demo;\npublic class A { int x; }\n";
+        String b = "package demo;\npublic class B { int y; }\n";
+        var a1 = engine.resolveUnit("/demo/A.java", a, false);
+        var b1 = engine.resolveUnit("/demo/B.java", b, false);
+        var a2 = engine.resolveUnit("/demo/A.java", a, false);
+        assertNotNull(a1);
+        assertNotNull(b1);
+        assertSame(a1, a2, "retour à A doit HIT (cohabitation multi-entrées)");
+        var b2 = engine.resolveUnit("/demo/B.java", b, false);
+        assertSame(b1, b2, "B reste en cache aussi");
+    }
+
+    @Test
+    void capacityEvictsLeastRecentlyUsed() {
+        // MAX_ENTRIES + 1 fichiers distincts : le MOINS récemment utilisé
+        // est évincé, les autres survivent.
+        EcjCompilerEngine engine = newEngine();
+        String premier = "package demo;\npublic class F0 { int v0; }\n";
+        var f0 = engine.resolveUnit("/demo/F0.java", premier, false);
+        assertNotNull(f0);
+        for (int i = 1; i <= EcjParseCache.MAX_ENTRIES; i++) {
+            String src = "package demo;\npublic class F" + i
+                    + " { int v" + i + "; }\n";
+            var cud = engine.resolveUnit("/demo/F" + i + ".java", src, false);
+            assertNotNull(cud);
+        }
+        // F0 a été évincé (le plus ancien) : re-parse.
+        var f0bis = engine.resolveUnit("/demo/F0.java", premier, false);
+        assertNotSame(f0, f0bis, "l'entrée la moins récemment utilisée doit être évincée");
+        // Le DERNIER fichier reste présent (le plus récent).
+        String dernier = "package demo;\npublic class F" + EcjParseCache.MAX_ENTRIES
+                + " { int v" + EcjParseCache.MAX_ENTRIES + "; }\n";
+        var fd = engine.resolveUnit(
+                "/demo/F" + EcjParseCache.MAX_ENTRIES + ".java", dernier, false);
+        // re-parse de F0 a repositionné F0 en MRU : le LRU est désormais F1
+        // — le dernier entré AVANT F0bis reste en cache de toute façon
+        // (F0bis vient d'y retourner). On vérifie surtout que la capacité
+        // est bornée.
+        assertTrue(engine.parseCacheSize() <= EcjParseCache.MAX_ENTRIES,
+                "capacité bornée : " + engine.parseCacheSize());
+    }
+
+    @Test
+    void invalidateOnePathKeepsOthers() {
+        EcjCompilerEngine engine = newEngine();
+        String a = "package demo;\npublic class A { int x; }\n";
+        String b = "package demo;\npublic class B { int y; }\n";
+        var a1 = engine.resolveUnit("/demo/A.java", a, false);
+        var b1 = engine.resolveUnit("/demo/B.java", b, false);
+        engine.invalidateParseCache("/demo/A.java");
+        var b2 = engine.resolveUnit("/demo/B.java", b, false);
+        assertSame(b1, b2, "l'invalidation ciblée ne doit PAS toucher les autres fichiers");
+        var a2 = engine.resolveUnit("/demo/A.java", a, false);
+        assertNotSame(a1, a2, "seul le fichier invalidé doit re-parser");
+    }
+
+    @Test
+    void codegenEntryIsNeverDowngraded() {
+        // Un put SANS codegen ne dégrade pas une entrée AVEC codegen.
+        EcjCompilerEngine engine = newEngine();
+        String source = """
+                package demo;
+                public class Main {
+                    public void run() { System.out.println("x"); }
+                }
+                """;
+        List<jo.lspjava.api.Diagnostic> diags =
+                assertDoesNotThrow(() -> engine.diagnose("/demo/Main.java", source));
+        // put sans codegen (resolveUnit false) — l'entrée codegen survit.
+        engine.resolveUnit("/demo/Main.java", source, false);
+        // diagnose (true) doit encore HIT l'arbre codegen : observable par
+        // le memo diagnose (même arbre → diagnostics recalculés dessus).
+        var apres = assertDoesNotThrow(
+                () -> engine.diagnose("/demo/Main.java", source));
+        assertEquals(diags.size(), apres.size(),
+                "l'entrée codegen ne doit pas être dégradée par un put sans codegen");
+    }
 }

@@ -245,6 +245,14 @@ public final class EcjCompilerEngine {
      */
     private final EcjParseCache parseCache = new EcjParseCache();
 
+    /**
+     * @return nombre d'entrées du cache de parse (observabilité du lot D :
+     *         borne multi-entrées, tests).
+     */
+    int parseCacheSize() {
+        return parseCache.size();
+    }
+
     public EcjCompilerEngine(List<File> sourceRoots,
                              List<File> classpathEntries,
                              String complianceLevel) {
