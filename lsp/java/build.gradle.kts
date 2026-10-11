@@ -17,9 +17,9 @@
 // ecj et le formateur Eclipse DANS le process de l'app (ADR 0109,
 // in-process). Les jars Eclipse sont du pur Java mais référencent des API
 // absentes du runtime Android (minSdk 26) :
-//   - java.lang.Runtime$Version   → renommé vers le shim jo/lspjava/jdt/compat/RuntimeVersion
-//   - java.lang.StackWalker       → renommé vers le shim jo/lspjava/jdt/compat/StackWalker
-//   - InputStream.readAllBytes/NBytes → call-sites réécrits vers InputStreamCompat (API 33+)
+//   - java.lang.Runtime$Version   → renommé vers le shim jo/lspjava/ecj/compat/ArtCompatVersion
+//   - java.lang.StackWalker       → renommé vers le shim jo/lspjava/ecj/compat/ArtCompatStackWalker
+//   - InputStream.readAllBytes/NBytes → call-sites réécrits vers ArtCompatInputStream (API 33+)
 // La tâche patchEclipseForArt exécute :lsp:ecj-art (ProcessBuilder) sur
 // CHAQUE jar du graphe Maven de org.eclipse.jdt:org.eclipse.jdt.core et
 // produit build/eclipse-art/<nom>-art.jar. Les renommages sont inoffensifs

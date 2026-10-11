@@ -18,7 +18,7 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import jo.lspjava.jdt.compat.InputStreamCompat;
+import jo.lspjava.ecj.compat.ArtCompatInputStream;
 
 /**
  * Index de classpath PARTAGÉ pour le compilateur ecj — le portage Java du
@@ -75,7 +75,7 @@ import jo.lspjava.jdt.compat.InputStreamCompat;
  * <p><strong>Note ART (minSdk 26) :</strong> ce code tourne dans l'app —
  * seules les API API-26 sont utilisées. {@code InputStream.readAllBytes} /
  * {@code Files.readString} / {@code Path.of} (tous API 33+) sont remplacés
- * par {@link InputStreamCompat} / {@code new String(Files.readAllBytes(..))}
+ * par {@link jo.lspjava.ecj.compat.ArtCompatInputStream} / {@code new String(Files.readAllBytes(..))}
  * / {@link Paths#get}.</p>
  *
  * @author jo@Dev
@@ -1214,7 +1214,7 @@ final class JdtCompilerEnvironment {
         Path p = jrtIndex == null ? null : jrtIndex.get(fqcn);
         if (p == null) return null;
         try (InputStream in = Files.newInputStream(p)) {
-            return InputStreamCompat.readAllBytes(in);
+            return ArtCompatInputStream.readAllBytes(in);
         } catch (Throwable t) {
             // Lecture jrt illisible — best-effort, tracée en debug.
             LOG.log(Level.FINE, "Lecture jrt illisible", t);

@@ -154,7 +154,7 @@ class EcjArtPatcherTest {
 
         // 1. Runtime$Version renommé partout (champ + descripteurs d'appel).
         boolean referencesShim = collector.typeRefs.stream()
-                .anyMatch(d -> d.contains("jo/lspjava/jdt/compat/RuntimeVersion"));
+                .anyMatch(d -> d.contains("jo/lspjava/ecj/compat/ArtCompatVersion"));
         assertTrue(referencesShim,
                 "Le descripteur de champ doit référencer le shim : "
                         + collector.typeRefs);
@@ -166,12 +166,12 @@ class EcjArtPatcherTest {
         // 2. readAllBytes/readNBytes réécrits en INVOKESTATIC vers le shim.
         assertTrue(collector.methodCalls.contains(
                         Opcodes.INVOKESTATIC
-                                + " jo/lspjava/jdt/compat/InputStreamCompat.readAllBytes(Ljava/io/InputStream;)[B"),
+                                + " jo/lspjava/ecj/compat/ArtCompatInputStream.readAllBytes(Ljava/io/InputStream;)[B"),
                 "readAllBytes doit être réécrit vers le shim : "
                         + collector.methodCalls);
         assertTrue(collector.methodCalls.contains(
                         Opcodes.INVOKESTATIC
-                                + " jo/lspjava/jdt/compat/InputStreamCompat.readNBytes(Ljava/io/InputStream;I)[B"),
+                                + " jo/lspjava/ecj/compat/ArtCompatInputStream.readNBytes(Ljava/io/InputStream;I)[B"),
                 "readNBytes doit être réécrit vers le shim : "
                         + collector.methodCalls);
         assertFalse(collector.methodCalls.stream()

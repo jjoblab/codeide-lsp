@@ -12,12 +12,12 @@
 //
 //   1. java.lang.Runtime$Version — absent d'ART (ecj l'utilise dans
 //      org.eclipse.jdt.internal.compiler.parser.Parser pour comparer la
-//      version -source demandée) → renommé vers jo/lspjava/jdt/compat/
-//      RuntimeVersion (shim livré dans :lsp:java).
+//      version -source demandée) → renommé vers jo/lspjava/ecj/compat/
+//      ArtCompatVersion (shim livré dans :lsp:java, réécrit D3 lot 1).
 //   2. InputStream.readAllBytes()/readNBytes() — Java 9, absents d'Android
 //      avant l'API 33 ; ecj les atteint dès Parser.<clinit> (chargement des
 //      tables du parseur) → les call-sites INVOKEVIRTUAL sont réécrits en
-//      INVOKESTATIC jo/lspjava/jdt/compat/InputStreamCompat.
+//      INVOKESTATIC jo/lspjava/ecj/compat/ArtCompatInputStream.
 //   3. java.lang.StackWalker → renommé vers le shim (core.runtime).
 //   4. Métadonnées OSGi/signatures/MR-jar retirées.
 //

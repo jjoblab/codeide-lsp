@@ -756,3 +756,129 @@ préfixe et les imports statiques consomment `nomsParPrefixe`/
 `membresStatiques`, le `JdtLocateCache` se vide à la transition PRÊT.
 Puis étape 4 (hôte, `SessionLsp`, état d'indexation UI, test de fuite)
 et étape 5 (validation appareil §11.2).
+
+---
+
+## 15. Étape 3 — intégration du moteur (v0.94.0+)
+
+> **Mission** : prompt 2 §7.1/§7.3 ; plan §10. Livrables : le traitement
+> D3 par lots (§5.3) + renommage §7 au fil des lots ; l'environnement de
+> noms du moteur adossé à `:lsp:index` (complétion par préfixe — tue
+> W3) ; le cache de parse multi-entrées ; le moteur par module (verrou
+> global → périmètre module) ; la suite de non-régression portée ; le
+> correctif du « 0 item » du scénario NOM. Cible : complétion de
+> types p95 < 100 ms (§9).
+
+### 15.1 Plan d'exécution en lots (chaque lot : compilation + tests verts)
+
+L'étape est découpée en lots livrables, chacun versionné, documenté et
+poussé — un agent reprenant le travail s'arrête TOUJOURS à une frontière
+de lot (dépôt vert, tests verts).
+
+| Lot | Contenu | Version | Statut |
+|---|---|---|---|
+| A | D3 lot 1 — réécriture des 3 shims compat (niveau A, priorité absolue) + renommage `ArtCompat*` + package `jo.lspjava.ecj.compat` + patcher réaligné | 0.94.0 | **livré** |
+| B | Renommage §7 intégral — package `jo.lspjava.jdt` → `jo.lspjava.ecj`, `Jdt*` → `Ecj*` (table §7), `CompletionPrefixMatcher` → `EcjPrefixMatcher`, `BindingParseCache` → `EcjParseCache` | 0.95.0 | à faire |
+| C | Branchement de l'index — SPI `IndexNoms` dans `:lsp:java`, consultation par `EcjCompilerEnvironment` (localiser/nomsParPrefixe/estPaquet/membresStatiques), vidage du `EcjLocateCache` à la transition PRÊT (P7/P8), localisateur autoritatif à PRÊT | 0.96.0 | à faire |
+| D | Cache de parse multi-entrées (`EcjParseCache`) | 0.96.x | à faire |
+| E | Moteur par module — verrou global → périmètre module | 0.97.0 | à faire |
+| F | Correctif « 0 item » NOM + banc moteur (cible p95 < 100 ms) + suite de non-régression portée | 0.98.0 | à faire |
+| G | D3 lots 2–4 (réécritures niveau B, ~19 fichiers — à étaler sur plusieurs sessions) | ≥ 0.99.0 | à faire |
+
+**Écart assumé et documenté** (lot B) : le plan §7 prévoyait le renommage
+« au fil des lots » D3 (après réécriture de chaque fichier). Le lot B
+applique le renommage intégral AVANT les réécritures D3 restantes,
+parce que le branchement de l'index (lot C) touche précisément les
+fichiers à renommer — renommer d'abord évite le triple brassage
+(intégration sous anciens noms, puis renommage, puis réécriture).
+Les réécritures D3 lots 2+ cibleront directement les noms définitifs.
+
+### 15.2 Lot A — shims ART réécrits depuis la spécification JDK (v0.94.0)
+
+- **`ArtCompatVersion`** (ex-`compat/RuntimeVersion`, niveau A : 69 %
+  lignes / Jaccard 0,93) : réécrit depuis le javadoc
+  `java.lang.Runtime.Version` + JEP 322 — balayage unique de `$VNUM`
+  (bornes au premier `-`/`+`, segmentation sans `split`), segments vides/
+  non numériques/négatifs rejetés, ordre élément par élément avec zéros
+  de queue, `hashCode` aligné sur l'égalité ordinale (normalisation des
+  zéros de queue). Divergences CONSERVÉES (testées) : `1.8 < 9` (le JDK
+  normalise 1.8→8 — inutile pour ecj), suffixes non ordonnants.
+- **`ArtCompatStackWalker`** (ex-`compat/StackWalker`, niveau A) :
+  réécrit depuis le javadoc `java.lang.StackWalker` — `getCallerClass`
+  saute les frames du shim PAR NOM puis la méthode invoquante (la
+  profondeur du JDK « caller of the caller » est reconstruite, plus
+  robuste qu'une profondeur codée en dur) ; les trois constantes
+  `Option` du JDK ; jamais d'exception ni de null (divergence
+  documentée : `IllegalCallerException`/`UnsupportedOperationException`
+  sont API 33, et les sites Eclipse tolèrent un appelant imprécis).
+  Surface imposée par les descripteurs du bytecode patché :
+  `getInstance(Option)` à UN argument (le patcher ne change pas l'arité).
+- **`ArtCompatInputStream`** (ex-`compat/InputStreamCompat`, niveau A) :
+  réécrit depuis le javadoc `java.io.InputStream` — tampon à doublement
+  (plus de `ByteArrayOutputStream`), `readNBytes` à cible exacte avec la
+  garde `MAX_BUFFER` de la spécification (`Integer.MAX_VALUE - 8`),
+  tampon 16 384 (constante DÉTERMINÉE PAR MESURE, pas recopiée :
+  `BufferedInputStream.DEFAULT_BUFFER_SIZE`, l'ordre de grandeur le plus
+  favorable aux lectures de tables ecj).
+- **Patcher réaligné** : `ECLIPSE_RENAMES` cible
+  `jo/lspjava/ecj/compat/ArtCompatVersion` et `ArtCompatStackWalker`,
+  le shim d'entrée est `jo/lspjava/ecj/compat/ArtCompatInputStream`.
+  Vérifié sur `ecj-3.40.0-art.jar` régénéré : 0 référence ancienne,
+  4 classes référencent les nouveaux shims.
+- **Tests** : `CompatShimsTest` migre vers `jo.lspjava.ecj.compat` et
+  gagne deux tests (appelant de `getCallerClass` par porte
+  intermédiaire — la sémantique « caller of the caller » ; les trois
+  constantes `Option`). `:lsp:java` 277 tests verts, `:lsp:ecj-art`
+  2 tests verts.
+
+### 15.3 Lot B — renommage §7 (à faire)
+
+Table d'exécution : `git mv` des fichiers + retouches de déclaration +
+sed des références (imports, javadocs, tests) + compilation/tests
+verts. Les noms définitifs sont ceux de la table §7. Les fichiers de
+test porteurs du préfixe `Jdt` suivent (ex.
+`JdtCompilerEngineConcurrencyTest` → `EcjCompilerEngineConcurrencyTest`)
+pour que le nom du test désigne la classe testée. Le package du
+patcher `jo.lspjava.jdtpatch` ne figure pas dans la table §7 : inchangé.
+
+### 15.4 Lot C — branchement de l'index (à faire, architecture arrêtée)
+
+Le cœur Java vendored reste SANS dépendance Gradle vers `:lsp:index` :
+il expose une **SPI publique `jo.lspjava.api.IndexNoms`** (requêtes +
+état + transition PRÊT), consommée par `EcjCompilerEnvironment` :
+
+1. `nomsParPrefixe(prefixe, limite)` — remplace le balayage du
+   `simpleNameIndex` mémoire (tue W3 côté moteur) ; le filtre
+   camel-hump/substring de `EcjPrefixMatcher` post-filtre les FQCN
+   rendus (l'index ne connaît que le préfixe lexicographique) ;
+2. `localiser(fqcn)` — à l'état PRÊT le localisateur est AUTORITATIF
+   (négatifs sans sondage, ADR 0111 §8) : `EcjLocateCache` se vide à
+   la transition (P7/P8) et cesse de sonder ;
+3. `estPaquet`/`sousPaquetsDirects`/`typesDansPaquet` — côté jars de
+   l'`isPackage`/`subPackages` (les sources projet et le jrt restent
+   côté moteur) ;
+4. `membresStatiques(fqcn)` — les imports statiques.
+
+Le fil Kotlin (adaptateur `VueIndex` → `IndexNoms`) vit côté
+`:lsp:index` en source de test/banc dans un premier temps (tests
+d'intégration Java dans `:lsp:java`, `testImplementation(project(
+":lsp:index"))`) ; le branchement de production arrive à l'étape 4
+(`:lsp:host`). `CompilationEnvironment` expose
+`setIndexNoms(IndexNoms)` et propage au moteur dérivé.
+
+### 15.5 Lots D–G (à faire)
+
+- **D — parse cache multi-entrées** : `EcjParseCache` (ex
+  `BindingParseCache`) garde N unités récemment parsées (clé :
+  chemin + hachage du contenu) — W8, la frappe multi-fichiers ne
+  reparse plus tout.
+- **E — moteur par module** : un `EcjCompilerEngine` PAR module (son
+  classpath, son verrou) dans `CompilationEnvironment` ; les
+  complétions du module A ne bloquent plus le module B.
+- **F — « 0 item » NOM + banc moteur** : reproduire au banc porté
+  (rouge), corriger, mesurer la cible p95 < 100 ms.
+- **G — D3 lots 2–4** : ~19 fichiers niveau B à réécrire depuis
+  spécification (§5.3), à étaler sur plusieurs sessions ; lot 4
+  (ecj-art) selon l'option retenue par le propriétaire (D3 reste
+  « PROPOSÉ — décision propriétaire », l'option 1 est suivie par
+  défaut).

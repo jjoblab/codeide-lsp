@@ -90,7 +90,7 @@ import jo.lspjava.engine.OperationCanceledException;
  * <p><strong>ART :</strong> le jar ecj consommé est patché au build
  * ({@code :lspjava:patchEcjForArt}) — {@code Runtime$Version} et
  * {@code InputStream.readAllBytes/readNBytes} réécrits vers les shims
- * {@code jo.lspjava.jdt.compat.*}. Ce code n'utilise que des API API-26.</p>
+ * {@code jo.lspjava.ecj.compat.*}. Ce code n'utilise que des API API-26.</p>
  *
  * @author jo@Dev
  */

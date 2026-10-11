@@ -32,11 +32,11 @@ import java.util.zip.ZipFile;
  *       génériques, stack-frames). Les renommages standard d'Eclipse :</li>
  *   <ul>
  *     <li>{@code java/lang/Runtime$Version} → shim
- *         {@code jo/lspjava/jdt/compat/RuntimeVersion} — absent d'ART,
+ *         {@code jo/lspjava/ecj/compat/ArtCompatVersion} — absent d'ART,
  *         non stubbable ({@code java.*}), référencé par le Parser d'ecj ;</li>
  *     <li>{@code java/lang/StackWalker} → shim
- *         {@code jo/lspjava/jdt/compat/StackWalker} — absent d'ART,
- *         référencé par les {@code <clinit>} de
+ *         {@code jo/lspjava/ecj/compat/ArtCompatStackWalker} — absent
+ *         d'ART, référencé par les {@code <clinit>} de
  *         {@code org.eclipse.core.runtime.Status} et
  *         {@code InternalPlatform} (le renommage couvre aussi
  *         {@code StackWalker$Option} par préfixe).</li>
@@ -45,7 +45,7 @@ import java.util.zip.ZipFile;
  *       {@code org.eclipse.*} uniquement : {@code INVOKEVIRTUAL
  *       java/io/InputStream.readAllBytes ()[B} (et {@code readNBytes (I)[B},
  *       Java 9, absents d'Android avant l'API 33) → {@code INVOKESTATIC
- *       jo/lspjava/jdt/compat/InputStreamCompat.*}. Le receveur devient le
+ *       jo/lspjava/ecj/compat/ArtCompatInputStream.*}. Le receveur devient le
  *       premier argument — l'effet de pile est identique.</li>
  *   <li><b>Nettoyage</b> — les entrées inutiles ou gênantes pour le dexing
  *       et le packaging APK sont retirées : {@code module-info.class},
@@ -70,12 +70,12 @@ public final class EcjArtPatcher {
 
     /** Renommages Eclipse standard — appliqués à tous les jars du graphe. */
     public static final Map<String, String> ECLIPSE_RENAMES = Map.of(
-            "java/lang/Runtime$Version", "jo/lspjava/jdt/compat/RuntimeVersion",
-            "java/lang/StackWalker", "jo/lspjava/jdt/compat/StackWalker");
+            "java/lang/Runtime$Version", "jo/lspjava/ecj/compat/ArtCompatVersion",
+            "java/lang/StackWalker", "jo/lspjava/ecj/compat/ArtCompatStackWalker");
 
     private static final String INPUT_STREAM = "java/io/InputStream";
     private static final String INPUT_STREAM_SHIM =
-            "jo/lspjava/jdt/compat/InputStreamCompat";
+            "jo/lspjava/ecj/compat/ArtCompatInputStream";
 
     private EcjArtPatcher() {}
 

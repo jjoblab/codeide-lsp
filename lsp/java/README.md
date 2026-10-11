@@ -33,7 +33,7 @@ reste requis et suit son cours à l'étape 3.
 - `jo.lspjava.api` — API publique (types de résultat purs, sans lsp4j) ;
 - `jo.lspjava.engine` — environnement de compilation et ordonnanceur ;
 - `jo.lspjava.jdt` — moteur ecj (le plus gros du module) ;
-- `jo.lspjava.jdt.compat` — shims ART (cibles du patcher `:lsp:ecj-art`) ;
+- `jo.lspjava.ecj.compat` — shims ART (cibles du patcher `:lsp:ecj-art`, réécrits D3 lot 1 — `ArtCompatVersion`, `ArtCompatStackWalker`, `ArtCompatInputStream`) ;
 - `jo.lspjava.lsp`, `jo.lspjava.services` — façade LSP4J.
 
 Logs : `java.util.logging` uniquement — l'hôte Android branchera un
