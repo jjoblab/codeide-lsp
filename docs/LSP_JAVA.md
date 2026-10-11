@@ -503,3 +503,129 @@ perçues. Comparer aux cibles §9 à chaque étape.
 Le jar « +1 dépendance » du banc (`datasets/extra/extra-banc.jar`,
 604 Ko) est volontairement hors manifestes.
 
+
+---
+
+## 13. Étape 1 — modèle de projet LSP (v0.92.0, livrée)
+
+### 13.1 Ce qui a été livré
+
+- **`lsp:model` (nouveau module Kotlin JVM pur, `jo.codeide.lsp.model`)**
+  — la conversion pure exigée par le §7.1 du prompt :
+  `ConvertisseurModeleLsp.depuisClasspathResult` (lecteur de statistiques
+  de fichiers INJECTÉ — aucun accès disque dans le convertisseur) ;
+  `ProjetLsp`/`ModuleLsp`/`EnsemblesSources` (rôles principal/test/générés
+  — W5)/`ClasspathInstantane` + `EntreeClasspathInstantane` (empreintes
+  par contenu, W6)/`DependanceModule` (cycles REJETÉS à l'échelle du
+  projet avec avertissement — arêtes en ordre canonique, le graphe reste
+  acyclique et déterministe)/`AssociationFichier` (association
+  fichier→module par la racine de sourceset la plus PROFONDE ;
+  `fqcnAttendu` + `ecartFqcn` recoupent la déclaration `package` avec le
+  sourceset — l'écart est un diagnostic explicite, le correctif du bug
+  historique « 31 diagnostics sur 349 caractères »)/`PersistanceModeleLsp`
+  (format versionné 1, VALIDATION taille/horodatage à la relecture —
+  corrige W7 : un modèle périmé reste utilisable immédiatement mais
+  MARQUÉ non vérifié, écarts listés)/`DepotModeleLsp` (publication par
+  instantanés successifs, câblage applicatif à l'étape 4).
+- **Source du classpath Android (ADR 0113)** : `tooling:server` résout
+  les modèles **v2 d'AGP** (builder-model 9.4.1) dans l'action unique —
+  `BasicAndroidProject` (bootClasspath, sourcesets main/unitTest java+kotlin),
+  `AndroidProject` v2 (générés, classesFolders dont R.jar, par variante),
+  `VariantDependencies` paramétré par `ModelBuilderParameter` (graphe
+  compile+test + bibliothèques ; paramètre TOUJOURS complet — un getter
+  booléen non initialisé du proxy fait échouer AGP en NPE, constat de
+  la sonde). IdeaProject reste la source des modules JVM purs — mais
+  résolu par le MODEL BUILDER (dans une action, l'adaptateur perd les
+  types concrets des dépendances : mesuré, `DefaultIdeaModuleDependency`
+  derrière un proxy `IdeaDependency` nu). Fusion par chemin : le module
+  Android remplace son homologue Idea (vide pour lui).
+- **Normalisation des AAR : déjà faite par AGP** (mesuré, jeu lourd :
+  191/191 AAR avec jars extraits) — le serveur livre le jar extrait du
+  cache de transforms + l'AAR d'origine en provenance
+  (`ClasspathEntry.aar`, protocole v8). RELOCATED/NO_ARTIFACT_FILE
+  écartés (la cible réelle figure ailleurs dans le graphe / BOM sans
+  fichier).
+- **Protocole v8** : `sourceDirsTest`, `ClasspathEntry.aar`, `name` =
+  chemin Gradle (`:app`) — les entrées MODULE désignent leur cible par
+  le même identifiant ; remplissage de `androidJar`,
+  `fichiersGeneres`, `varianteAndroid` (variante RÉELLE du modèle v2 —
+  l'heuristique de nom v0.40.1 supprimée), `ignore`+`raisonIgnore`
+  (module conteneur), `avertissements` (dépendances non résolues).
+  Goldens régénérés volontairement (procédure `REGENERER_DORES=1`, diff
+  relu avant commit).
+- **Modules vendored intégrés au build** (carte blanche du
+  propriétaire) : `:lsp:java` (moteur, sources Java INTACTES de
+  l'archive, ADR 0108) et `:lsp:ecj-art` — build.gradle traduits en
+  Kotlin DSL, versions par `gradle/libs.versions.toml` (jdt.core 3.40.0,
+  lsp4j 0.21.2, gson 2.10.1, asm 9.7, JUnit 5.10.1 — toutes vérifiées
+  sur les dépôts officiels), `patchEclipseForArt` en classe de tâche
+  **compatible configuration cache** + ProcessBuilder (Gradle 9),
+  `JO_TEST_JDK_HOME` fourni par le build, README d'exemption (règle 8)
+  et crédits projet de référence. Suite vendored : **246 tests verts** (les
+  6 tests JDK échouaient sans `JO_TEST_JDK_HOME` — les sondes du module
+  attrapaient le JRE système sans `src.zip`).
+- **`ModelesAndroidV2`** : conversion par bibliothèque (ANDROID_LIBRARY →
+  jars extraits + provenance ; JAVA_LIBRARY → jar + sources attachées
+  (`srcJars`, le singulier est déprécié) ; PROJECT → MODULE par chemin ;
+  RELOCATED/NO_ARTIFACT_FILE → rien — le classpath résolu est complet) ;
+  variante retenue : `debug` sinon première contenant `debug` sinon
+  première ; modules conteneurs marqués `ignore` avec raison.
+- **Fixture AGP réelle** (`android-simple`, 2 modules AGP 9.4.1) +
+  test d'intégration : modules `:app`/`:lib` par chemin, sourcesets
+  main/test séparés, `android.jar`, variante `debug`, entrée MODULE
+  `:lib`, jar commons-io, junit portée `test`, conteneur ignoré avec
+  raison. `local.properties` écrit par le test (propre à la machine),
+  saut propre si le SDK est absent.
+
+### 13.2 Critère du prompt — vérifié par les tests
+
+> « le même classpath produit toujours la même empreinte ; un
+> changement d'une dépendance change l'empreinte du seul module
+> concerné. »
+
+- `le meme classpath produit toujours la meme empreinte` : ordre des
+  entrées PERMUTÉ ⇒ même empreinte (ordre canonique : tri kind puis
+  chemin) ;
+- `changer une dependance change l'empreinte du SEUL module concerne` :
+  le jar de `:b` change ⇒ l'empreinte de `:b` et du projet changent,
+  celle de `:a` (qui dépend de `:b` par l'entrée MODULE **nominale**)
+  est inchangée ;
+- cas du prompt §8 tous couverts : multi-modules, api/impl (isolation
+  par module : le classpath de `:app` ne porte PAS l'implementation
+  d'un sibling — Gradle l'a déjà filtré, le modèle le préserve),
+  conflits de versions (« plus récent gagne » + avertissement,
+  comparaison NUMÉRIQUE par segments — 1.10 > 1.9), dépendance cyclique
+  rejetée (une arête survit, avertissement sur le module source),
+  auto-dépendance rejetée, module ignoré avec raison, AAR normalisé
+  (kind JAR + provenance) et AAR brut (signalé), sourcesets de test
+  séparés (portée `test`).
+
+### 13.3 Écarts et décisions documentés
+
+- **Drapeau `exporte` (api vs implementation) : non déterminable** — ni
+  le graphe v2 ni IdeaProject n'exposent de drapeau par arête ;
+  toujours `false` à l'étape 1, documenté dans `DependanceModule`.
+  L'isolation par module fait déjà le travail de W5 (l'implementation
+  d'un sibling ne figure pas dans le classpath du consommateur).
+- **`unitTestSourceProvider`/`unitTestArtifact` dépréciés mais lus** :
+  sonde empirique (AGP 9.4.1, projet Compose) — les cartes
+  `hostTestSourceProviders`/`hostTestArtifacts` sont VIDES, le test
+  unitaire classique vit encore dans les accès dépréciés (peuplés).
+  Suppressions commentées, à revisiter si AGP les retire.
+- **androidTest non livré** (main + unitTest seulement) : périmètre
+  éditeur — ajoutable sans changement de format (une portée de plus).
+- **Durée réelle** des commandes de vérification : lsp:model test 20 s
+  (35 tests) ; lsp:java test 33 s à froid (patch ART 8 jars + 246
+  tests) puis 17 s ; lsp:ecj-art 30 s à froid ; tooling:server test
+  1 min 02 (103 tests, dont AGP 8,2 s sur démon chaud) ; tooling:client
+  + testing + api 26 s ; spotlessApply/detekt ~25 s incrémental ;
+  goldens : régénération 12 s.
+
+### 13.4 Suite — étape 2 (index disque, ADR 0111)
+
+Le modèle étant empreinté et persisté, l'étape 2 (segments par jar,
+clé = `maven:<sha1>` / `transform:<haché>` / `partiel:…`) a ses clés
+prêtes ; l'étape 3 branchera l'environnement de noms du moteur vendored
+sur l'index (le `ClasspathInstantane` remplace le classpath plat de
+`CompilationEnvironment`), l'étape 4 le câblage `SessionLsp`/cel-lsp et
+l'état d'indexation UI, l'étape 5 la validation appareil (§11.2).
