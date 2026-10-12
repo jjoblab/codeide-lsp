@@ -1553,3 +1553,68 @@ l'index ne conditionne pas le branchement, il en nourrit la QUALITÉ.
   (`LspProject.decompiledSource`) — à arbitrer contre le prompt 3 ;
 - l'écart restant de §16.1 (RemoteEndpoint/gson complet) vit avec
   l'usage : le branchement in-process d'aujourd'hui n'y passe pas.
+
+Le lot h4 « LSP instantané », voisin du h3 ci-dessus, est LIVRÉ en
+v0.101.0 (§16.4).
+
+### 16.4 Lot h4 — « LSP instantané » (v0.101.0, livré)
+
+Le lot répond à la question posée au retour v0.100.2 : « le LSP
+proposera-t-il complétion et diagnostics uniquement après le sync puis
+l'indexation, ou comme Android Studio, bien avant ? ». La réponse
+d'architecture était déjà OUI côté câblage (§16.2.3, note disponibilité
+progressive : la session s'ouvre AVANT la sync, le classpath la
+rejoint) — mais le MOTEUR restait « tout ou rien » :
+`isLikelyUsable()` (au moins un jar OU l'image jrt) fermait TOUT quand
+la plateforme manquait : `DiagnosticService.diagnose` retournait une
+liste VIDE (pas même la syntaxe), la complétion sautait le moteur
+entièrement. Un `.java` ouvert avant la première sync (ou sans JDK du
+terminal installé) était branché mais MUET.
+
+**Le mode instantané** (le « dumb mode » d'IntelliJ/Android Studio) —
+deux régimes de repli qui montent automatiquement :
+
+1. **Diagnostics de syntaxe immédiats** : `parseSeul` (nouveau point
+   d'entrée du moteur) invoque le parseur ecJ SANS environnement de
+   noms — `Parser.parse` (diet : signatures + structure) PUIS
+   `getMethodBodies` (le second pass OBLIGATOIRE, le diet parse laisse
+   `statements` null — les erreurs INTERNES aux corps et les locales
+   n'apparaissent qu'après lui). `diagnoseSyntax` filtre ensuite au bit
+   `IProblem.Syntax` (0x40000000) : problèmes du PARSEUR seuls,
+   indépendants de toute résolution. Branché dans
+   `DiagnosticService.diagnose` quand `isLikelyUsable()` est faux — le
+   live-republish du ContextListener (sync arrivée, republishAllOpen-
+   Documents) remplace le repli par le régime plein SANS intervention
+   (montée automatique).
+2. **Complétion instantanée** (`EcjSyntaxCompletion`) : sur le MÊME
+   parse seul — types, méthodes, constructeurs, champs (de tout le
+   fichier, member types compris) ; paramètres et locales de la MÉTHODE
+   englobant le caret (locales déclarées avant lui, granularité de
+   blocs ignorée — repli large documenté) ; mots-clés du langage.
+   Filtrage strict par préfixe. **Zéro devinette** : aucun type du JDK
+   n'est proposé (COMMON_TYPES reste au régime plein) — le jrt puis le
+   classpath les apportent en montant.
+
+**Les deux garanties** (testées, `EcjSyntaxInstantTest` — 12 tests,
+pré-condition forcée par jdkHome sans `lib/modules`) : ① une source
+syntaxiquement cassée rend SES erreurs (point-virgule, parenthèse,
+accolade) ; ② une source saine mais non résolue rend une liste VIDE —
+le repli ne fabrique JAMAIS de « cannot be resolved ». Le didOpen
+annonce honnêtement le régime : `[h4] plateforme absente — mode
+instantané` (une ligne par document, JUL).
+
+**Montée code-editor 3.41.0 → 3.49.2** (demandée au même retour) :
+compat vérifiée par diff des sources publiques entre les tags — zéro
+méthode retirée (cel-lsp/cel-core inchangés, `EditorView` en ajouts
+purs : guides d'indentation IndentRange + cache par révision, sticky
+lines, color pickers, plis d'imports, complétion native par mots-clés
+avec context gate — cette dernière complète le mode instantané côté
+éditeur). 3.49.2 est aussi le correctif de build JitPack
+(`safe.directory` + install step explicite) — artefacts vérifiés.
+
+**Ce que le h4 n'est pas** : le régime plein reste le chemin nominal
+(bindings, classpath, hiérarchies, quick-fixes) ; hover/definition/
+navigation restent silencieux sans plateforme (honnête — mentirait sans
+résolution) ; l'état d'indexation UI reste INITIAL avant sync (la
+barre est masquée — le mode instantané est le régime VISIBLE de
+l'éditeur, l'index est la QUALITÉ du régime plein).

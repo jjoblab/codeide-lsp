@@ -1,5 +1,6 @@
 package jo.lspjava.ecj;
 
+import org.eclipse.jdt.core.compiler.CategorizedProblem;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.internal.compiler.ASTVisitor;
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
@@ -16,6 +17,7 @@ import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.SingleTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.Compiler;
+import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ICompilerRequestor;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
@@ -37,7 +39,9 @@ import org.eclipse.jdt.internal.compiler.lookup.SourceTypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TagBits;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
+import org.eclipse.jdt.internal.compiler.parser.Parser;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
+import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -416,6 +420,118 @@ public final class EcjCompilerEngine {
                 filePath, source, frozen, spans);
         return frozen;
     }
+
+    // ── Lot h4 (v0.101.0) : « LSP instantané » — parse SANS résolution ──
+    //
+    // Avant la première sync (classpath vide) et sans image jrt (JDK du
+    // terminal absent), isLikelyUsable() est faux : le moteur complet se
+    // tait — zéro diagnostic, complétion vide. Le PARSE, lui, n'exige
+    // RIEN : les erreurs de syntaxe (accolade non fermée, point-virgule
+    // manquant…) sont une compétence pure du parseur. Le mode instantané
+    // publie donc la SYNTAXE SEULE tant que la plateforme manque — le
+    // live-republish du ContextListener efface ces diagnostics de repli
+    // dès que le classpath arrive (montée en régime automatique).
+
+    /**
+     * Parse SEUL d'une unité — le parseur ecj SANS environnement de noms :
+     * aucun binding résolu, aucune plateforme exigée, corps compris
+     * ({@code Parser.parse}, pas {@code dietParse}).
+     *
+     * <p>Point d'entrée partagé du lot h4 : {@link #diagnoseSyntax} y
+     * collecte les problèmes de syntaxe, {@link EcjSyntaxCompletion} y
+     * traverse l'AST pour les symboles déclarés. Pas de cache (le parse
+     * seul est l'étape BON MARCHÉ de la chaîne — c'est la résolution qui
+     * coûte) ; pas d'annulation coopérative (aucun checkpoint ne
+     * s'applique sans résolution).</p>
+     *
+     * @return l'arbre parsé (problèmes de parse dans
+     *         {@code compilationResult}), ou null si le parse a échoué
+     */
+    synchronized CompilationUnitDeclaration parseSeul(String filePath, String source) {
+        String fqcn = fqcnFor(filePath, source);
+        EcjSourceUnit unit = new EcjSourceUnit(fqcn, source.toCharArray());
+        CompilationResult result = new CompilationResult(unit, 0, 1,
+                MAX_PROBLEMES_SYNTAXE);
+        CompilerOptions options = new CompilerOptions();
+        options.complianceLevel = complianceLevel;
+        options.sourceLevel = complianceLevel;
+        options.targetJDK = complianceLevel;
+        // Recovery de parse (même politique que compileUnit) : une erreur
+        // de syntaxe n'arrête pas le parse — les problèmes suivants sont
+        // collectés au lieu d'être perdus.
+        options.performMethodsFullRecovery = true;
+        options.performStatementsRecovery = true;
+        options.storeAnnotations = false;
+        ProblemReporter reporter = new ProblemReporter(
+                DefaultErrorHandlingPolicies.proceedWithAllProblems(),
+                options,
+                new DefaultProblemFactory(java.util.Locale.getDefault()));
+        Parser parser = new Parser(reporter, true);
+        CompilationUnitDeclaration cud = parser.parse(unit, result);
+        if (cud == null) return null;
+        // Second pass OBLIGATOIRE : parser.parse est un DIET parse —
+        // signatures et structure, corps non parcourus (statements
+        // null). getMethodBodies parse chaque corps : les erreurs de
+        // syntaxe INTERNES aux méthodes y sont collectées, les
+        // LocalDeclaration y apparaissent (complétion h4). Best-effort :
+        // un corps pathologique qui jette n'ampute que les problèmes de
+        // ce corps — la structure et le diet restent.
+        try {
+            parser.getMethodBodies(cud);
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "getMethodBodies échoué pour " + filePath, t);
+        }
+        return cud;
+    }
+
+    /**
+     * Diagnostics de SYNTAXE SEULE (lot h4 « LSP instantané ») — les
+     * problèmes portant le bit {@link IProblem#Syntax}, collectés par un
+     * parse sans résolution : aucune plateforme n'est exigée (classpath
+     * vide et jrt absent compris).
+     *
+     * <p>Le filtre est la GARANTIE : sans plateforme, un diagnose complet
+     * noierait tout sous « java.lang.Object cannot be resolved » — ici,
+     * une source syntaxiquement saine mais pleine de types non résolus
+     * rend une liste VIDE (aucun faux positif), une source cassée rend
+     * SES erreurs de syntaxe. Appelé par {@code DiagnosticService} quand
+     * {@link #isLikelyUsable()} est faux — jamais l'inverse (le régime
+     * plein reste le chemin nominal).</p>
+     *
+     * @return les diagnostics de syntaxe triés par offset, jamais null
+     */
+    public synchronized List<Diagnostic> diagnoseSyntax(String filePath, String source) {
+        if (DISABLED) {
+            return List.of();
+        }
+        CompilationUnitDeclaration cud;
+        try {
+            cud = parseSeul(filePath, source);
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING, "parseSeul échoué pour " + filePath, t);
+            return List.of();
+        }
+        List<Diagnostic> out = new ArrayList<>();
+        if (cud != null && cud.compilationResult != null) {
+            CategorizedProblem[] problems = cud.compilationResult.getAllProblems();
+            if (problems != null) {
+                for (CategorizedProblem problem : problems) {
+                    // Bit Syntax : problèmes du PARSEUR — erreurs de
+                    // lexique/grammaire, indépendants de toute résolution.
+                    if (problem == null || (problem.getID() & IProblem.Syntax) == 0) {
+                        continue;
+                    }
+                    Diagnostic d = toDiagnostic(problem, Collections.emptyMap());
+                    if (d != null) out.add(d);
+                }
+            }
+        }
+        out.sort(Comparator.comparingInt(d -> d.range().startOffset()));
+        return List.copyOf(out);
+    }
+
+    /** Plafond de problèmes par unité en parse seul (garde-fou recovery). */
+    private static final int MAX_PROBLEMES_SYNTAXE = 256;
 
     /**
      * Fast-path P6 — orchestration (appelé sous le verrou de

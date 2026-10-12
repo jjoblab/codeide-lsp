@@ -116,6 +116,19 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         String text = params.getTextDocument().getText();
         openDocuments.put(uri, text);
         documentVersions.put(uri, new AtomicInteger(0));
+        // Lot h4 (v0.101.0) : sans plateforme (classpath vide, jrt absent),
+        // le régime instantané sert la SYNTAXE seule + les symboles du
+        // fichier — une ligne honnête l'annonce une fois par document
+        // (le live-republish remplacera tout au classpath suivant).
+        try {
+            if (!environment.jdt().isLikelyUsable() && server != null) {
+                server.logInfo("[h4] plateforme absente — mode instantané : "
+                        + "diagnostics de syntaxe + symboles du fichier ("
+                        + uriToPath(uri) + ")");
+            }
+        } catch (Throwable ignore) {
+            // Best-effort — le diagnostic suit son cours normal.
+        }
         // Si l'index n'est pas encore prêt (pre-warming en cours), on
         // publie des diagnostics vides immédiatement pour ne pas bloquer
         // l'éditeur, puis on re-planifie via le debounce standard (50 ms)
@@ -322,6 +335,20 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                     List<jo.lspjava.api.CompletionItem> jdtItems =
                             completionEngine.complete(filePath, source, offset);
                     if (jdtItems != null) items = jdtItems;
+                }
+            } else {
+                // Lot h4 « LSP instantané » (v0.101.0) : plateforme absente
+                // (avant la première sync, jrt absent) — le régime de repli
+                // propose les SYMBOLES DÉCLARÉS du fichier (parse seul :
+                // types, méthodes, champs, paramètres/locales de la
+                // méthode englobante) et les mots-clés du langage. Aucune
+                // devinette : pas un type du JDK — le régime plein les
+                // apportera avec le classpath.
+                try {
+                    var instantanee = new jo.lspjava.ecj.EcjSyntaxCompletion(jdt);
+                    items = instantanee.complete(uriToPath(uri), source, offset);
+                } catch (Throwable t) {
+                    if (server != null) server.logWarning("completion instantanée échouée pour " + uri, t);
                 }
             }
         } catch (Throwable t) {

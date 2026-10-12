@@ -52,13 +52,24 @@ public final class DiagnosticService {
      * supersession « file d'attente » assurée par le scheduler : une tâche
      * DÉJÀ DÉMARRÉE est elle aussi coupée.</p>
      *
+     * <p><strong>Lot h4 « LSP instantané » (v0.101.0) :</strong> quand la
+     * plateforme manque (avant la première sync, jrt absent —
+     * {@code isLikelyUsable()} faux), la SYNTAXE SEULE est publiée (parse
+     * sans résolution, filtre bit {@code IProblem.Syntax}) au lieu d'un
+     * silence : accolades non fermées et point-virgules manquants sont
+     * signalés DÈS le didOpen. Le live-republish du ContextListener
+     * remplace ces diagnostics de repli par le régime plein dès que le
+     * classpath arrive — la montée en régime est automatique.</p>
+     *
      * @throws RuntimeException si le moteur ecj échoue (classpath vide,
      *         kill-switch) — l'appelant gère la dégradation.
      */
     public List<Diagnostic> diagnose(String filePath, String source) {
         var jdt = environment.jdt();
         if (!jdt.isLikelyUsable()) {
-            return List.of();
+            // Lot h4 : mode instantané — la syntaxe seule plutôt que le
+            // silence (le régime plein remplace à la montée de plateforme).
+            return jdt.diagnoseSyntax(filePath, source);
         }
         try (CancelToken token = CancelToken.timeout(
                 EcjEngineScheduler.ANALYSIS_TIMEOUT_MS,
