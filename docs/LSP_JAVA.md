@@ -1426,6 +1426,64 @@ tag `Editor` : « session LSP ouverte » — UNE fois depuis v0.100.1) ; ③
 l'épreuve directe : la complétion dans un fichier `.java` propose des
 SYMBOLES Java (types, membres) et non la seule liste lexicale.
 
+### 16.2.2 v0.100.2 — second retour d'appareil : l'éditeur rendu, l'accueil corrigé
+
+Le retour d'appareil v0.100.1 (rapport e69fc0d8, même moto g06 /
+Android 15 / API 35) confirme d'abord que **v0.100.1 tient** : le journal
+montre orchestrateur déployé PUIS connecté (handshake, 7 fonctionnalités),
+session LSP ouverte UNE fois, sync complet (294 tâches), session NOURRIE
+(1 module actif, 46 entrées d'index — soit des écritures de segments
+réussies sur ART), revalidation silencieuse terminée, réindexation
+acceptée — **plus AUCUNE trace du `ProcessHandle` de v0.100.0 ni du
+`NoSuchFileException` JarDeployer**. Trois défauts corrigeaient le reste :
+
+1. **La barre d'état d'indexation avalait l'éditeur** (« elle prend tout
+   l'espace de l'éditeur view ») : `VuePointEtat` (étape 31, point 7 dp
+   dans une zone de 20 dp) ne surcharge pas `onMeasure` — tous ses usages
+   historiques (`popover_legende.xml`, lignes d'arbre) le déclarent à
+   **20 dp FIXE**, mais `activity_editor.xml` l'avait mis en
+   `wrap_content`. Or la mesure par défaut (`View.getDefaultSize`) sous
+   `AT_MOST` retourne la TAILLE DU SPEC (toute la hauteur disponible) :
+   le point mesurait l'écran restant, la barre `wrap_content` devenait
+   haute comme l'éditeur, et `conteneur_editeur` (poids 1) était écrasé à
+   néant. Correctif : 20 dp × 20 dp fixe (le motif des autres usages) —
+   la barre redevient une fine ligne de 24 dp entre onglets et éditeur.
+   Leçon : **toute vue sans `onMeasure` surchargé doit être dimensionnée
+   en FIXE dans le XML** (le `wrap_content` d'une vue custom est TOUJOURS
+   suspect — il se comporte en `match_parent` sous `AT_MOST`).
+
+2. **CRASH ACCUEIL — `ClassCastException: String cannot be cast to
+   TriAccueil`** (`HomeViewModel.<init>`, retour accueil 3 min après
+   l'éditeur, même process) : `ChangerTri` persiste `tri.name` (String —
+   `SavedStateHandle` n'accepte QUE des types de plateforme) mais la
+   lecture `savedState[CLE_TRI] ?: TriAccueil.RECENTS` inférait
+   `TriAccueil` : à la première restauration de l'état sauvegardé
+   (activité détruite puis recréée depuis la pile), le `get` exécutait
+   un cast String → énuméré. Correctif : `get<String>` + résolution par
+   nom (`entries.firstOrNull`), valeur inconnue → `RECENTS` — une
+   préférence ne fait JAMAIS crasher. Règle : **écrire et relire le MÊME
+   type de plateforme** dans un `SavedStateHandle` (le motif de
+   `WizardViewModel` : `get<String>` + `fromPersistedName`).
+   +2 tests `HomeViewModelTest` (restauration depuis « NOM » sans
+   exception, tri ; valeur inconnue → RECENTS).
+
+3. **« LSP Java connecté » invisible** (« Voici les seules logs
+   concernant lsp que j'ai, pas de lsp java connecté ») : la ligne était
+   en `journal.d` — DEBUG — or la verbosité par défaut (NORMAL) filtre à
+   INFO (`LogEngine` : `level.isAtLeast(config.minLevel)`) : la
+   connexion POUVAIT réussir sans laisser une seule trace visible (seul
+   l'échec, en WARN, aurait paru). Promue en **INFO** : au niveau NORMAL,
+   la séquence complète se lit désormais dans le journal —
+   « session LSP ouverte » (Editor) → « LSP Java connecté (chemin) »
+   (LspEditeur) → « session LSP nourrie » (Editor) — et l'absence de
+   « LSP Java : échec de connexion » (WARN) devient SIGNIFICATIVE.
+
+**Protocole « LSP branché » consolidé** (même triple preuve, désormais
+toutes trois observables) : ① barre d'état — FINE ligne sous les onglets
+(depuis v0.100.2) : anneau = construction, disque vert = prêt ; ② journal
+— « LSP Java connecté » ENFIN visible en verbosité normale ; ③
+complétion `.java` proposant des symboles Java.
+
 ### 16.3 Suite (à faire)
 
 - mesure appareil du bout-en-bout éditeur ↔ moteur (prompt 2 §9 : p95
