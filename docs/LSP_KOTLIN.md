@@ -137,12 +137,18 @@ langage ; seul le modèle de symboles en dépend marginalement).
 
 | Étape | Contenu | Version cible |
 |-------|---------|---------------|
-| K1 | Vendoring de la grammaire (script de re-sync + `VENDOR.md` à la projet de référence), façade `Kt*`, suite de parité (corpus + dépôt), ADR de vendoring. | v0.110.0 |
-| K2 | Session LSP Kotlin minimale : parse tolérant, diagnostics syntaxiques `kt.*`, cycle de vie SessionProjet/RegistreFermeture, routage. | v0.111.0 |
+| **K1** ✅ | **Livré v0.110.0** : vendoring grammaire **v2.3.0** (bootstrap 2.2.x = notre outillage 2.2.10 — ADR 0115, zéro modification locale, VENDOR.md + `scripts/vendor-grammaire-kotlin.sh`), façade `Kt*` + `ParseurKotlin` + arbre immuable tolérant, suite de parité (corpus dépôt **818 fichiers, 0 marqueur d'erreur** + digeste baseline + fixtures + tolérance troncature/injection), SPI ServiceLoader `MoteurLangageKotlin` + descripteur de pack `version.properties`, rapport de taille (**jar 257 Ko**, cible ≤ 4 Mo), kover 91,7 %, notices tierces. | v0.110.0 |
+| K2 | Session LSP Kotlin minimale : parse tolérant, diagnostics syntaxiques `kt.*`, cycle de vie SessionProjet/RegistreFermeture, routage. | v0.111.0+ |
 | K3 | Symboles classpath + index disque + complétion membre/nom/type + hover + définition (projet + classpath). | v0.112.0 – v0.113.0 |
 | K4 | Inférence bornée, smart casts, diagnostics sémantiques, quick-fixes d'import. | v0.114.0 |
 | K5 | Classes synthétiques R/ViewBinding/DataBinding, intégration éditeur complète (complétion multi-langue, bascule Java↔Kotlin dans un même projet). | v0.115.0 |
 | T2 | (Différé, hors mission) Compilation K2 via tooling. | — |
+
+Découvertes de parité PSI à retenir pour K2+ (constatées K1, épinglées en
+tests) : une `PACKAGE_DIRECTIVE` **vide** est toujours présente dans
+l'arbre ; les imports vivent sous un conteneur `IMPORT_LIST` (lui aussi
+toujours présent) ; les jetons blancs sont des feuilles de l'arbre (à
+sauter dans les lectures séquentielles).
 
 ## 6. Distribution — « pack langue Kotlin » (différé, décision propriétaire)
 
