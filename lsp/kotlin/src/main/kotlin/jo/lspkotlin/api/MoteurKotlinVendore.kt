@@ -35,6 +35,9 @@ public class MoteurKotlinVendore : MoteurLangageKotlin {
         script: Boolean,
     ): ArbreSyntaxiqueKotlin = parseur.analyser(texte, script)
 
+    override fun creerSession(): SessionLangageKotlin =
+        jo.lspkotlin.session.SessionLangageKotlinParse(parseur)
+
     private fun lireDescripteurPack(): Map<String, String> {
         val chemin = "jo/lspkotlin/pack/version.properties"
         val flux = MoteurKotlinVendore::class.java.classLoader.getResourceAsStream(chemin)

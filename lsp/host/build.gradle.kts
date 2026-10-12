@@ -57,6 +57,14 @@ dependencies {
     // publique — implementation.
     implementation(project(":lsp:index"))
 
+    // Moteur Kotlin (K2, LSP_KOTLIN.md §4.1 « session ») : l'hôte est
+    // l'ADAPTATEUR LSP4J du moteur — le SPI MoteurLangageKotlin traverse
+    // la surface publique (paramètre du constructeur SessionLspKotlin,
+    // injectable pour les tests), donc api. C'est le SEUL type du moteur
+    // visible (D6 : jamais l'implémentation concrète, résolution
+    // ServiceLoader — le pack « langue » futur se branche là).
+    api(project(":lsp:kotlin"))
+
     // cel-lsp : la DefinitionServeurLspJava traverse la surface publique
     // (branchement LspProject côté feature à l'étape 4 h2).
     api(libs.codeeditor.lsp)

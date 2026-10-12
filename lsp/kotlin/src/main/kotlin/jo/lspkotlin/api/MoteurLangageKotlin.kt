@@ -17,10 +17,10 @@ import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
  * - le descripteur de pack `jo/lspkotlin/pack/version.properties`
  *   (identifiant, version, version minimale d'app) accompagne l'artefact.
  *
- * Périmètre K1 : analyse syntaxique seule. K2 y ajoutera le contrat de
- * session (cycle de vie SessionProjet/RegistreFermeture, capacités,
- * publication de diagnostics — même forme que `:lsp:java`, cf.
- * LSP_JAVA.md), en le gardant TOUT ENTIER derrière ce point d'entrée.
+ * Périmètre K1 : analyse syntaxique seule. K2 (livré) y ajoute le contrat
+ * de session (cycle de vie document/diagnostics, [SessionLangageKotlin] —
+ * même forme que `:lsp:java`, cf. LSP_JAVA.md), en le gardant TOUT ENTIER
+ * derrière ce point d'entrée.
  */
 public interface MoteurLangageKotlin {
     /** Identifiant stable du moteur/pack (`jo.codeide.lsp.kotlin`). */
@@ -44,6 +44,16 @@ public interface MoteurLangageKotlin {
      * @return l'arbre syntaxique reconstruit.
      */
     public fun analyserSource(texte: CharSequence, script: Boolean = false): ArbreSyntaxiqueKotlin
+
+    /**
+     * Crée une session de langue NEUVE et autonome (K2) : une par
+     * connexion LSP côté hôte (cycle initialize/shutdown complet),
+     * documents + diagnostics syntaxiques confinés dedans. La session
+     * est responsable de sa fermeture ([SessionLangageKotlin.close]).
+     *
+     * @return la session prête à recevoir des documents.
+     */
+    public fun creerSession(): SessionLangageKotlin
 }
 
 /**
