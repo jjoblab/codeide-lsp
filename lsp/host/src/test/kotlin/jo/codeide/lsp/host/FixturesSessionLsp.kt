@@ -52,6 +52,30 @@ public class Compl {
 }
     """.trimIndent()
 
+/** Source de `app.AndroidMain` — UTILISE android.util.Log (plateforme ADR 0112). */
+internal val SOURCE_ANDROID_MAIN: String =
+    """
+package app;
+
+import android.util.Log;
+
+public class AndroidMain {
+    void m() {
+        Log.i("CodeIDE", "plateforme");
+    }
+}
+    """.trimIndent()
+
+/** Stub de plateforme : `android.util.Log` compilé au vol (lot h4 écart 1). */
+internal val SOURCE_LOG_STUB: String =
+    """
+package android.util;
+
+public class Log {
+    public static int i(String tag, String msg) { return 0; }
+}
+    """.trimIndent()
+
 /**
  * Traduit l'offset D'UN marqueur en position LSP (ligne, caractère —
  * tous deux 0-based) : la position du curseur juste APRÈS le marqueur.
@@ -114,10 +138,46 @@ internal class ProjetFixture(
         return jar
     }
 
-    /** Résultat de classpath tooling : :lib (jar) + :app (MODULE :lib). */
+    /** Jar de plateforme STUB (lot h4 écart 1) : `android.util.Log`
+     *  compilé au vol — joue le android.jar du toolchain pour les tests
+     *  SANS SDK Android sur le poste (même garde javac que le jar fixture). */
+    fun construireJarPlateforme(cible: Path): Path {
+        val compilateur = ToolProvider.getSystemJavaCompiler()
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+            compilateur != null,
+            "JDK sans compilateur (JRE)",
+        )
+        Files.createDirectories(cible)
+        val source = cible.resolve("Log.java")
+        Files.writeString(source, SOURCE_LOG_STUB)
+        compilateur.getStandardFileManager(null, null, null).use { gestionnaire ->
+            val ok =
+                compilateur
+                    .getTask(
+                        null,
+                        gestionnaire,
+                        null,
+                        listOf("-d", cible.toString()),
+                        null,
+                        gestionnaire.getJavaFileObjectsFromFiles(listOf(source.toFile())),
+                    ).call()
+            check(ok) { "la fixture Log doit compiler" }
+        }
+        val jar = cible.resolve("android-stub.jar")
+        JarOutputStream(java.io.FileOutputStream(jar.toFile())).use { flux ->
+            flux.putNextEntry(ZipEntry("android/util/Log.class"))
+            flux.write(Files.readAllBytes(cible.resolve("android/util/Log.class")))
+            flux.closeEntry()
+        }
+        return jar
+    }
+
+    /** Résultat de classpath tooling : :lib (jar) + :app (MODULE :lib) ;
+     *  v0.102.0 : :app peut porter la plateforme (androidJar, ADR 0112). */
     fun resultatClasspath(
         jar: Path,
         avecIgnore: Boolean = false,
+        androidJar: Path? = null,
     ): ClasspathResult {
         val modules =
             mutableListOf(
@@ -144,6 +204,7 @@ internal class ProjetFixture(
                                 scope = "compile",
                             ),
                         ),
+                    androidJar = androidJar?.toString(),
                 ),
             )
         if (avecIgnore) {

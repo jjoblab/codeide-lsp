@@ -136,11 +136,52 @@ class VueIndexTest {
         assertTrue(vue.estPaquet("gamma.sous"))
         assertTrue(!vue.estPaquet("gamma.sous.enfant"))
         assertTrue(!vue.estPaquet("inconnu"))
-
         // Types DIRECTEMENT dans alpha : Alpha et Alpha\$Interne, PAS plus.
         assertEquals(listOf("alpha.Alpha\$Interne", "alpha.Alpha"), vue.typesDansPaquet("alpha"))
         assertEquals(listOf("gamma.sous.Enfant"), vue.typesDansPaquet("gamma.sous"))
         assertTrue(vue.typesDansPaquet("beta").contains("beta.Outil"))
+    }
+
+    @Test
+    fun `estPaquet - un prefixe intermediaire existe des qu un sous-paquet existe`() {
+        // V0.102.0 (lot h4 écart 1) : un jar ne portant QUE
+        // `android/util/Log.class` rend le paquet INTERMÉDIAIRE « android »
+        // EXISTANT — l'index mémoire du moteur l'admet (addPackagePrefixes),
+        // l'index disque PRÊT (autorité, ADR 0111 §8 : négatif définitif)
+        // doit en faire autant, sinon l'import exigeant le préfixe échoue
+        // (« The import android cannot be resolved » alors que le jar est
+        // indexé). « ni plus ni moins » PRESERVÉ : aucun type direct dans
+        // le préfixe, le sous-paquet direct reste le seul enfant rendu.
+        val jar =
+            FixturesIndex.ecrireZip(
+                File(base, "plateforme.jar"),
+                mapOf("android/util/Log.class" to FixturesIndex.octetsClasse()),
+            )
+        val vue =
+            service.vuePour(
+                FixturesIndex.classpath(
+                    listOf(
+                        FixturesIndex.entreeJar(
+                            jar.path,
+                            "maven:plateforme",
+                            jar.length(),
+                            jar.lastModified(),
+                        ),
+                    ),
+                ),
+            )
+        runBlocking { withTimeout(10_000) { service.construire(vue).join() } }
+        assertEquals(PhaseIndex.PRET, vue.etat.value.phase)
+
+        assertTrue(vue.estPaquet("android"))
+        assertTrue(vue.estPaquet("android.util"))
+        assertTrue("préfixe tronqué — pas un paquet", !vue.estPaquet("androi"))
+        assertTrue("frère lexicographique — pas un paquet", !vue.estPaquet("androidx"))
+        assertTrue(
+            "ni plus ni moins : aucun type DIRECT dans le préfixe",
+            vue.typesDansPaquet("android").isEmpty(),
+        )
+        assertEquals(listOf("android.util"), vue.sousPaquetsDirects("android"))
     }
 
     @Test

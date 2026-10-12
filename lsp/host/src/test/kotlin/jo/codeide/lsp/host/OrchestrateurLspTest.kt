@@ -4,7 +4,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -254,6 +256,173 @@ class OrchestrateurLspTest {
                     ),
                 )
             assertEquals(32, application.budgetCacheMo, "budget PAR JAR au-delà du plancher")
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun `android jar de la toolchain branche au moteur par defaut`() {
+        // Lot h4 écart 1 (§16.5) : AVANT toute sync, le contexte PAR DÉFAUT
+        // porte la plateforme du toolchain — le SDK est installé par le
+        // bootstrap AVANT le modèle Gradle, comme android.jar arrive dès
+        // la config SDK dans Android Studio.
+        val racine = Files.createDirectories(tmp.resolve("projet-defaut"))
+        val plateforme = tmp.resolve("android.jar")
+        Files.write(plateforme, byteArrayOf(1, 2, 3))
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = tmp.resolve("index-defaut").toFile(),
+                androidJar = plateforme.toFile(),
+            )
+        try {
+            val environnement =
+                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+            assertTrue(
+                environnement.classpathEntries().any { it.name == "android.jar" },
+                "le contexte par défaut porte la plateforme du toolchain",
+            )
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun `le moteur par defaut resout la plateforme avant toute sync`() {
+        // La promesse de l'écart 1 : PREMIÈRE ouverture, aucune sync —
+        // android.* (et java.* du boot classpath) RÉSOLVENT déjà en
+        // régime plein, pas seulement le repli syntaxique v0.101.0.
+        val racine = Files.createDirectories(tmp.resolve("projet-plateforme"))
+        val fixture = ProjetFixture(racine)
+        val plateforme = fixture.construireJarPlateforme(tmp.resolve("plateforme-defaut"))
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = tmp.resolve("index-plateforme").toFile(),
+                androidJar = plateforme.toFile(),
+            )
+        try {
+            val environnement =
+                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+            val sources = Files.createDirectories(racine.resolve("src/app"))
+            val androidMain = sources.resolve("AndroidMain.java")
+            Files.writeString(androidMain, SOURCE_ANDROID_MAIN)
+            environnement.addSourceDir(sources.parent.toFile())
+            val erreurs =
+                environnement
+                    .jdt()
+                    .diagnose(androidMain.toString(), SOURCE_ANDROID_MAIN)
+                    .filter { it.severity() == jo.lspjava.api.Severity.ERROR }
+            assertEquals(emptyList<String>(), erreurs.map { it.message() })
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun `android jar du module rejoint le moteur du module - regression v0 101`() {
+        // Écart 1, côté MODÈLE Gradle : le champ androidJar (ADR 0112)
+        // existait dans le protocole v8 mais n'était JAMAIS consommé —
+        // sans lui, android.util.Log restait « cannot be resolved » même
+        // après sync. Ce test échoue sur le code d'avant v0.102.0.
+        val racine = Files.createDirectories(tmp.resolve("projet-android"))
+        val fixture = ProjetFixture(racine)
+        val jar = fixture.construireJarFixture(tmp.resolve("fixture-android"))
+        val plateforme = fixture.construireJarPlateforme(tmp.resolve("plateforme-android"))
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = tmp.resolve("index-android").toFile(),
+            )
+        try {
+            session.appliquerClasspath(fixture.resultatClasspath(jar, androidJar = plateforme))
+            val environnement =
+                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+            val android = fixture.dossierApp.resolve("AndroidMain.java")
+            Files.writeString(android, SOURCE_ANDROID_MAIN)
+            val erreurs =
+                environnement
+                    .jdt(":app")
+                    .diagnose(android.toString(), SOURCE_ANDROID_MAIN)
+                    .filter { it.severity() == jo.lspjava.api.Severity.ERROR }
+            assertEquals(
+                emptyList<String>(),
+                erreurs.map { it.message() },
+                "android.util.Log devait résoudre par le android.jar du module",
+            )
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun `le modele persiste nourrit une nouvelle session sans sync`() {
+        // Écart 2 (§16.5) : la session 1 applique le classpath (sync) et
+        // PERSISTE le modèle ; la session 2 (réouverture) s'en nourrit
+        // DEPUIS LE DISQUE — modèles, index et moteurs retrouvés avant même
+        // la revalidation silencieuse, comme Android Studio rouvre son
+        // index persisté.
+        val racine = Files.createDirectories(tmp.resolve("projet-persiste"))
+        val fixture = ProjetFixture(racine)
+        val jar = fixture.construireJarFixture(tmp.resolve("fixture-persiste"))
+        SessionLsp(
+            racineProjet = racine.toFile(),
+            stockageIndex = tmp.resolve("index-persiste").toFile(),
+        ).use { premiere ->
+            premiere.appliquerClasspath(fixture.resultatClasspath(jar))
+        }
+        val fichierModele = racine.resolve(".codeide/local/lsp-modele.json")
+        assertTrue(Files.isRegularFile(fichierModele), "le modèle est persisté à côté de sync-state.json")
+
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = tmp.resolve("index-persiste").toFile(),
+            )
+        try {
+            assertTrue(session.nourrirDepuisModelePersiste(), "le modèle persisté relû et appliqué")
+            assertEquals(
+                setOf(":lib", ":app"),
+                session.modele.value
+                    ?.modules
+                    ?.map { it.nom }
+                    ?.toSet(),
+            )
+            // Les moteurs sont nourris SANS sync : Main.java résout
+            // alpha.Alpha par le classpath relu du disque.
+            val environnement =
+                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+            val main = fixture.dossierApp.resolve("Main.java")
+            Files.writeString(main, SOURCE_MAIN)
+            val erreurs =
+                environnement
+                    .jdt(":app")
+                    .diagnose(main.toString(), SOURCE_MAIN)
+                    .filter { it.severity() == jo.lspjava.api.Severity.ERROR }
+            assertEquals(
+                emptyList<String>(),
+                erreurs.map { it.message() },
+                "le moteur :app devait résoudre par le modèle persisté",
+            )
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun `sans modele persiste le nourrissage rend faux sans erreur`() {
+        // Lecture tolérante : racine vierge (première ouverture, projet
+        // importé) → faux, aucune exception — la sync nourrira à sa suite.
+        val racine = Files.createDirectories(tmp.resolve("projet-vierge"))
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = tmp.resolve("index-vierge").toFile(),
+            )
+        try {
+            assertFalse(session.nourrirDepuisModelePersiste())
+            assertNull(session.modele.value)
         } finally {
             session.close()
         }

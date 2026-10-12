@@ -161,12 +161,24 @@ public class VueIndex internal constructor(
         return parNom.keys.sorted().map { NomSimpleTypes(it, parNom.getValue(it)) }
     }
 
-    /** Le paquet existe dans un segment prêt — extension `java.packages`. */
+    /**
+     * Le paquet existe dans un segment prêt — extension `java.packages`.
+     *
+     * V0.102.0 (lot h4 écart 1) : les segments ne portent que les paquets
+     * FEUILLES (plages contiguës des entrées, AssembleurSegment) ; un
+     * paquet INTERMÉDIAIRE — « android » de « android.util » — existe
+     * pourtant dès qu'un sous-paquet existe (toute classe
+     * `android.util.Log` y pourvoit : l'index mémoire du moteur ajoute
+     * TOUS les préfixes, `addPackagePrefixes`). Sans la même tolérance
+     * ici, l'index disque PRÊT — AUTORITATIF (ADR 0111 §8, négatif
+     * définitif) — nierait un préfixe que l'import exige : « The import
+     * android cannot be resolved » alors que le jar est indexé.
+     */
     public fun estPaquet(nom: String): Boolean =
         positions
             .asSequence()
             .mapNotNull { segmentDe(it) }
-            .any { segment -> segment.paquets.binarySearchBy(nom) { it.nom } >= 0 }
+            .any { segment -> segmentContientPaquet(segment.paquets, nom) }
 
     /**
      * FQCN des types DIRECTEMENT dans un paquet — extension
@@ -330,6 +342,29 @@ private fun <T> premiereLigneAtteignant(
         }
     }
     return bas
+}
+
+/**
+ * Un segment connaît-il le paquet [nom] ? Correspondance EXACTE d'abord,
+ * puis préfixe : la première ligne >= "nom." commence par "nom." si un
+ * sous-paquet existe (les noms de paquets sont des identifiants + '.'
+ * uniquement — aucun ne peut s'intercaler entre le préfixe et ses
+ * extensions, cf. analyse de [VueIndex.estPaquet]).
+ *
+ * Exemption detekt ciblée (règle 16) : ReturnCount — chaque clause est
+ * une ISSUE distincte du contrat (racine vide, correspondance exacte,
+ * verdict du préfixe) — même patron que les garde-fous voisins.
+ */
+@Suppress("ReturnCount")
+private fun segmentContientPaquet(
+    paquets: List<PaquetSegment>,
+    nom: String,
+): Boolean {
+    if (paquets.binarySearchBy(nom) { it.nom } >= 0) return true
+    if (nom.isEmpty()) return false
+    val prefixe = "$nom."
+    val index = premiereLigneAtteignant(paquets, prefixe) { it.nom }
+    return index < paquets.size && paquets[index].nom.startsWith(prefixe)
 }
 
 /** FQCN d'un nom d'entrée (`java/util/Map$Entry.class` -> `java.util.Map$Entry`). */

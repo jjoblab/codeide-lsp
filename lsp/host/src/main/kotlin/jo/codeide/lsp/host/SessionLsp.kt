@@ -5,6 +5,7 @@ import jo.codeeditor.lsp.connection.InProcessStreamConnectionProvider
 import jo.codeeditor.lsp.connection.StreamConnectionProvider
 import jo.codeide.lsp.model.DepotModeleLsp
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
+import jo.codeide.lsp.model.PersistanceModeleLsp
 import jo.codeide.lsp.model.ProjetLsp
 import jo.codeide.tooling.protocol.ClasspathResult
 import jo.lspjava.engine.CompilationEnvironment
@@ -53,10 +54,27 @@ import java.util.logging.Logger
  *        `~/.codeide/lsp/index`, ADR 0111 §2 — injectable par l'app).
  * @param jdkHome JDK du terminal (D5 : image jrt + src.zip pour
  *        `java.*`) — `null` = `java.home` du runtime.
+ * @param androidJar plateforme Android installée par le bootstrap (lot h4
+ *        écart 1, v0.102.0) — le `android.jar` du SDK du TERMINAL rejoint
+ *        le contexte PAR DÉFAUT dès l'ouverture : `android.*` ET `java.*`
+ *        (le boot classpath embarque les deux) résolvent AVANT toute
+ *        sync, comme Android Studio branche `android.jar` dès la config
+ *        SDK. `null`/absent : moteur par défaut en repli (mode instantané
+ *        v0.101.0) — le didOpen annonce son régime, jamais de mensonge.
+ *        Les moteurs PAR MODULE ne dépendent PAS de ce paramètre : leur
+ *        plateforme vient du modèle Gradle (`ModuleLsp.androidJar`, ADR
+ *        0112) à la sync suivante.
  * @param parentJob parent optionnel des coroutines de la session
  *        (l'app peut tout arrêter d'un coup) ; la session reste
  *        responsable de son arrêt PROPRE via [close].
+ *
+ * Exemption detekt ciblée (règle 16) : LongParameterList — le constructeur
+ * de la façade publique porte les coutures INJECTABLES de la mission (h1
+ * stockage/lecteurStats, h4 écart 1 androidJar, D5 jdkHome), chacune à
+ * VALEUR PAR DÉFAUT — le nouveau paramètre n'ajoute AUCUN site d'appel
+ * contraint (les constructeurs existants compilent inchangés).
  */
+@Suppress("LongParameterList")
 public class SessionLsp(
     racineProjet: File,
     stockageIndex: File =
@@ -65,6 +83,7 @@ public class SessionLsp(
     dispatcheurIo: CoroutineDispatcher = Dispatchers.IO,
     lecteurStats: LecteurStatistiquesFichier = LecteurStatistiquesFichierDisque(),
     jdkHome: Path? = null,
+    androidJar: File? = null,
     parentJob: Job? = null,
 ) : Closeable {
     /** Racine du projet ouvert (identité de la session). */
@@ -90,6 +109,16 @@ public class SessionLsp(
             lecteurStats = lecteurStats,
         )
 
+    /** Persistance versionnée du modèle (lsp-modele.json, W7 — lot h4 écart 2). */
+    private val persistanceModele = PersistanceModeleLsp()
+
+    /** Lecteur de statistiques de la session (validation W7 du modèle relu). */
+    private val lecteurStatsSession: LecteurStatistiquesFichier = lecteurStats
+
+    /** Fichier du modèle persisté, à côté de sync-state.json (ADR 0058). */
+    private val fichierModelePersiste: File =
+        racineProjet.resolve(".codeide/local/lsp-modele.json")
+
     /** Miroir public de l'état d'indexation (consommé par l'UI, h2). */
     private val etatIndexationMutable = MutableStateFlow(EtatIndexation.INITIAL)
 
@@ -101,6 +130,15 @@ public class SessionLsp(
     init {
         if (jdkHome != null) {
             environnement.setJdkHome(jdkHome)
+        }
+        // Lot h4 écart 1 (v0.102.0) : la plateforme du toolchain rejoint le
+        // contexte PAR DÉFAUT AVANT tout branchement d'onglet — la voie
+        // rapide d'Android Studio. addClasspathEntry filtre lui-même les
+        // chemins absents (garde isFile) : un SDK non installé laisse le
+        // moteur en repli SANS erreur ici.
+        if (androidJar != null && androidJar.isFile) {
+            environnement.addClasspathEntry(androidJar)
+            LOGGER.info("[h4] android.jar de la plateforme branche au moteur par defaut")
         }
         orchestrateur.purgerTemporaires()
     }
@@ -116,13 +154,62 @@ public class SessionLsp(
      * Applique un résultat de classpath tooling (post-sync v8) : modèle
      * publié, index fusion reconstruit si l'union a changé, moteurs par
      * module remplacés, état d'indexation suivi. Redondant = no-op
-     * chaud (sémantiques lot E).
+     * chaud (sémantiques lot E). Le modèle appliqué est PERSISTÉ sous
+     * `.codeide/local/lsp-modele.json` (lot h4 écart 2, v0.102.0) — la
+     * réouverture le relira via [nourrirDepuisModelePersiste] avant même
+     * la revalidation silencieuse.
      */
     public fun appliquerClasspath(resultat: ClasspathResult): ResultatApplication {
         verifierOuverte()
         val application = orchestrateur.appliquer(resultat)
+        persisterModeleCourant()
         relancerCollecteEtat()
         return application.versPublic()
+    }
+
+    /**
+     * Nourrit la session depuis le modèle PERSISTÉ (`.codeide/local/
+     * lsp-modele.json`, à côté de sync-state.json) — lot h4 écart 2,
+     * v0.102.0 : la réouverture d'un projet dont l'empreinte Gradle n'a
+     * pas changé retrouve modèle + moteurs QUASI INSTANTANÉMENT, avant
+     * la sync fraîche (Android Studio rouvre son index persisté).
+     *
+     * Le fichier est VALIDÉ à la lecture (W7 : taille + horodatage de
+     * chaque entrée, [PersistanceModeleLsp.lire]) : un écart est SIGNALÉ,
+     * jamais fatal — le modèle reste utilisable, la revalidation suivante
+     * le remplace. Fraîcheur définitive : la sync (l'appelant ordonnance
+     * l'empreinte Gradle — la clé de cache — AVANT d'appeler).
+     *
+     * @return `true` si un modèle a été relu et appliqué ; `false` sinon
+     *         (fichier absent/illisible/version inconnue) — jamais d'exception.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — la lecture
+     * tolérante est le contrat même du lot h4 écart 2 (fichier absent,
+     * fichier refusé, succès) — même patron que LireSyncStateUseCase.
+     */
+    @Suppress("ReturnCount")
+    public fun nourrirDepuisModelePersiste(): Boolean {
+        verifierOuverte()
+        if (!fichierModelePersiste.isFile) return false
+        val persiste = persistanceModele.lire(fichierModelePersiste, lecteurStatsSession) ?: return false
+        orchestrateur.appliquerModele(persiste.projet)
+        relancerCollecteEtat()
+        val verification = persiste.verification
+        val verifie =
+            when (verification) {
+                is jo.codeide.lsp.model.EtatVerification.Coherant -> {
+                    "coherent"
+                }
+
+                is jo.codeide.lsp.model.EtatVerification.NonVerifie -> {
+                    "non verifie (${verification.ecarts.size} ecart(s))"
+                }
+            }
+        LOGGER.info(
+            "session LSP nourrie depuis le modele persiste " +
+                "(${persiste.projet.modules.size} module(s), $verifie)",
+        )
+        return true
     }
 
     /**
@@ -166,6 +253,22 @@ public class SessionLsp(
             LOGGER.log(Level.WARNING, "dispose de l'environnement échoué", t)
         }
         depot.vider()
+    }
+
+    /**
+     * Écrit le modèle courant sous `.codeide/local/lsp-modele.json` —
+     * BEST EFFORT (lot h4 écart 2) : l'écriture passe par la MÊME vue
+     * FUSE que le moteur (processus app, ADR 0038), un échec est
+     * journalisé JUL et JAMAIS propagé — la session vit, la prochaine
+     * application retentera.
+     */
+    private fun persisterModeleCourant() {
+        val projet = depot.instantane.value ?: return
+        try {
+            persistanceModele.ecrire(projet, fichierModelePersiste)
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "ecriture du modele persiste echouee (ignoree)", t)
+        }
     }
 
     /** Refuse l'usage après close (erreur explicite, pas de comportement fantôme). */

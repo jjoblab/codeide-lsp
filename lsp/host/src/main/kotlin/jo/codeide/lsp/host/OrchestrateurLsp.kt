@@ -5,6 +5,7 @@ import jo.codeide.lsp.index.VueIndex
 import jo.codeide.lsp.model.ClasspathInstantane
 import jo.codeide.lsp.model.ConvertisseurModeleLsp
 import jo.codeide.lsp.model.DepotModeleLsp
+import jo.codeide.lsp.model.Empreintes
 import jo.codeide.lsp.model.EntreeClasspathInstantane
 import jo.codeide.lsp.model.KindEntree
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
@@ -98,8 +99,19 @@ internal class OrchestrateurLsp(
      * Applique un résultat de classpath complet (post-sync) : modèle,
      * index fusion, moteurs par module.
      */
-    internal fun appliquer(resultat: ClasspathResult): Application {
-        val projet = ConvertisseurModeleLsp.depuisClasspathResult(resultat, lecteurStats)
+    internal fun appliquer(resultat: ClasspathResult): Application =
+        appliquerModele(ConvertisseurModeleLsp.depuisClasspathResult(resultat, lecteurStats))
+
+    /**
+     * Applique le pipeline complet depuis un modèle DÉJÀ construit —
+     * v0.102.0 (lot h4, écart 2) : le MÊME triptyque modèle/index/moteurs
+     * rejoué depuis un [ProjetLsp] PERSISTÉ (`.codeide/local/lsp-modele.json`,
+     * W7) au lieu d'un ClasspathResult frais — la réouverture d'un projet
+     * inchangé nourrit la session AVANT la revalidation silencieuse.
+     * Idempotent par construction : un modèle identique à l'union courante
+     * est un no-op chaud (sémantiques lot E).
+     */
+    internal fun appliquerModele(projet: jo.codeide.lsp.model.ProjetLsp): Application {
         depot.remplacer(projet)
         val entrees = unionIndexable(projet)
         val union =
@@ -119,7 +131,22 @@ internal class OrchestrateurLsp(
         )
     }
 
-    /** Union ordonnée des entrées INDEXABLES de tous les modules (JAR/AAR, première occurrence gardée). */
+    /**
+     * Union ordonnée des entrées INDEXABLES de tous les modules (JAR/AAR,
+     * première occurrence gardée) — v0.102.0 (lot h4 écart 1) : la
+     * PLATEFORME de chaque module Android (androidJar, ADR 0112) y vit
+     * AUSSI. L'index disque PRÊT est AUTORITATIF côté moteur (ADR 0111 §8
+     * : négatif DÉFINITIF, la sonde mémoire est sautée) : un jar du
+     * classpath moteur HORS union y est INVISIBLE — sans cette entrée,
+     * android.* restait « cannot be resolved » même après sync. Un même
+     * android.jar partagé par plusieurs modules ne produit QU'UN segment
+     * (déduplication par empreinte de contenu).
+     *
+     * LoopWithTooManyJumpStatements justifié (règle 8) : les continue du
+     * module ignoré et de la plateforme absente sont le patron même du
+     * parcours (précédent racinesSourcesDe, même fichier).
+     */
+    @Suppress("LoopWithTooManyJumpStatements")
     private fun unionIndexable(
         projet: jo.codeide.lsp.model.ProjetLsp,
     ): LinkedHashMap<String, EntreeClasspathInstantane> {
@@ -130,6 +157,26 @@ internal class OrchestrateurLsp(
                     entrees.putIfAbsent(entree.empreinte, entree)
                 }
             }
+        }
+        for (module in projet.modules) {
+            if (module.ignore) continue
+            val plateforme = module.androidJar ?: continue
+            if (!lecteurStats.existe(plateforme)) continue
+            val empreinte = Empreintes.empreinteFichier(plateforme, lecteurStats)
+            entrees.putIfAbsent(
+                empreinte,
+                EntreeClasspathInstantane(
+                    kind = KindEntree.JAR,
+                    chemin = plateforme,
+                    portee = null,
+                    sources = null,
+                    aar = null,
+                    empreinte = empreinte,
+                    existe = true,
+                    taille = lecteurStats.taille(plateforme),
+                    mtime = lecteurStats.mtime(plateforme),
+                ),
+            )
         }
         return entrees
     }
@@ -247,11 +294,24 @@ internal class OrchestrateurLsp(
         return racines
     }
 
-    /** Jars EXISTANTS du module (le moteur ne lit que des jars). */
-    private fun jarsDe(module: ModuleLsp): List<File> =
-        module.classpath.entrees
-            .filter { it.kind == KindEntree.JAR && it.existe }
-            .map { File(it.chemin) }
+    /**
+     * Jars EXISTANTS du module (le moteur ne lit que des jars) — v0.102.0
+     * (lot h4, écart 1) : la plateforme `android.jar` du module (ADR 0112 —
+     * champ du modèle v8, JAMAIS consommé jusqu'ici) rejoint le classpath
+     * de SON moteur : sans elle, `Activity`/`Bundle`/`TextView` restaient
+     * « cannot be resolved » même après sync. La garde d'existence est
+     * celle de [remplacerContexteModule] (chemins filtrés) — un SDK
+     * absent laisse le moteur dégradé, jamais faux.
+     */
+    private fun jarsDe(module: ModuleLsp): List<File> {
+        val jars =
+            module.classpath.entrees
+                .filter { it.kind == KindEntree.JAR && it.existe }
+                .map { File(it.chemin) }
+                .toMutableList()
+        module.androidJar?.let { jars.add(File(it)) }
+        return jars
+    }
 
     /** Empreinte sha256 des identités des entrées (clé de l'union). */
     private fun empreinteDe(entrees: List<EntreeClasspathInstantane>): String {

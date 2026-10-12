@@ -1555,7 +1555,8 @@ l'index ne conditionne pas le branchement, il en nourrit la QUALITÉ.
   l'usage : le branchement in-process d'aujourd'hui n'y passe pas.
 
 Le lot h4 « LSP instantané », voisin du h3 ci-dessus, est LIVRÉ en
-v0.101.0 (§16.4).
+v0.101.0 (§16.4) — ses DEUX ÉCARTS réels (pré-classpath android.jar,
+réouverture lente) sont fermés en v0.102.0 (§16.5).
 
 ### 16.4 Lot h4 — « LSP instantané » (v0.101.0, livré)
 
@@ -1618,3 +1619,71 @@ navigation restent silencieux sans plateforme (honnête — mentirait sans
 résolution) ; l'état d'indexation UI reste INITIAL avant sync (la
 barre est masquée — le mode instantané est le régime VISIBLE de
 l'éditeur, l'index est la QUALITÉ du régime plein).
+
+### 16.5 v0.102.0 — lot h4 (suite) : les DEUX ÉCARTS réels avec Android Studio
+
+Le retour accompagnant v0.101.0 citait les mots du plan : le lot h4
+était décrit comme la fermeture des deux écarts RÉELS de CodeIDE face à
+Android Studio — §16.4 a livré le mode instantané (le repli
+syntaxique), PAS ces écarts. Ils sont fermés ici.
+
+**Écart 1 — pré-classpath = JDK seul.** Android Studio branche
+`android.jar` dès la config SDK ; CodeIDE attendait le modèle Gradle
+(champ `androidJar` par module, protocole v8). Or le SDK est installé
+sur disque par le bootstrap (`EtapesAndroidSdk`) AVANT toute sync —
+et l'examen du parcours a révélé que le champ n'était **JAMAIS
+consommé** : `OrchestrateurLsp` ne poussait que les entrées JAR aux
+moteurs par module — `Activity`, `Bundle`, `TextView` restaient
+« cannot be resolved » même APRÈS sync. Trois correctifs :
+
+1. **Voie rapide à l'ouverture** : `SessionLsp(androidJar)` branche la
+   plateforme du toolchain (`outilchain.androidJar()`) au contexte PAR
+   DÉFAUT dès l'ouverture — android.* ET java.* (le boot classpath
+   embarque les deux) résolvent AVANT toute sync, en régime plein et
+   non plus en repli syntaxique ; le mode instantané v0.101.0 reste le
+   repli SANS SDK (le didOpen annonce son régime).
+2. **Moteurs par module** : `jarsDe(module)` inclut désormais
+   `module.androidJar` (ADR 0112 enfin consommé côté orchestrateur).
+3. **Index disque** : la plateforme rejoint l'UNION INDEXABLE — l'index
+   PRÊT est AUTORITATIF (ADR 0111 §8 : négatif définitif, sonde mémoire
+   sautée) : un jar hors union y est INVISIBLE même présent au classpath
+   moteur. Deux sous-bugs corrigés au passage : `VueIndex.estPaquet`
+   niait les paquets INTERMÉDIAIRES (les segments ne portent que les
+   feuilles — « The import android cannot be resolved » alors que
+   `android.util.Log` était localisé) ; le test
+   `estPaquet - préfixe intermédiaire` verrouille la sémantique.
+
+**Écart 2 — réouverture lente.** Le journal d'appareil le prouvait :
+état sync restitué à 20:39:03, session nourrie à 20:41:02 (~2 min) —
+le classpath n'était pas persisté, chaque ouverture attendait la sync
+complète. Android Studio, lui, rouvre index et modèle persistés. Le
+mécanisme existait depuis l'étape 1 (`PersistanceModeleLsp`,
+`.codeide/local/lsp-modele.json`, validation W7 taille/horodatage) —
+mais n'était câblé NULLE PART. Désormais :
+
+- `SessionLsp.appliquerClasspath` PERSISTE le modèle appliqué
+  (best-effort : échec journalisé JUL, jamais bloquant) ;
+- `SessionLsp.nourrirDepuisModelePersiste()` le relit et rejoue le
+  MÊME triptyque modèle/index/moteurs (`OrchestrateurLsp.appliquerModele`,
+  refactor du pipeline) — idempotent par construction (redondant =
+  no-op chaud, sémantiques lot E) ;
+- `restaurerEtatSyncSiEmpreinteIdentique` (v0.40.1) nourrit la session
+  depuis le cache AVANT de lancer la revalidation silencieuse : **la
+  clé de cache est l'empreinte Gradle** (SHA-256 des fichiers de build,
+  `sync-state.json`) — empreinte différente ⇒ JAMAIS de cache
+  trompeur, sync complète ; modèle relu non vérifié (W7) ⇒ SIGNALÉ,
+  utilisable, remplacé par la revalidation.
+
+**Protocole de retour appareil** : séquence attendue à la réouverture
+— « session LSP ouverte » → « session LSP nourrie depuis le cache (N
+module(s)) » → (revalidation silencieuse) → « session LSP nourrie » ;
+à la PREMIÈRE ouverture d'un `.java` avant toute sync : complétion
+android.* ET java.* (régime plein si SDK installé) ; après sync :
+`TextView`, `Activity`, `Bundle` résolvent dans les moteurs par module.
+
+**Ce qui reste ouvert (honnête)** : ADR 0112 strict — modules Android
+sans image jrt — demande une évolution de l'API moteur par module
+(jdkHome partagé aujourd'hui) ; `lsp-classpath.json` (miroir domaine,
+ADR 0058) reste le fichier des STATS de sync (pied de l'onglet),
+`lsp-modele.json` celui du nourrissage — deux consommateurs, deux
+formats, aucune duplication de rôle.
