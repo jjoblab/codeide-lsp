@@ -1,0 +1,217 @@
+# LSP Kotlin — cadrage de mission (v0.109.0)
+
+> Document de cadrage. La mission elle-même (K1–K5 ci-dessous) démarre sur
+> « GO » du propriétaire. Étude comparative préalable : projet **projet de référence**
+> (auteur tiers, cloné en référence, GPL-3.0 — aucune ligne de code réutilisée,
+> enseignements d'architecture seulement).
+
+## 1. Objectif et contexte
+
+Offrir aux projets **Kotlin** de CodeIDE la même qualité d'expérience que le
+LSP Java (v0.91.0→v0.108.0) : diagnostics en temps réel, complétion
+membre/nom/type, hover, go-to-definition, quick-fixes — **in-process**, sans
+processus externe, dans l'esprit « Android Studio sur appareil » demandé par
+le propriétaire. Le LSP Java a posé l'infrastructure réutilisable
+(SessionProjet, RegistreFermeture, classpath modèle v8, index disque segments
+ADR 0111, LSP4J, routage `jo.codeide.projet_cible`) ; le LSP Kotlin s'y
+branche au lieu de la re-dériver.
+
+La contrainte structurante est double : un appareil Android courant plafonne
+le tas applicatif (`dalvik.vm.heapsize`, ~576 Mo mesurés par projet de référence), et
+la taille de l'APK de CodeIDE doit rester maîtrisée (§6 : distribution en
+« pack langue » téléchargeable, différée à post-stabilisation sur décision du
+propriétaire).
+
+## 2. Enseignements de l'étudu projet de référence
+
+projet de référence est l'IDE Android on-device le plus avancé publiquement documenté
+sur ce problème. Faits établis par lecture directe du dépôt :
+
+- **Aucun LSP** (aucun lsp4j) : SPI maison in-process (`LanguageBackend` →
+  `SourceAnalyzer` sur un DOM neutre). Le protocole LSP est jugé inutile en
+  in-process.
+- **Éditeur Kotlin = parseur seul + modèle de symboles propre** (~31 000
+  lignes `commonMain`). Citation : « Running the Kotlin compiler's frontend
+  (FIR/resolution) for every keystroke is too heavy for an on-device editor ».
+  Toute la sortie FIR/résolution du compilateur est jetée.
+- **Évolution en trois temps** : (1) `kotlin-compiler-embeddable` comme hôte
+  de parse + K2 pour le build, l'Analysis API dans un classloader isolé (deux
+  plateformes IntelliJ = enfer de classloaders) ; (2) unification en un split
+  `-for-ide` **non-relocalisé** + plateforme IntelliJ réelle, fusionnés en un
+  jar unique de 65 Mo / ~30 000 classes ; (3) abandon du PSI IntelliJ pour
+  l'édition : **parseur multiplateforme vendoré** — la grammaire du compilateur
+  elle-même (`compiler/multiplatform-parsing`, ~10 216 lignes, Apache 2.0) +
+  `org.jetbrains:syntax-api`, derrière une façade `Kt*` de ~1 971 lignes.
+- **Parité syntaxique vérifiée, pas visée** : suite différentielle sur le
+  corpus du compilateur (719/774 fichiers, écarts tracés dans une baseline qui
+  ne peut que rétrécir) et 2381/2381 sur leur propre dépôt.
+- **Décodage du classpath** : `kotlin-metadata-jvm` pour les bibliothèques
+  Kotlin (extensions, nullabilité, arguments par défaut), ASM pour les types
+  Java/Android ; index disque à clés taggées (`top:<nom>`,
+  `ext:<receiverFqn> <nom>`) → complétion O(matchs), tas plat.
+- **Classes synthétiques** injectées par point d'extension pour `R`,
+  ViewBinding, `serializer()` : elles résolvent **avant tout build**, sans
+  génération — voie directe pour notre dette databinding (§5-K5).
+- **Le compilateur sur ART coûte cher** : 9 passes ASM au dex (ClassValue,
+  VarHandle, `java.io` API 33, dispatch fastutil, caffeine, `PathUtil`,
+  Introspector, Unsafe, FastJarFS), `kotlinc-resources.zip` extrait au runtime,
+  stdlib embarquée en ressource, et **fork de VM persistante** pour compiler
+  (tas plafonné). Conclusion : le compilateur ne doit **jamais** être sur le
+  chemin critique de l'édition.
+- **L'Analysis API JetBrains** n'y est plus utilisée que par KSP2, jamais par
+  l'éditeur.
+
+## 3. Décisions
+
+| # | Décision | Motif |
+|---|----------|-------|
+| D1 | **Option « parseur vendoré + modèle de symboles propre »**, en deux temps : T1 éditeur (cette mission), T2 compilation K2 (différée au tooling). L'option fwcd/kotlin-language-server est **écartée** (processus externe + LSP + embarque tout le compilateur : contraire à l'architecture in-process et à la leçon projet de référence). L'option Analysis API K2 est **réduite** à un éventuel « mode diagnostic profond » à la demande, jamais par frappe. | Comparaison §2 ; mémoire ART ; cohérence LSP Java. |
+| D2 | **Parseur = grammaire officielle du compilateur, vendorée** (`compiler/multiplatform-parsing` + `org.jetbrains:syntax-api`, Apache 2.0), jamais réécrite. Suite de parité obligatoire dès K1. | La parité devient une propriété vérifiée ; projet de référence a gratté ce coût avant d'y renoncer. |
+| D3 | **Modèle de symboles maison conservateur** : périmètre T1 volontairement réduit (voir §4) ; toute forme non modélisée **sous-rapporte** (pas de faux positif), philosophie identique aux diagnostics W de LSP_JAVA.md. | Un sous-ensemble correct bat un modèle complet faux ; l'utilisateur a un build pour la vérité. |
+| D4 | **Réutilisation maximale de l'infra LSP Java** : SessionProjet/RegistreFermeture/I1-I7, classpath v8 (ADR 0113), index disque segments par jar (ADR 0111), LSP4J, routage `projet_cible`, journal `SessionProjet`. | Évite la dérive « deuxième tour de roue ». |
+| D5 | **Classes synthétiques** pour `R`, `BuildConfig`, ViewBinding et DataBinding dans le modèle de symboles, généralisant la sonde `hasGeneratedDatabindingClasses` (v0.108.0). Objectif : éliminer le délai « databinding/R invisibles avant build », remplacer à terme le downgrade HINT par une résolution réelle. | Preuve projet de référence (EP synthétiques) ; ferme la décision ouverte ① de LSP_JAVA §17.3 dans le sens le plus fort. |
+| D6 | **Distribution « pack langue » téléchargeable, différée** : l'APK embarque T1 (estimation ~2–4 Mo) ; l'architecture est dès K1 conçue pour un découpage ultérieur en pack téléchargé (SPI mince, module isolé, aucune référence directe depuis l'app). Le découpage réel n'aura lieu qu'**après stabilisation** (§6). Décision du propriétaire (2026-10-13). | Taille APK maîtrisée ; pas de premature abstraction. |
+| D7 | **Licence** : zéro ligne GPL du projet de référence. Vendoring Apache 2.0 depuis les sources JetBrains amont (licite, notice `THIRD_PARTY_NOTICES.md` + `docs/adr` de vendoring). | Conformité. |
+| D8 | **T2 hors périmètre de cette mission** : la compilation Kotlin (K2 in-process, split `-for-ide` fusionné, recettes projet de référence : passes ASM, resources-zip, worker forké → lien S6) sera cadrée dans `docs/TOOLING.md` quand le tooling compilera le Kotlin. | Une mission = un objectif. |
+
+## 4. Architecture T1 — module `:lsp:kotlin`
+
+Parallèle de `:lsp:java` (mêmes conventions : kover ≥ 80 % ligne, detekt,
+spotless, TDD, diagnostics documentés).
+
+### 4.1 Structure proposée
+
+```
+:lsp:kotlin
+  parse/       Vendoring + façade Kt* (parsage tolérant, LightSyntaxTree)
+  symbols/     Modèle de symboles neutre : KotlinSymbol, KotlinType, portées
+  classpath/   Décodeurs : kotlin-metadata-jvm (libs Kotlin), ASM (Java/Android)
+  index/       KotlinCallableIndex disque : clés taggées top:/ext: (ADR 0111)
+  resolve/     Résolution déclarative + inférence bornée + smart casts positionnels
+  completion/  Marqueur dummy-identifier, classement, auto-import
+  diagnostics/ Catalogue kt.* conservateur, downgrade/datation (cf. v0.108.0)
+  synthetics/  R, BuildConfig, ViewBinding, DataBinding (sonde réutilisée)
+  session/     Adaptateur LSP4J sur SessionProjet (même cycle de vie que lsp:java)
+```
+
+### 4.2 Pipeline
+
+Document LSP → parse incrémental (façade `Kt*`, re-parse du sous-arbre
+modifié, repli parse complète) → DOM neutre → services (complétion,
+diagnostics, hover, définition) → publication LSP4J `publishDiagnostics`.
+Le classpath v8 (déjà transporté par la session) alimente `classpath/` :
+scan paresseux persistant par jar (empreinte de contenu, segments ADR 0111),
+`@Metadata` décodée seulement pour les jars qui ont un module Kotlin
+(saut des autres sans décoder une seule classe).
+
+### 4.3 Périmètre sémantique T1 (réduit, extensible)
+
+- **Résolution** : portées depuis les parents syntaxiques ; locaux typés par
+  leur initialiseur ; retours de membres et d'appels ; constructeurs ; chaînes
+  `a.b().c` ; surcharges par nom + arité (pas par types complets en K3) ;
+  paramètres/récepteurs de lambda et SAM en K4.
+- **Smart casts positionnels** : branches `is`/`!is` des formes `if`, `when`,
+  `&&`/`||`, garde à sortie précoce (K4).
+- **Complétion** : membre après `.`/`?.` (membres ∪ extensions par chaîne de
+  supertypes), nom/porte, type, infix ; `expect`ed-type (Boolean/enum) ;
+  mots-clés par position grammaticale.
+- **Diagnostics initiaux** : `kt.unresolved`, `kt.typeMismatch` (cas simples),
+  `kt.argumentCount`, `kt.unsafeNullable`, `kt.missingReturn`,
+  `kt.unreachable`, `kt.valReassign`, `kt.unusedImport`,
+  `kt.conflictingImport` — chacun avec sa fixture TDD et son test de
+  sous-rapport.
+- **Quick-fixes** : import (un correctif par FQN candidate, position triée) ;
+  les suivants après K4.
+
+### 4.4 Protocole et complétude des capacités
+
+La session Kotlin expose `textDocument/completion`, `hover`, `definition`,
+`publishDiagnostics` — mêmes formes que la session Java. Le routage v0.106.0
+(`extra jo.codeide.projet_cible`) est réutilisé tel quel. La **compliance par
+projet** (décision ouverte ② de LSP_JAVA §17.3) est reportée au protocole v10
+de la mission Kotlin : champ `languageVersion` du module dans le
+`ClasspathModule` (la grammaire vendorée est indépendante du niveau de
+langage ; seul le modèle de symboles en dépend marginalement).
+
+## 5. Étapes de livraison (indicatif)
+
+| Étape | Contenu | Version cible |
+|-------|---------|---------------|
+| K1 | Vendoring de la grammaire (script de re-sync + `VENDOR.md` à la projet de référence), façade `Kt*`, suite de parité (corpus + dépôt), ADR de vendoring. | v0.110.0 |
+| K2 | Session LSP Kotlin minimale : parse tolérant, diagnostics syntaxiques `kt.*`, cycle de vie SessionProjet/RegistreFermeture, routage. | v0.111.0 |
+| K3 | Symboles classpath + index disque + complétion membre/nom/type + hover + définition (projet + classpath). | v0.112.0 – v0.113.0 |
+| K4 | Inférence bornée, smart casts, diagnostics sémantiques, quick-fixes d'import. | v0.114.0 |
+| K5 | Classes synthétiques R/ViewBinding/DataBinding, intégration éditeur complète (complétion multi-langue, bascule Java↔Kotlin dans un même projet). | v0.115.0 |
+| T2 | (Différé, hors mission) Compilation K2 via tooling. | — |
+
+## 6. Distribution — « pack langue Kotlin » (différé, décision propriétaire)
+
+**Problème** : T1 embarqué est estimé à ~2–4 Mo (grammaire vendorée compilée
++ façade + kotlin-metadata-jvm + ASM déjà présent). C'est acceptable dans
+l'APK. Mais T2 (jar compilateur non-relocalisé ~65 Mo dexé, ses ressources et
+ses shims) ne le sera **jamais**. Le propriétaire a tranché (2026-10-13) :
+le LSP Kotlin doit être architecturé pour devenir une **lib/dépôt que
+l'utilisateur télécharge**, mais seulement **après stabilisation**.
+
+**Ce qui est fait dès K1 (coût quasi nul, impossible à retrofitter à moindre
+frais)** :
+
+- `:lsp:kotlin` reste un module Gradle **sans dépendance depuis l'app** ;
+  l'app ne voit qu'un SPI mince (le même contrat que `:lsp:java` : session,
+  capacités, publication diagnostics) derrière `ServiceLoader`.
+- Aucune classe du module n'est référencée nommément hors du module ;
+  résolution des services par descripteur, pas par type concret.
+- Dépendances embarquées confinées au module (kotlin-metadata-jvm n'a pas de
+  transitif gênant ; ASM partagé avec lsp:java via la même version épinglée).
+- `version.properties` du pack prévu dès K1 (identifiant, version minimale
+  d'app, empreinte) même si l'APK l'embarque encore.
+
+**Options de distribution au moment venu** (recommandation : ①) :
+
+1. **Pack maison via l'installateur bootstrap existant** (ADR 0085/0033) :
+   téléchargement opt-in post-installation (motif des plateformes Android
+   E5), stockage sous `filesDir/packs/kotlin-lsp/`, chargement par
+   `DexClassLoader` avec classloader parent contrôlé (motif
+   `ArtKotlinPluginLoader` du projet de référence), signature + version minimale +
+   désinstallation propre. Avantages : hors Play Store, cohérent avec
+   l'installation des outils existante, réutilise l'UI d'installation.
+2. Dynamic Feature Modules (Play) : propre mais **exige le Play Store** et
+   son pipeline — incompatible avec l'installation directe de CodeIDE.
+3. Artefact Maven/JitPack consommé par le build : simple pour le build,
+   n'adresse pas le runtime on-device.
+
+**Critères de déclenchement du découpage** (à revoir avec le propriétaire) :
+deux versions sans correctif structurel sur `:lsp:kotlin`, retours appareil
+réel de F/baseline satisfaisants, et/ou l'arrivée de T2 (le pack devient alors
+la seule voie d'hébergement du compilateur).
+
+## 7. Cibles non fonctionnelles
+
+- Latence complétion à chaud : < 100 ms (fichier ≤ 2 000 lignes, index chaud).
+- Premier diagnostic d'un fichier ouvert : < 250 ms après parse.
+- Tas : plat en régime établi (index disque, aucun scan classe entier résident).
+- Taille ajoutée à l'APK (T1 embarqué) : ≤ 4 Mo.
+- kover ≥ 80 % ligne sur `:lsp:kotlin`, comme partout.
+
+## 8. Risques et parades
+
+| Risque | Parade |
+|--------|--------|
+| La grammaire vendorée dérive du compiler amont (2×/an) | Script de re-sync + suite de parité en CI (baseline rétrécissante). |
+| Sous-ensemble sémantique décevant vs Android Studio | Contractuel : D3 (sous-rapport), feu de route K3/K4 incrémentale ; « mode profond » Analysis API documenté comme extension possible. |
+| Conflits de dépendances (ASM, kotlinx) | Versions épinglées partagées avec `:lsp:java` ; audit `checkDuplicateClasses` en CI. |
+| `org.jetbrains:syntax-api` indisponible (hors Central) | Vendoring du **source** amont (défense déjà adoptée par projet de référence), pas de dépendance à un dépôt tiers au runtime. |
+| Taille/mémoire réelle > estimation | Mesure dès K1 (tâche de rapport de taille du module) ; le pack §6 est la soupape. |
+
+## 9. Traçabilité
+
+- Remplace ROADMAP « Phase 5.1 LSP Kotlin » (kotlin-language-server externe —
+  écarté).
+- Ferme la décision ouverte ① de LSP_JAVA.md §17.3 (génération post-sync →
+  remplacée par classes synthétiques D5, plus forte).
+- Prépare la décision ouverte ② (compliance par projet → protocole v10,
+  §4.4).
+- Prérequis de `docs/PREVIEW.md` §4 (preview Compose) pour la partie
+  résolveur.
+- Cycle de vie : la session Kotlin est un `SessionProjet` de plus dans le
+  RegistreFermeture (I7) — tests de rotation/close hérités du socle v0.107.0.
