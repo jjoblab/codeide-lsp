@@ -271,7 +271,12 @@ internal class LecteurSegment {
             fichier.inputStream().use { flux ->
                 val taille = TAILLE_EN_TETE_LIMITEE.coerceAtMost(tailleFichier)
                 val tampon = ByteArray(taille.toInt())
-                flux.readNBytes(tampon, 0, tampon.size)
+                // v0.100.1 : `readNBytes` est JDK 9 — absent d'ART < API 33
+                // (minSdk 26 visé, même discipline que
+                // LecteurStatistiquesFichierDisque) : lecture COMPLÈTE par
+                // `readFully` (API 1). Le tampon est borné par la taille du
+                // FICHIER : jamais de fin prématurée ici.
+                DataInputStream(flux).readFully(tampon)
                 val entree = DataInputStream(ByteArrayInputStream(tampon))
                 if (entree.readInt() != FormatSegment.MAGIE) {
                     return false

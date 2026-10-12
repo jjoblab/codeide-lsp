@@ -5,6 +5,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.CRC32
 
 /**
@@ -94,17 +95,27 @@ internal class EcrivainSegment {
         fichier: File,
     ) {
         val octets = serialiser(donnees)
-        // Le nom temporaire est UNIQUE PAR ÉCRITURE (pid + thread + nano) :
-        // deux constructions concurrentes du MÊME contenu (vues distinctes)
-        // écriraient sinon le même .tmp — collision de renommage, l'une
-        // échouerait en ERREUR (constaté sur CI).
-        val temporaire =
-            File(
-                fichier.parentFile,
-                fichier.name + "-" + ProcessHandle.current().pid() + "-" + Thread.currentThread().threadId() + "-" +
-                    System.nanoTime() +
-                    ".tmp",
-            )
+        // Le nom temporaire est UNIQUE PAR ÉCRITURE : deux constructions
+        // concurrentes du MÊME contenu (vues distinctes) écriraient sinon
+        // le même `.tmp` — collision de renommage, l'une échouerait en
+        // ERREUR (constaté sur CI, v0.93.1).
+        //
+        // v0.100.1 (rapport d'appareil 62f8627d, Android 15 / API 35) :
+        // l'unicité ne doit reposer sur AUCUNE API JDK postérieure au
+        // sous-ensemble d'ART — `java.lang.ProcessHandle` (JDK 9) et
+        // `Thread.threadId()` (JDK 19), utilisés depuis v0.93.1, sont
+        // ABSENT du runtime ART ≤ API 35 (présents seulement sur les
+        // plateformes 37+, et sur toute JVM de bureau) : le module est
+        // JVM pur, ses tests tournent sur JVM, lint ne vérifie PAS son
+        // bytecode dexé — la référence est passée SILENCIEUSEMENT jusqu'à
+        // la première écriture de segment SUR APPAREIL (NoClassDefFoundError
+        // au premier `ecrire`, v0.100.0 : l'index ne pouvait jamais se
+        // construire). Compteur atomique + `System.nanoTime()` :
+        // uniques sur JVM comme sur ART, TOUT niveau d'API ; le renommage
+        // atomique Linux REMPLACE la cible (deux écrivains concurrents du
+        // même contenu laissent un fichier complet et valide — le
+        // dernier gagne, contenu identique).
+        val temporaire = nomTemporaireUnique(fichier)
         FileOutputStream(temporaire).use { sortie ->
             sortie.write(octets)
             sortie.fd.sync()
@@ -184,5 +195,21 @@ internal class EcrivainSegment {
 
     private companion object {
         private const val TAILLE_EN_TETE_ESTIMEE: Int = 4096
+
+        /** Compteur process-wide des écritures (unicité STRICTE par écriture). */
+        private val COMPTEUR_ECRITURES = AtomicLong(0)
     }
+
+    /**
+     * Nom `.tmp` unique PAR ÉCRITURE — ART-safe (voir [EcrivainSegment]) :
+     * compteur atomique process-wide + `System.nanoTime()` (horloge
+     * monotone commune aux process : deux PROCESS distincts écrivant le
+     * même segment produisent des noms distincts, et le renommage
+     * atomique remplace la cible — jamais de fichier partiel).
+     */
+    internal fun nomTemporaireUnique(fichier: File): File =
+        File(
+            fichier.parentFile,
+            "${fichier.name}-${COMPTEUR_ECRITURES.incrementAndGet()}-${System.nanoTime()}.tmp",
+        )
 }

@@ -1338,6 +1338,94 @@ complète : spotless/detekt/checkModuleDependencies/lint verts, tests
 editor/host/client verts, kover ≥ 80 % (host, client),
 `:app:assembleDebug` vert.
 
+### 16.2.1 v0.100.1 — retour d'appareil : la première exécution réelle
+
+Lot h2 a branché l'éditeur sur le serveur in-process — v0.100.0 était la
+PREMIÈRE version où `:lsp:index` et `:lsp:host` s'exécutaient sur ART (les
+étapes 1–3 ne les avaient éprouvées que sur JVM). Le retour d'appareil
+(moto g06, Android 15 / API 35, rapport 62f8627d + journal de déploiement)
+a fait remonter QUATRE défauts, tous corrigés dans v0.100.1 :
+
+1. **CRASH FATAL — `NoClassDefFoundError: java.lang.ProcessHandle`**
+   (`EcrivainSegment.ecrire`, à la PREMIÈRE écriture de segment, juste
+   après un sync réussi) : le nom `.tmp` unique (v0.93.1, course CI)
+   dérivait de `ProcessHandle.current().pid()` (JDK 9) et
+   `Thread.currentThread().threadId()` (JDK 19). **`java.lang.ProcessHandle`
+   et `Thread.threadId()` sont ABSENT du runtime ART ≤ API 35** — la
+   plateforme android-37 les fournit (vérifié : `javap` sur android.jar
+   37.2 les liste TOUS DEUX), c'est pourquoi le module compilait et
+   passait CI : `:lsp:index` est un module **Kotlin JVM pur**, compilé
+   contre le JDK 21, dont le bytecode est ensuite DEXÉ dans l'APK **sans
+   qu'aucun lint ne vérifie son niveau d'API** (NewApi ne court que sur
+   les modules Android). L'app plantait donc à CHAQUE construction
+   d'index — le LSP ne pouvait jamais atteindre PRÊT. Correctif :
+   unicité par compteur atomique process-wide + `System.nanoTime()`
+   (existants depuis l'API 1 ; le renommage atomique Linux REMPLACE la
+   cible, deux écrivants concurrents laissent un fichier complet).
+
+2. **Latent — `InputStream.readNBytes(byte[], int, int)` (JDK 9, API
+   Android 33+) dans `LecteurSegment.enTeteValide`** : la reprise
+   « à chaud » aurait fait `NoSuchMethodError` sur tout appareil
+   API 26–32 (minSdk 26 — la discipline existe déjà côté hôte,
+   `LecteurStatistiquesFichierDisque.lireBorne` : le lecteur d'index ne
+   la respectait pas). Correctif : `DataInputStream.readFully` sur un
+   tampon borné par la taille du fichier (API 1).
+
+3. **« JAR orchestrateur indisponible : <chemin>: The source file
+   doesn't exist. »** (pile `JarDeployer$deployer$2.invokeSuspend`,
+   JarDeployer.kt:183 — le REPLI de renommage) : le `.tmp` de déploiement
+   portait un nom FIXE et le repli `copyTo` vivait HORS de la hiérarchie
+   typée v0.99.1. Deux déploiements CONCURRENTS (redémarrage de l'app
+   pendant qu'un process déploie encore) partageaient le même `.tmp` :
+   le gagnant le renommait, le perdant voyait SA source disparaître →
+   `NoSuchFileException` BRUT, classé DÉFINITIF par `deploiementEstDefinitif`
+   alors que le JAR ÉTAIT déployé. Correctif : `.tmp` UNIQUE (compteur +
+   nano), exclusion mutuelle in-process (`Mutex`), repli TYÉ
+   (`EcritureImpossible`) et TOLÉRANT (un `.tmp` disparu avec un JAR en
+   place portant DÉJÀ notre empreinte = un concurrent a gagné la course :
+   résultat atteint, pas un échec), purge du `.tmp` à nom fixe hérité.
+
+4. **Fuite de session LSP au démarrage** (journal d'appareil : deux
+   « session LSP ouverte » à 15 ms d'écart, AUCUNE refermée) :
+   `ouvrirSessionLspSiPossible` est sollicitée par DEUX coroutines (suivi
+   du projet + sync d'ouverture) ; la garde était franchie AVANT la
+   résolution FUSE SUSPENDANTE, la seconde session ÉCRASAIT la première
+   sans la refermer — moteurs, constructions d'index et modèle ORPHELINS
+   (et double écriture concurrente des MÊMES segments). Correctif :
+   ouverture EXCLUSIVE (`Mutex`) et garde REVERIFIÉE sous le verrou.
+
+**Audit ART de complément** (même classe de risque, modules JVM purs
+dexés) : balayage des sources `:lsp:index`/`:lsp:host`/app/feature contre
+les API JDK 9+ (readAllBytes/transferTo/readNBytes/Files/Paths/
+ProcessHandle/threadId/List.of…) — **plus AUCUNE occurrence** côté
+lecture/écriture d'index ; vérification BYTECODE post-build
+(`javap -c` sur les 5 classes du chemin critique, puis scan des 30 dex de
+l'APK : zéro référence `java/lang/ProcessHandle`). Le `List.of`/`Map.of`
+(JDK 9, API Android 30+) du moteur vendored `:lsp:java` est documenté au
+même titre : acceptable tant que la cible appareil est ≥ API 30 — à
+garder en tête si minSdk redescend. **Règle qui en découle** : tout
+module JVM pur destiné à être DEXÉ s'en tient au sous-ensemble
+OpenJDK-8 + API-26-sûres (la même discipline que les shims D3 du
+moteur), et toute API JDK récente passe par un équivalent vérifié contre
+android.jar.
+
+**Tests** : 3 nouveaux `EcrivainSegmentTest` (unicité ×1000, écritures
+concurrentes du même contenu vers le même fichier — round-trip complet,
+en-tête court par lecture bornée), 2 nouveaux `JarDeployerTest`
+(déploiements concurrents ×8 sans exception ni `.tmp` survivant, purge
+du `.tmp` hérité) ; chaîne verte (detekt/spotless/kover ≥ 80 %, tests
+editor/daemon/index, assembleDebug, APK vérifié).
+
+**Comment savoir si le LSP est branché** (protocole de validation
+appareil) : ① la **barre d'état d'indexation** sous les onglets — anneau
+accent = construction en cours (progression faits/total), **disque vert
+plein = PRÊT** (index connecté : complétion/diagnostics/hover
+opérationnels), bordure verte = partiel, bordure accent = erreur ; ② le
+journal applicatif (tag `LspEditeur` : « LSP Java connecté (chemin) »,
+tag `Editor` : « session LSP ouverte » — UNE fois depuis v0.100.1) ; ③
+l'épreuve directe : la complétion dans un fichier `.java` propose des
+SYMBOLES Java (types, membres) et non la seule liste lexicale.
+
 ### 16.3 Suite (à faire)
 
 - mesure appareil du bout-en-bout éditeur ↔ moteur (prompt 2 §9 : p95
