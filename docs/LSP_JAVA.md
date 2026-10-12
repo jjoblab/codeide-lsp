@@ -1484,6 +1484,65 @@ toutes trois observables) : ① barre d'état — FINE ligne sous les onglets
 — « LSP Java connecté » ENFIN visible en verbosité normale ; ③
 complétion `.java` proposant des symboles Java.
 
+### 16.2.3 v0.100.3 — troisième retour d'appareil : le branchement muet (contrat de pont détourné)
+
+Le retour d'appareil v0.100.2 (barre d'état FINE et bien placée — v0.100.2
+confirmé installé) rapporte le symptôme inverse du précédent : le fichier
+`.java` ouvert n'offre AUCUNE complétion au-delà de la liste lexicale
+native de code-editor, les erreurs volontaires ne produisent AUCUN
+diagnostic, et le journal dit « session LSP ouverte → nourrie → refermée »
+sans JAMAIS « LSP Java connecté » — ni AUCUN « échec de connexion » (WARN).
+Cette absence DOUBLE est le diagnostic : `brancherLspSiNécessaire`
+n'atteignait même pas `CoordonnateurLsp.brancher`.
+
+1. **Le pont détourné** : le branchement résout le chemin FUSE du FICHIER
+   AVANT de créer le `LspEditor` — par `cheminFuseDe`, qui réutilisait le
+   pont `ResolveurCheminFuse`. Or ce pont n'avait QU'UN contrat :
+   RÉPERTOIRE (garde `File.isDirectory`, kdoc « résout le dossier du
+   projet » — hérité du terminal T6, v0.43.0). Un `.java` n'est jamais un
+   répertoire : chaque fichier résolvait à `null`, et l'appelant
+   renonçait AU SILENCE (sa propre kdoc le disait : « renonce
+   silencieusement à brancher »). La session vivait donc SANS éditeur
+   branché : moteur sain, index nourri, zéro consommateur — complétion
+   lexicale seule, zéro diagnostic. Les tests JVM restaient verts : les
+   faux du pont sont des lambdas « tout réussit » qui ne portent PAS la
+   garde — l'écart prod/tests classique.
+2. **Correctif** (trois morceaux, le contrat au centre) :
+   - `ResolveurCheminFuse.resoudreEntree` — contrat EXPLICITE « fichier
+     OU dossier, si l'entrée existe » (garde `exists`) ; défaut = `invoke`
+     (un pont simple qui ne distingue pas résout pareil) ;
+     `ResoudreRepertoireProjet` l'override avec la garde d'existence,
+     l'opérateur garde `isDirectory` (terminal, Git, clone, racine LSP
+     restent des consommateurs de répertoires). La traduction + garde
+     devient la fonction pure `cheminFuseVerifie` (éprouvée en JVM : un
+     dossier temporaire joue le volume monté) ;
+   - `cheminFuseDe` passe par `resoudreEntree` ;
+   - plus AUCUN renoncement silencieux : « branchement LSP renoncé :
+     chemin FUSE introuvable (uri) » en WARN, l'abandon de course en
+     DEBUG — la séquence se lit désormais sous le tag `LspEditeur`, le
+     même que le coordonnateur.
+3. **Tests** : +4 `ResoudreRepertoireProjetTest` (le fichier résolu par
+   le contrat d'entrée / REJETÉ par le contrat répertoire — LA
+   régression ; un dossier reste résolu par l'entrée, symétrie ; une
+   entrée absente rejetée) ; `LspEditorViewModelTest.cheminFuseDe`
+   renforcé : le faux SÉPARE les deux contrats (`invoke` → null,
+   `resoudreEntree` → chemin) — si le ViewModel repasse par l'opérateur,
+   le test échoue.
+
+**Règle** : un pont réutilisé au-delà de son contrat d'origine doit
+l'ÉTENDRE (méthode explicite, garde propre), jamais être détourné — et
+tout renoncement de branchement se JOURNALISE : un chemin silencieux est
+indistinguable d'un moteur mort.
+
+**Note disponibilité progressive** (question posée au retour v0.100.2) :
+le moteur est déjà le modèle « Android Studio » — la session s'ouvre
+AVANT la sync (`ouvrirSessionLspSiPossible` précède la garde outils :
+le premier branchement d'onglet `.java` peut arriver sans classpath,
+complétion lexicale + symboles du fichier), et le classpath Gradle la
+REJOINT après la première sync utile (« session LSP nourrie »). La
+disponibilité est progressive, pas verrouillée sur la fin d'indexation ;
+l'index ne conditionne pas le branchement, il en nourrit la QUALITÉ.
+
 ### 16.3 Suite (à faire)
 
 - mesure appareil du bout-en-bout éditeur ↔ moteur (prompt 2 §9 : p95
