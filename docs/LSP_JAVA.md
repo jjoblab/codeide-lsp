@@ -1545,12 +1545,24 @@ l'index ne conditionne pas le branchement, il en nourrit la QUALITÉ.
 
 ### 16.3 Suite (à faire)
 
+Arbitrage du propriétaire au retour de v0.102.0 (2026-10-12) : la
+mission « LSP Java » est CLOSE sur ses objectifs nominaux — quelques
+défauts appareil restent signalés « à corriger pour plus tard » sans
+liste arrêtée. Points restant OUVERTS, reportés sans échéance :
+
 - mesure appareil du bout-en-bout éditeur ↔ moteur (prompt 2 §9 : p95
-  complétion, mémoire) — protocole §11.2 ;
+  complétion, mémoire) — protocole §11.2, à exécuter au prochain retour
+  appareil (elle sera menée avec les mesures de baseline de la mission
+  « Cycle de vie », `docs/CYCLE_DE_VIE.md` §4.5, mêmes séances) ;
 - lot h3 (éventuel) : diagnostics LSP dans l'onglet Problèmes (le pont
   cel existe : `setOnDiagnosticsPublishedListener`), navigation
   inter-fichiers (`setOnNavigateToFileListener`), source décompilée
-  (`LspProject.decompiledSource`) — à arbitrer contre le prompt 3 ;
+  (`LspProject.decompiledSource`) — reporté ; l'onglet Problèmes et la
+  navigation recouperont le chantier « Cycle de vie » (prompt 3, mission
+  3, étapes C/E) ;
+- ADR 0112 strict — modules Android sans image jrt (évolution de l'API
+  moteur par module, jdkHome partagé aujourd'hui) : reporté, documenté
+  §16.5 ;
 - l'écart restant de §16.1 (RemoteEndpoint/gson complet) vit avec
   l'usage : le branchement in-process d'aujourd'hui n'y passe pas.
 
