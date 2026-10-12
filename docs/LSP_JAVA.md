@@ -1699,3 +1699,104 @@ sans image jrt — demande une évolution de l'API moteur par module
 ADR 0058) reste le fichier des STATS de sync (pied de l'onglet),
 `lsp-modele.json` celui du nourrissage — deux consommateurs, deux
 formats, aucune duplication de rôle.
+
+## 17. Correctifs d'exploitation — v0.108.0 (retour propriétaire)
+
+> Deux constats d'exploitation remontés par le propriétaire sur son
+> projet réel (multi-gradle, Data Binding actif) : ① « The type
+> java.lang.invoke.StringConcatFactory cannot be resolved » ② « The
+> import com.example.monip.databinding cannot be resolved ». Les deux
+> sont des DIAGNOSTIQUES INcurables côté utilisateur avant correctif —
+> reproduits, expliqués et corrigés dans le moteur.
+
+### 17.1 StringConcatFactory — le faux positif STRUCTUREL
+
+**Fait établi** (vérifié sur android-31 et android-36) : la classe
+n'existe dans AUCUNE plateforme Android (seul `StringConcatException`
+y figure) — D8 désugare TOUJOURS les concaténations `invokedynamic`
+vers StringBuilder : le code source est LÉGAL pour Android, quel que
+soit le compileSdk. Le seul fournisseur possible de la classe est
+l'image **jrt** du JDK du toolchain (java.base).
+
+**Mécanisme du message** (reproduit par
+`StringConcatFactoryReproTest`, fixture ASM `batisse.Biblio` étend
+l'intrinsèque) : le diagnostic natif ecj « ...cannot be resolved. It
+is indirectly referenced from required .class files » arrive quand
+une classe BINAIRE du classpath RÉFÉRENCE le type absent — or les
+classes du projet compilées par le serveur Gradle (javac target ≥ 9)
+laissent un `CONSTANT_MethodHandle` vers
+`makeConcatWithConstants` dans le pool de CHAQUE concaténation
+compilée. Sur l'appareil concerné, l'image jrt n'avait PAS chargé
+(échec silencieux de `jrt-fs` — cache négatif `jrtScanAttempted`) :
+android.jar seul ne peut pas fournir la classe.
+
+**Correctif** (deux volets, `StubsIntrinseques`) :
+- **Repli 4 de `find`** — APRÈS sources, jars et jrt : une
+  DÉCLARATION minimale des intrinsèques du compilateur
+  (`StringConcatFactory` — le bug ; `ObjectMethods` — records ;
+  `SwitchBootstraps` — switch pattern) répond en dernier recours.
+  Le `.class` est FABRIQUÉ À LA MAIN en octets (CAFEBABE v8, aucun
+  membre : le binding de hiérarchie se referme, le contenu ne compte
+  pas — ecj ne vérifie pas la signature des méthodes bootstrap au
+  binding, constaté par le repro). Zéro compilation au runtime, zéro
+  dépendance, cache statique. **Priorité préservée** : un jdkHome
+  chargé ou une plateforme future qui contiendrait la classe
+  répondent TOUJOURS avant le stub ; l'index de complétion n'est PAS
+  nourri (personne ne complète un intrinsèque à la main).
+- **Visibilité du échec jrt** : le catch de `scanJrtIfNeeded` passe
+  de FINE à WARNING (message pédagogique « java.* tombe sur la
+  plateforme seule... à instruire ») — la cause racine silencieuse
+  devient un signal de recette.
+
+**Tests** (5, `StringConcatFactoryReproTest`) : garde de
+non-régression (conditions appareil exactes — le message ne doit
+JAMAIS réapparaître), témoin jrt (le mécanisme jdkHome est sain),
+contrat des stubs (liste fermée — `java.lang.String` etc. JAMAIS
+stubbés — format CAFEBABE), structurel sur API 36 (le bug n'est PAS
+transitoire : même la plateforme la plus récente n'a pas la classe).
+
+### 17.2 databinding — downgrade honnête (motif R étendu)
+
+**Constat** : les classes `XxxBinding` ne sont produites par AGP
+(`dataBindingGenBaseClasses`, puis compilation) qu'AU BUILD — la sync
+ne les génère PAS. Avant tout build, l'import
+`<namespace>.databinding.*` est STRUCTURELLEMENT non résoluble : l'ERROR
+sec est exact mais incurable (même famille que la classe R avant
+première construction — §16/`maybeDowngradeUnresolvedR`).
+
+**Correctif** (`maybeDowngradeUnresolvedDatabinding`) : ERROR→HINT +
+remède (« générées par AGP lors de la construction — la sync seule ne
+les crée pas, lance un Build »), même philosophie « zéro devinette »
+que R. Reconnaissance par les ARGUMENTS STRUCTURÉS du problème ecj
+(`arguments()[0]` = nom importé — stables entre locales, pattern
+`JavaProblemCodes`) et non par le message localisé ; segment
+`.databinding` strict (points des deux côtés — « mydatabinding » ne
+déclenche pas). **Coupure honnête** : la sonde
+`hasGeneratedDatabindingClasses()` (TTL 5 s, sources générées + jars
+du classpath) coupe le downgrade dès que la première classe générée
+existe — une faute de frappe vers `*.databinding.*` redevient une
+ERROR intégrale.
+
+**Tests** (3, `DatabindingImportDowngradeTest`, vrai flux LSP4J avec
+client espion) : HINT + remède sans build ; ERROR intégrale avec
+générées présentes ; paquet homonyme non déclassé.
+
+### 17.3 Ce que ces correctifs ne font PAS (et les décisions ouvertes)
+
+- **Génération post-sync** : le diagnostic HINT reste jusqu'au
+  PREMIER build. Option pour éliminer le délai : exécuter
+  `generate<Variant>Sources` (ou ciblée
+  `dataBindingGenBaseClasses<Variant>`) à la fin de la sync — coût
+  une tâche Gradle (up-to-date après le premier passage). **Décision
+  §2.2-bis à trancher** avec la politique du démon (S6).
+- **Compliance PAR PROJET** : le moteur compile aujourd'hui en « 17 »
+  fixe (`CompilationEnvironment()` défaut) — le protocole v8/v9 ne
+  transporte PAS le niveau Java du projet
+  (`sourceCompatibility/targetCompatibility`). Un champ optionnel
+  dans `ClasspathModule` (compatible v8+ : null = 17) alignerait les
+  diagnostics de niveau (var/records/switch selon le projet).
+  **Candidat protocole v10.**
+- **Autres générés** (W10) : BuildConfig/ViewBinding/Hilt/Room/KSP :
+  même famille — le downgrade R + databinding couvre les DEUX
+  remontées réelles ; étendre la reconnaissance aux autres packages
+  générés se fera sur constat (pas de speculative generality).

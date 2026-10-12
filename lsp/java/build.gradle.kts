@@ -174,6 +174,13 @@ dependencies {
 
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    // Repro StringConcatFactory (v0.108.0) : fabrique en fixture un .class
+    // binaire dont la SUPER-CLASSE est un intrinsèque du compilateur
+    // (motif du constat appareil « indirectly referenced from required
+    // .class files ») — externe Maven, test seulement (ADR 0108 : aucune
+    // dépendance de PROJET interne dans le module vendored).
+    testImplementation(libs.asm)
 }
 
 // Le jar patché doit exister avant de compiler/tester/packager ce module

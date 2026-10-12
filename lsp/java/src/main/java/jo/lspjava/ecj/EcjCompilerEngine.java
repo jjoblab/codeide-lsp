@@ -1435,6 +1435,18 @@ public final class EcjCompilerEngine {
     }
 
     /**
+     * @return true si des classes Data Binding GÉNÉRÉES existent (sources
+     *         générées ou binaires compilées) — la condition du
+     *         downgrade honnête des imports {@code *.databinding.*}
+     *         (JavaTextDocumentService, motif R). Délégation à
+     *         l'environnement : sonde TTL à la demande.
+     */
+    public synchronized boolean hasGeneratedDatabindingClasses() {
+        EcjCompilerEnvironment idx = index;
+        return idx != null && idx.hasGeneratedDatabindingClasses();
+    }
+
+    /**
      * Lecture binaire d'un type du classpath courant pour la complétion de
      * secours (sans bindings). Construit l'index si besoin.
      */

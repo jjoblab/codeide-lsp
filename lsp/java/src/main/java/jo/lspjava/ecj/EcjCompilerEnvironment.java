@@ -260,6 +260,61 @@ final class EcjCompilerEnvironment {
     /** @return true si des symboles R réels vivent dans l'index binaire. */
     public boolean hasRealRClasses() { return hasRealRClasses; }
 
+    /**
+     * @return true si des classes Data Binding GÉNÉRÉES existent déjà —
+     *         sources projet sous un segment {@code databinding} (issues
+     *         de {@code dataBindingGenBaseClasses}, visibles dès la
+     *         génération) ou binaires du classpath (classes compilées du
+     *         module). Sonde à la demande avec TTL : les classes
+     *         n'apparaissent qu'APRÈS un build, potentiellement pendant
+     *         que le moteur vit — une valeur figée à l'indexation
+     *         dirait FAUX à tort (motif « zéro devinette » du downgrade
+     *         honnête, cf. hasRealRClasses).
+     */
+    boolean hasGeneratedDatabindingClasses() {
+        long now = System.currentTimeMillis();
+        if (now - databindingProbeStamp < DATABINDING_PROBE_TTL_MS) {
+            return databindingProbeResult;
+        }
+        synchronized (this) {
+            if (System.currentTimeMillis() - databindingProbeStamp
+                    < DATABINDING_PROBE_TTL_MS) {
+                return databindingProbeResult;
+            }
+            boolean trouve = false;
+            try {
+                for (String fqcn : sourceTypesCached()) {
+                    if (estPaquetDatabinding(fqcn)) { trouve = true; break; }
+                }
+            } catch (Throwable t) {
+                // Sonde best-effort — le repli est « pas générées ».
+                LOG.log(Level.FINE, "Sonde databinding sources échouée", t);
+            }
+            if (!trouve) {
+                for (List<String> fqns : simpleNameIndex.values()) {
+                    for (String fqcn : fqns) {
+                        if (estPaquetDatabinding(fqcn)) { trouve = true; break; }
+                    }
+                    if (trouve) break;
+                }
+            }
+            databindingProbeResult = trouve;
+            databindingProbeStamp = System.currentTimeMillis();
+            return trouve;
+        }
+    }
+
+    /** @return true si le FQCN vit sous un segment {@code databinding}. */
+    private static boolean estPaquetDatabinding(String fqcn) {
+        return fqcn != null && fqcn.contains(".databinding.");
+    }
+
+    /** TTL de la sonde databinding (rafraîchie au pire toutes les 5 s). */
+    private static final long DATABINDING_PROBE_TTL_MS = 5_000L;
+
+    private volatile long databindingProbeStamp;
+    private volatile boolean databindingProbeResult;
+
     // ─── Résolution ───────────────────────────────────────────────────
 
     /** Résout un FQCN (sans exclusion — gérée par le wrapper par appel). */
@@ -325,6 +380,28 @@ final class EcjCompilerEnvironment {
                 } catch (Throwable t) {
                     // Lecture jrt illisible — best-effort, tracée en debug.
                     LOG.log(Level.FINE, "Lecture jrt illisible", t);
+                }
+            }
+        }
+
+        // 4. Intrinsèques du compilateur (v0.108.0, repli STRUCTUREL —
+        //    APRÈS sources, jars et jrt : ne masque JAMAIS un type réel).
+        //    StringConcatFactory/ObjectMethods/SwitchBootstraps n'existent
+        //    dans AUCUNE plateforme Android (D8 désugare toujours) : sans
+        //    ce repli, un binaire du classpath qui les référence produit
+        //    « ...cannot be resolved. It is indirectly referenced from
+        //    required .class files » — faux positif incurable côté
+        //    utilisateur. Voir StubsIntrinseques (repro :
+        //    StringConcatFactoryReproTest).
+        if (StubsIntrinseques.estIntrinseque(fqcn)) {
+            byte[] octetsStub = StubsIntrinseques.octets(fqcn);
+            if (octetsStub != null) {
+                try {
+                    return new NameEnvironmentAnswer(
+                            ClassFileReader.read(octetsStub, entryName), null);
+                } catch (Throwable t) {
+                    LOG.log(Level.WARNING,
+                            "Lecture du stub intrinsèque illisible : " + fqcn, t);
                 }
             }
         }
@@ -1579,7 +1656,20 @@ final class EcjCompilerEnvironment {
             // Pas de jrt exploitable — les tests retomberont sur les jars.
             // Le loader éventuellement créé à mi-chemin est REFERMÉ (plus
             // aucune fuite de ZipFile possible sur cette branche).
-            LOG.log(Level.FINE, "Scan du jrt impossible — repli sur les jars", t);
+            // v0.108.0 : WARNING (était FINE) — l'échec du chargement jrt
+            // est la cause racine silencieuse du faux positif
+            // StringConcatFactory sur appareil (java.* de la plateforme
+            // seule ne contient PAS les intrinsèques du compilateur) :
+            // invisible en FINE, il doit remonter aux journaux de recette.
+            // Le repli structurel des intrinsèques (StubsIntrinseques)
+            // couvre les types concernés, ce diagnostic reste le signal
+            // « l'image jrt du JDK toolchain n'a pas chargé — à instruire ».
+            LOG.log(Level.WARNING,
+                    "Scan du jrt impossible (jdkHome=" + jdkHome
+                            + ") — java.* tombe sur la plateforme seule,"
+                            + " les intrinsèques du compilateur passent par"
+                            + " le repli de stubs. À instruire : jrt-fs"
+                            + " incompatible ou JDK toolchain absent.", t);
             closeJrtFsLoaderQuietly();
         }
     }

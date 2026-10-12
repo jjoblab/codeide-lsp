@@ -799,10 +799,19 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             } catch (Throwable ignored) {
                 // Moteur non instanciable — pas de downgrade (mode strict).
             }
+            boolean downgradeDatabindingMode = false;
+            try {
+                downgradeDatabindingMode =
+                        !environment.jdt().hasGeneratedDatabindingClasses();
+            } catch (Throwable ignored) {
+                // Moteur non instanciable — pas de downgrade (mode strict).
+            }
             List<org.eclipse.lsp4j.Diagnostic> lspDiags = new ArrayList<>();
             for (jo.lspjava.api.Diagnostic d : diags) {
                 org.eclipse.lsp4j.Diagnostic lsp = toLspDiagnostic(source, d);
                 maybeDowngradeUnresolvedR(source, d, lsp, downgradeRMode);
+                maybeDowngradeUnresolvedDatabinding(
+                        d, lsp, downgradeDatabindingMode);
                 lspDiags.add(lsp);
             }
             server.publishDiagnostics(uri, version, lspDiags);
@@ -1039,6 +1048,45 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         lsp.setMessage(msg + " — la classe R est générée par aapt2 lors de la"
                 + " PREMIÈRE construction. Lance un Build : elle apparaîtra et"
                 + " cette note s'effacera seule.");
+    }
+
+    /**
+     * Dégrade ERROR→HINT les imports non résolus vers le package Data
+     * Binding ({@code <namespace>.databinding.*}) tant qu'AUCUNE classe
+     * générée n'existe (v0.108.0, retour propriétaire — même philosophie
+     * « zéro devinette » que {@link #maybeDowngradeUnresolvedR}).
+     *
+     * <p>Constat : les classes XxxBinding ne sont produites par AGP
+     * (dataBindingGenBaseClasses, puis compilation) qu'AU BUILD — la
+     * sync ne les génère PAS. Avant tout build, l'import est
+     * STRUCTURELLEMENT non résoluble : l'ERROR sec « The import X
+     * cannot be resolved » est exact mais incurable côté utilisateur —
+     * on affiche honnêtement la situation (HINT + remède). Reconnaissance
+     * par les ARGUMENTS STRUCTURÉS du problème ecj (stables entre
+     * locales : arguments()[0] = nom importé, pattern JavaProblemCodes)
+     * et non par le message localisé ; dès que la première classe
+     * générée existe (sonde du moteur), le downgrade se coupe et les
+     * vraies erreurs (faute de frappe) repassent en ERROR intégral.</p>
+     */
+    private void maybeDowngradeUnresolvedDatabinding(
+            jo.lspjava.api.Diagnostic d,
+            org.eclipse.lsp4j.Diagnostic lsp,
+            boolean downgradeMode) {
+        if (!downgradeMode) return;
+        if (lsp.getSeverity() != org.eclipse.lsp4j.DiagnosticSeverity.Error) {
+            return;
+        }
+        List<String> arguments = d.arguments();
+        if (arguments.isEmpty()) return;
+        String cible = arguments.get(0);
+        // Segment .databinding obligatoire (points des deux côtés) : « mydatabinding »
+        // ou un paquet homonyme tiers ne déclenchent PAS le downgrade.
+        if (cible == null || !cible.contains(".databinding")) return;
+        lsp.setSeverity(org.eclipse.lsp4j.DiagnosticSeverity.Hint);
+        lsp.setMessage(lsp.getMessage() + " — les classes Data Binding"
+                + " (XxxBinding) sont générées par AGP lors de la construction"
+                + " (dataBindingGenBaseClasses) : la sync seule ne les crée pas."
+                + " Lance un Build : elles apparaîtront et cette note s'effacera.");
     }
 
     // ==================== Surlignage sémantique (semantic tokens) ====================
