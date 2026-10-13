@@ -43,6 +43,12 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *           DÉFAUT (K4 — élargit la plage d'arité légale d'un appel).
  * @property aVararg la déclaration porte un paramètre VARARG (K4 —
  *           arité d'appel ouverte, contrôle d'arité écarté).
+ * @property estJava la déclaration vient d'une source JAVA du projet
+ *           (K5 multi-langue) — l'arité des constructeurs/membres
+ *           Java n'est PAS extraite : le contrôle d'arité
+ *           `kt.argumentCount` NE LA CONSUlte pas (sous-rapport D3,
+ *           jamais de faux « 0 attendu » sur un constructeur Java à
+ *           N paramètres).
  */
 public data class DeclarationProjet(
     public val genre: GenreDeclaration,
@@ -57,6 +63,7 @@ public data class DeclarationProjet(
     public val conteneur: String?,
     public val nombreParametresDefaut: Int = 0,
     public val aVararg: Boolean = false,
+    public val estJava: Boolean = false,
 )
 
 /** Genre de déclaration projet. */

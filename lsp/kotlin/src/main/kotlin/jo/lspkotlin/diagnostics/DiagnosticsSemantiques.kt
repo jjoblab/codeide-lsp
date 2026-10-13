@@ -109,6 +109,11 @@ internal object DiagnosticsSemantiques {
             if (reference.type != KtNodeTypes.REFERENCE_EXPRESSION) return@parcourir
             val nom = nomReference(reference) ?: return@parcourir
             if (nom == "it") return@parcourir
+            // Segments d'une DIRECTIVE import/package (K5) : ce sont des
+            // noms de PAQUETS (« com » de `import com.ex.app.R`) — la
+            // résolution de NOMS ne les concerne pas (quick-fixes et
+            // complétion d'import les traitent), jamais `kt.unresolved`.
+            if (estDansDirective(racine, reference)) return@parcourir
             // Sélecteur qualifié : le récepteur peut être inconnu.
             if (estSelecteurQualifie(racine, reference)) return@parcourir
             if (estResolu(racine, reference, nom, contexte, index)) return@parcourir
@@ -123,6 +128,17 @@ internal object DiagnosticsSemantiques {
                 )
         }
         return resultats
+    }
+
+    /** La référence vit-elle sous une directive import/package ? */
+    private fun estDansDirective(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        return chaine.any {
+            it.type == KtNodeTypes.IMPORT_DIRECTIVE || it.type == KtNodeTypes.PACKAGE_DIRECTIVE
+        }
     }
 
     /** La référence est-elle le SÉLECTEUR d'une expression qualifiée ? */
@@ -294,7 +310,13 @@ internal object DiagnosticsSemantiques {
     ): List<DeclarationProjet> {
         val fonctions =
             contexte.declarationsProjet.filter { it.genre == GenreDeclaration.FONCTION && it.nom == nom }
-        val classes = contexte.declarationsProjet.filter { it.genre == GenreDeclaration.CLASSE && it.nom == nom }
+        // K5 : les candidates JAVA n'ont pas d'arité extraite (types
+        // seuls) — le contrôle d'arité les IGNORE (sous-rapport D3,
+        // jamais de faux « 0 attendu » sur un constructeur Java).
+        val classes =
+            contexte.declarationsProjet.filter {
+                it.genre == GenreDeclaration.CLASSE && it.nom == nom && !it.estJava
+            }
         // Fonctions MEMBRES des classes englobantes (this implicite) :
         // leur arité vit dans l'arbre, pas dans les déclarations projet
         // (conteneur qualifié) — on sonde les membres englobants.

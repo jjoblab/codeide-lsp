@@ -18,6 +18,7 @@ import jo.lspkotlin.parse.kt.nomReference
 import jo.lspkotlin.parse.kt.recepteurQualifie
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
+import jo.lspkotlin.resolve.RecepteursWith
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SymbolesProjet
 import jo.lspkotlin.resolve.TypageExpression
@@ -323,6 +324,50 @@ Drapeau JVM `protected` (membres offrables). */
             val nom = decl.nom() ?: continue
             if (!nom.startsWith(prefixe)) continue
             propositions += propositionMembreProjet(decl, nom)
+        }
+        // 2 bis. K5 : membres du RÉCEPTEUR IMPLICITE d'un `with`
+        // englobant — classpath (chaîne de supertypes) puis projet
+        // (conteneur = FQCN), même régime que les membres qualifiés.
+        val recepteurWith =
+            RecepteursWith.recepteurImplicite(
+                racine,
+                debutPrefixe,
+                contexte.contexteNom,
+                contexte.resolution,
+                contexte.declarationsProjet,
+            )
+        if (recepteurWith != null) {
+            for (courant in contexte.resolution.chaineSupertypes(recepteurWith)) {
+                val membres = contexte.vue?.membres(courant) ?: continue
+                for (champ in membres.champs) {
+                    if (!estOffrable(champ.nom, champ.drapeaux, statiqueSeul = false)) continue
+                    if (!champ.nom.startsWith(prefixe)) continue
+                    propositions +=
+                        proposition(
+                            libelle = champ.nom,
+                            genre = GenreCompletionKotlin.PROPRIETE,
+                            detail = detailChamp(champ.descripteur, contexte),
+                            pertinence = PertinencesKotlin.MEMBRE,
+                        )
+                }
+                for (methode in membres.methodes) {
+                    if (!estOffrable(methode.nom, methode.drapeaux, statiqueSeul = false)) continue
+                    if (!methode.nom.startsWith(prefixe)) continue
+                    propositions += propositionMethode(methode.nom, methode.descripteur, contexte)
+                }
+            }
+            for (declaration in contexte.declarationsProjet) {
+                if (declaration.conteneur != recepteurWith) continue
+                if (!declaration.nom.startsWith(prefixe)) continue
+                val libelle = libelleDe(declaration)
+                propositions +=
+                    PropositionCompletionKotlin(
+                        libelle = libelle,
+                        genre = genreDe(declaration.genre),
+                        detail = detailDeclaration(declaration, contexte),
+                        texteTri = texteTri(PertinencesKotlin.MEMBRE, libelle),
+                    )
+            }
         }
         // 3. Premier niveau du fichier courant.
         for (declaration in KtFile(racine).declarations()) {

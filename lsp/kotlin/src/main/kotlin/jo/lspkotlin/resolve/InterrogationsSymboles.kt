@@ -157,6 +157,9 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
                     declaration.genre != GenreDeclaration.PARAMETRE &&
                     declaration.genre != GenreDeclaration.LOCALE
             }
+            // K5 : les synthétiques sans cible de fichier (constantes R)
+            // n'ouvrent RIEN plutôt qu'une URI factice (D3).
+            .filter { declaration -> declaration.uri.isNotBlank() }
             .sortedBy { it.uri != uri }
             .map { declaration -> EmplacementKotlin(declaration.uri, declaration.debutNom, declaration.finNom) }
     }

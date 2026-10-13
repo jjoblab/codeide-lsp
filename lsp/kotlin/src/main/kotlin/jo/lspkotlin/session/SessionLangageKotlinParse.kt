@@ -19,6 +19,7 @@ import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.InterrogationsSymboles
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SymbolesProjet
+import jo.lspkotlin.synthetics.ClassesSynthetiques
 import java.io.File
 
 /**
@@ -64,6 +65,8 @@ internal class SessionLangageKotlinParse(
     private val indexAppelables: IndexAppelablesKotlin,
     private val scanProjet: ScanProjet,
 ) : SessionLangageKotlin {
+    /** Synthétiques Android (K5 : R, BuildConfig, bindings). */
+    private val synthetiques = ClassesSynthetiques()
     /** Verrou de l'état (documents + classpath + fermeture). */
     private val verrou = Any()
 
@@ -143,6 +146,9 @@ internal class SessionLangageKotlinParse(
             // appel identique est un no-op — les documents OUVERTS
             // dominent les déclarations de toute façon).
             scanProjet.definirRacines(classpath.racinesSources)
+            // K5 : les MÊMES racines nourrissent les synthétiques
+            // (paresseux, coupés par les classes générées réelles).
+            synthetiques.definirRacines(classpath.racinesSources)
         }
     }
 
@@ -215,6 +221,8 @@ internal class SessionLangageKotlinParse(
             documents.clear()
             classpath = null
             resolution = ResolutionKotlin(null)
+            // K5 : les synthétiques suivent le scan (racines perdues).
+            synthetiques.definirRacines(emptyList())
         }
     }
 
@@ -282,8 +290,22 @@ internal class SessionLangageKotlinParse(
         // « paquet.nom » de fqcnDuNomEcrit) — classes ET interfaces
         // (correctif K4 : la double garde K3 `!= CLASSE` suivie de
         // `!= INTERFACE` rejetait TOUT, classesProjet restait vide).
+        // K5 multi-langue : les types JAVA du scan sont dedans — la
+        // bascule Java↔Kotlin résout sans frontière.
         val classesProjet = HashMap<String, String>()
-        for (declaration in scanProjet.declarations() + declarationsDocument(document, uri, paquet)) {
+        val reelles = scanProjet.declarations() + declarationsDocument(document, uri, paquet)
+        for (declaration in reelles) {
+            if (declaration.genre != GenreDeclaration.CLASSE && declaration.genre != GenreDeclaration.INTERFACE) {
+                continue
+            }
+            if (declaration.conteneur != null) continue
+            val fqcn = (declaration.paquet?.let { "$it." } ?: "") + declaration.nom
+            classesProjet[fqcn] = fqcn
+        }
+        // K5 : classes SYNTHÉTIQUES de premier niveau (R, BuildConfig,
+        // bindings) — même coupure que les déclarations.
+        for (declaration in synthetiquesCoupees(reelles)) {
+            if (declaration.conteneur != null) continue
             if (declaration.genre != GenreDeclaration.CLASSE && declaration.genre != GenreDeclaration.INTERFACE) {
                 continue
             }
@@ -296,13 +318,40 @@ internal class SessionLangageKotlinParse(
     /**
      * Déclarations du projet CONSOMMÉES par les requêtes : celles du
      * document courant (arbre frais) + celles du scan partagé (fichiers
-     * fermés), le document courant DOMINANT son doublon du scan.
+     * fermés, `.kt` ET `.java` — multi-langue K5), le document courant
+     * DOMINANT son doublon du scan ; les SYNTHÉTIQUES Android (K5)
+     * ferment la marche, COUPÉES dès qu'une classe réelle homonyme
+     * existe (génération post-build = source de vérité, motif sonde
+     * v0.108.0).
      */
     private fun declarationsProjet(
         document: DocumentOuvert,
         uri: String,
         paquet: String?,
-    ): List<DeclarationProjet> = declarationsDocument(document, uri, paquet) + scanProjet.declarations(uri)
+    ): List<DeclarationProjet> {
+        val reelles = declarationsDocument(document, uri, paquet) + scanProjet.declarations(uri)
+        return reelles + synthetiquesCoupees(reelles)
+    }
+
+    /**
+     * Synthétiques hors des classes réelles — la COUPURE retire le
+     * groupe ENTIER (classe + membres : la classe générée porte les
+     * siens, garder les nôtres ferait des doublons de complétion).
+     */
+    private fun synthetiquesCoupees(reelles: List<DeclarationProjet>): List<DeclarationProjet> {
+        val fqcnsReels =
+            reelles
+                .asSequence()
+                .filter {
+                    (it.genre == GenreDeclaration.CLASSE || it.genre == GenreDeclaration.INTERFACE) &&
+                        it.conteneur == null
+                }
+                .map { (it.paquet?.let { paquet -> "$paquet." } ?: "") + it.nom }
+                .toSet()
+        return synthetiques.groupes()
+            .filter { groupe -> groupe.fqcn !in fqcnsReels }
+            .flatMap { groupe -> groupe.declarations }
+    }
 
     /** Déclarations du document courant (arbre frais). */
     private fun declarationsDocument(

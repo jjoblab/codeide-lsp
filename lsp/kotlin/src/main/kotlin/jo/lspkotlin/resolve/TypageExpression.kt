@@ -104,8 +104,9 @@ internal object TypageExpression {
                 val selecteur = selecteurQualifie(expression) ?: return null
                 val typeRecepteur =
                     typeExpression(recepteur, racine, contexteNom, resolution, declarationsProjet, profondeur + 1)
+                        ?: typeStatiqueDe(recepteur, contexteNom, resolution)
                         ?: return null
-                typeMembreSur(typeRecepteur, selecteur, resolution)
+                typeMembreSur(typeRecepteur, selecteur, resolution, declarationsProjet, contexteNom)
             }
 
             else -> null
@@ -211,6 +212,14 @@ internal object TypageExpression {
                     ?.let { return it }
             }
         }
+        // 2 bis. K5 : membre du RÉCEPTEUR IMPLICITE d'un `with`
+        // englobant (nom NU — `with(vue) { texte… }` : type du champ
+        // `texte` de `vue`).
+        val recepteurWith =
+            RecepteursWith.recepteurImplicite(racine, decalage, contexteNom, resolution, declarationsProjet)
+        if (recepteurWith != null) {
+            typeMembreNomme(recepteurWith, nom, resolution, declarationsProjet, contexteNom)?.let { return it }
+        }
         // 3. Propriétés de premier niveau du FICHIER courant (l'arbre
         // est là : type écrit, sinon initialiseur).
         for (declaration in jo.lspkotlin.parse.kt.KtFile(racine).declarations()) {
@@ -293,21 +302,59 @@ internal object TypageExpression {
     }
 
     /**
+     * Type STATIQUE d'un récepteur qui ne type pas en VALEUR (K5) — la
+     * référence est peut-être une CLASSE (chaîne `R.layout.…`, membre
+     * statique de compagnon) : le nom écrit résolu en FQCN.
+     */
+    private fun typeStatiqueDe(
+        recepteur: NoeudSyntaxique,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+    ): String? {
+        if (recepteur.type != KtNodeTypes.REFERENCE_EXPRESSION) return null
+        val nom = nomReference(recepteur) ?: return null
+        return resolution.fqcnDuNomEcrit(nom, contexteNom)
+    }
+
+    /**
      * Type du SÉLECTEUR sur un récepteur typé : champ (descripteur =
      * type du champ) ou méthode (descripteur de retour), premier
      * porteur de la chaîne de supertypes — surcharges par nom seule
-     * (K3), arité K4.
+     * (K3), arité K4 ; K5 : membre du PROJET aussi (conteneur = FQCN
+     * — types projet ET synthétiques).
      */
     private fun typeMembreSur(
         typeRecepteur: String,
         selecteur: NoeudSyntaxique,
         resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+        contexteNom: ResolutionKotlin.ContexteNom,
     ): String? {
         val nomMembre =
             when (selecteur.type) {
                 KtNodeTypes.CALL_EXPRESSION -> nomAppele(selecteur) ?: return null
                 else -> nomReference(selecteur) ?: return null
             }
+        return typeMembreNomme(typeRecepteur, nomMembre, resolution, declarationsProjet, contexteNom)
+    }
+
+    /**
+     * Type d'un membre NOMMÉ sur un récepteur typé : classpath d'abord
+     * (champ/méthode de la chaîne de supertypes), déclaration du projet
+     * ensuite (conteneur = FQCN — récepteur de type projet).
+     *
+     * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
+     * — les continue du conteneur et du nom non portés sont le patron
+     * même du filtrage par conteneur (précédent propositionsMembre).
+     */
+    @Suppress("LoopWithTooManyJumpStatements")
+    private fun typeMembreNomme(
+        typeRecepteur: String,
+        nomMembre: String,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+        contexteNom: ResolutionKotlin.ContexteNom,
+    ): String? {
         // Champ : le descripteur D'UN champ est son type.
         val champ = resolution.champsNommes(typeRecepteur, nomMembre).firstOrNull()
         if (champ != null) {
@@ -318,7 +365,28 @@ internal object TypageExpression {
         if (methode != null) {
             return resolution.traduireDescripteur(methode.methode.descripteur).retour
         }
+        // Membre du PROJET (K5) : conteneur = FQCN du récepteur.
+        for (declaration in declarationsProjet) {
+            if (declaration.conteneur != typeRecepteur) continue
+            if (declaration.nom != nomMembre) continue
+            declaration.typeRetour?.let { ecrit -> return traduireTypeEcrit(ecrit, contexteNom, resolution) }
+        }
         return null
+    }
+
+    /**
+     * Type ÉCRIT traduit en FQCN — nom simple résolu par le contexte
+     * (`Int` → `kotlin.Int`), FQCN/texte repris tel quel (les types
+     * synthétiques écrivent déjà leur FQCN).
+     */
+    private fun traduireTypeEcrit(
+        ecrit: String,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+    ): String? {
+        val net = ecrit.substringBefore('<').trim().trimEnd('?')
+        if (net.isEmpty()) return null
+        return resolution.fqcnDuNomEcrit(net, contexteNom) ?: net
     }
 
     /** Descripteur de champ (`Ljava/lang/String;`) → FQCN. */

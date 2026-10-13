@@ -1,5 +1,6 @@
 package jo.lspkotlin.resolve
 
+import jo.lspkotlin.api.DRAPEAU_STATIQUE_KOTLIN
 import jo.lspkotlin.parse.NoeudSyntaxique
 import jo.lspkotlin.parse.kt.chaineAncetresA
 import jo.lspkotlin.parse.kt.nomAppele
@@ -93,7 +94,9 @@ internal object ParametresLambda {
 
     /**
      * Types attendus des paramètres du littéral selon son CONSOMMATEUR :
-     * propriété typée, fonction projet, ou SAM de projet.
+     * propriété typée, fonction projet, SAM de projet — K5 : attente du
+     * CLASSPATH aussi (méthode d'un récepteur typé, SAM Java à méthode
+     * unique).
      */
     private fun typesAttendus(
         chaine: List<NoeudSyntaxique>,
@@ -109,7 +112,14 @@ internal object ParametresLambda {
         val anzLitteraux = ancetres.count { it.type == KtNodeTypes.FUNCTION_LITERAL }
         if (anzLitteraux == 0) {
             typesDepuisPropriete(ancetres, contexteNom, resolution)?.let { return it }
-            typesDepuisAppel(ancetres, litteral, contexteNom, resolution, declarationsProjet)?.let { return it }
+            typesDepuisAppel(
+                chaine,
+                indiceLitteral,
+                litteral,
+                contexteNom,
+                resolution,
+                declarationsProjet,
+            )?.let { return it }
         }
         return null
     }
@@ -131,15 +141,19 @@ internal object ParametresLambda {
     /**
      * (b) Appel englobant : `f(2) { … }` — l'attente vient du paramètre
      * D'INDICE correspondant de la candidate du projet (fonction ou
-     * interface SAM à méthode unique).
+     * interface SAM à méthode unique) ; K5 : à défaut, de la MÉTHODE du
+     * CLASSPATH portée par l'appel QUALIFIÉ (`vue.setX { … }` — SAM
+     * Java à méthode unique, `View$OnClickListener` par exemple).
      */
     private fun typesDepuisAppel(
-        ancetres: List<NoeudSyntaxique>,
+        chaine: List<NoeudSyntaxique>,
+        indiceLitteral: Int,
         litteral: NoeudSyntaxique,
         contexteNom: ResolutionKotlin.ContexteNom,
         resolution: ResolutionKotlin,
         declarationsProjet: List<DeclarationProjet>,
     ): List<String>? {
+        val ancetres = chaine.subList(0, indiceLitteral)
         // L'appel le plus PROCHE au-dessus du littéral — les arguments
         // (LAMBDA_ARGUMENT/VALUE_ARGUMENT/VALUE_ARGUMENT_LIST) vivent
         // entre les deux, ce qui est attendu.
@@ -155,7 +169,95 @@ internal object ParametresLambda {
             typesDuTexteFonction(typeEcrit, contexteNom, resolution)?.let { return it }
         }
         // Candidate CONSTRUCTEUR : interface du projet à méthode UNIQUE (SAM).
-        return typesSam(nomAppele, declarationsProjet, contexteNom, resolution)
+        typesSam(nomAppele, declarationsProjet, contexteNom, resolution)?.let { return it }
+        // K5 : attente du CLASSPATH (appel qualifié sur récepteur typé).
+        val indiceAppel = ancetres.indexOfLast { it.type == KtNodeTypes.CALL_EXPRESSION }
+        if (indiceAppel > 0) {
+            return typesDepuisAppelClasspath(
+                chaine[0],
+                ancetres[indiceAppel - 1],
+                ancetres[indiceAppel],
+                litteral,
+                indiceArgument,
+                contexteNom,
+                resolution,
+                declarationsProjet,
+            )
+        }
+        return null
+    }
+
+    /**
+     * (b K5) Attente du CLASSPATH : l'appel est le SÉLECTEUR d'une
+     * expression qualifiée (`vue.setOnClickListener { … }`) — le type
+     * du RÉCEPTEUR donne la méthode, la SURCHARGE retenue donne le
+     * paramètre du littéral, interface SAM à méthode ABSTRAITE unique
+     * (`onClick(View)` → `android.view.View`).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * (appel nu, récepteur non typé, paramètre absent, non-SAM) est
+     * une ISSUE distincte du catalogue D3.
+     */
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
+    private fun typesDepuisAppelClasspath(
+        racine: NoeudSyntaxique,
+        parent: NoeudSyntaxique,
+        appel: NoeudSyntaxique,
+        litteral: NoeudSyntaxique,
+        indiceArgument: Int,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+    ): List<String>? {
+        // L'appel doit être le SÉLECTEUR d'une expression qualifiée.
+        if (parent.type != KtNodeTypes.DOT_QUALIFIED_EXPRESSION &&
+            parent.type != KtNodeTypes.SAFE_ACCESS_EXPRESSION
+        ) {
+            return null
+        }
+        val recepteur = parent.sousNoeuds.firstOrNull() ?: return null
+        if (recepteur == appel) return null
+        val fqcnRecepteur =
+            TypageExpression.typeExpression(recepteur, racine, contexteNom, resolution, declarationsProjet)
+                ?: return null
+        val nomMethode = nomAppele(appel) ?: return null
+        // Lambda TRAILING (ferme l'appel) → DERNIER paramètre de la
+        // signature ; argument ORDINAIRE → son indice.
+        val lambdaTrailing =
+            appel.sousNoeuds.any {
+                it.type == KtNodeTypes.LAMBDA_ARGUMENT && it.debut <= litteral.debut && litteral.fin <= it.fin
+            }
+        for (porteur in resolution.methodesNommees(fqcnRecepteur, nomMethode)) {
+            val traduit = resolution.traduireDescripteur(porteur.methode.descripteur)
+            if (traduit.parametres.isEmpty()) continue
+            val indiceParametre =
+                if (lambdaTrailing) traduit.parametres.size - 1 else indiceArgument
+            val typeInterface = traduit.parametres.getOrNull(indiceParametre) ?: continue
+            typesSamClasspath(typeInterface, resolution)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * Types des paramètres d'un SAM du CLASSPATH — interface à méthode
+     * ABSTRAITE publique unique (constructeurs, statiques et
+     * synthétiques exclus).
+     */
+    private fun typesSamClasspath(
+        fqcnInterface: String,
+        resolution: ResolutionKotlin,
+    ): List<String>? {
+        val membres = resolution.membresDe(fqcnInterface) ?: return null
+        if (membres.drapeauxClasse and DRAPEAU_INTERFACE == 0) return null
+        val abstraites =
+            membres.methodes.filter { methode ->
+                methode.nom != "<init>" &&
+                    !methode.nom.contains('$') &&
+                    (methode.drapeaux and DRAPEAU_ABSTRAIT) != 0 &&
+                    (methode.drapeaux and DRAPEAU_STATIQUE_KOTLIN) == 0
+            }
+        if (abstraites.size != 1) return null
+        return resolution.traduireDescripteur(abstraites.single().descripteur).parametres
     }
 
     /** Types des paramètres d'un SAM du projet (interface à méthode unique). */
@@ -240,4 +342,10 @@ internal object ParametresLambda {
         if (nomEcrit.isEmpty() || nomEcrit.contains(' ')) return null
         return resolution.fqcnDuNomEcrit(nomEcrit, contexteNom)
     }
+
+    /** Drapeau JVM `abstract` (méthodes d'une interface SAM). */
+    private const val DRAPEAU_ABSTRAIT: Int = 0x0400
+
+    /** Drapeau JVM `interface` (modificateur de classe). */
+    private const val DRAPEAU_INTERFACE: Int = 0x0200
 }

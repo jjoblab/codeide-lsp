@@ -24,6 +24,12 @@ import java.io.File
  * URI des déclarations : `file://` + chemin FUSE (File.toURI) — la
  * cible de go-to-definition s'ouvre dans l'éditeur par le chemin
  * courant, même mécanique que le branchement LspEditor.
+ *
+ * K5 multi-langue (LSP_KOTLIN.md §5) : les racines portent les sources
+ * Java AUSSI — [SourcesJava] en extrait les types de premier niveau
+ * (résolution, complétion auto-import, survol — bascule Java↔Kotlin
+ * dans un même projet) ; les déclarations portent le marqueur
+ * `estJava` (le contrôle d'arité les ignore, D3).
  */
 internal class ScanProjet(
     private val parseur: ParseurKotlin,
@@ -63,16 +69,24 @@ internal class ScanProjet(
         return scannees.filter { it.uri != exclureUri }
     }
 
-    /** Parcours complet des racines (fichiers .kt, ordre déterministe).
+    /** Parcours complet des racines (fichiers .kt ET .java, ordre déterministe).
  *
-SwallowedException ciblé (règle 16) : fichier illisible = absent (D3). */
-    @Suppress("SwallowedException")
+SwallowedException ciblé (règle 16) : fichier illisible = absent (D3) ;
+LoopWithTooManyJumpStatements ciblé (règle 16) : le continue de la source
+Java et celui de l'illisible sont les DEUX branches du scan multi-langue. */
+    @Suppress("SwallowedException", "LoopWithTooManyJumpStatements")
     private fun scanner(): List<DeclarationProjet> {
         val resultat = mutableListOf<DeclarationProjet>()
         for (racine in racines) {
             val fichiers = mutableListOf<File>()
             parcourir(racine, fichiers)
             for (fichier in fichiers) {
+                // K5 multi-langue : les sources JAVA nourrissent le
+                // moteur Kotlin (types de premier niveau, estJava).
+                if (fichier.extension == "java") {
+                    resultat += SourcesJava.declarations(fichier)
+                    continue
+                }
                 val arbre =
                     try {
                         parseur.analyser(fichier.readText(), script = false)
@@ -111,7 +125,9 @@ SwallowedException ciblé (règle 16) : fichier illisible = absent (D3). */
                         parcourir(enfant, fichiers)
                     }
 
-                enfant.isFile && enfant.extension == "kt" && !enfant.name.endsWith(".kts") ->
+                enfant.isFile &&
+                    (enfant.extension == "kt" && !enfant.name.endsWith(".kts") ||
+                        enfant.extension == "java") ->
                     fichiers.add(enfant)
             }
         }

@@ -52,6 +52,14 @@ internal object ResolutionReferences {
         if (SymbolesProjet.localesEnPortee(racine, decalage).any { it.declaration.nom == nom }) return true
         // 2. Membres des classes englobantes (this implicite).
         if (SymbolesProjet.membresEnglobants(racine, decalage).any { it.nom() == nom }) return true
+        // 2 bis. K5 : membre du RÉCEPTEUR IMPLICITE d'un `with`
+        // englobant (classpath ou projet — sinon faux `kt.unresolved`
+        // sur TOUT nom NU dans un corps de `with`).
+        RecepteursWith.recepteurImplicite(racine, decalage, contexteNom, resolution, declarationsProjet)?.let { fqcn ->
+            if (resolution.champsNommes(fqcn, nom).isNotEmpty()) return true
+            if (resolution.methodesNommees(fqcn, nom).isNotEmpty()) return true
+            if (declarationsProjet.any { it.conteneur == fqcn && it.nom == nom }) return true
+        }
         // 3. Déclarations de premier niveau du FICHIER.
         if (KtFile(racine).declarations().any { it.nom() == nom }) return true
         // 4. Déclarations du PROJET (tous genres — objets, alias, entrées).
