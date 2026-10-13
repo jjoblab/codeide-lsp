@@ -291,9 +291,151 @@ class SessionLangageXmlImplTest {
     @Test
     fun `completion — genre non layout, silencieuse (XE2, layout seul)`() {
         session.definirClasspath(ClasspathXml(plateformeFixture(), emptyList(), null))
-        val uri = "file:///p/res/values/strings.xml"
-        session.ouvrirDocument(uri, "<resources><stri")
+        val uri = "file:///p/inconnu/fichier.xml"
+        session.ouvrirDocument(uri, "<LinearLayout><But")
         assertTrue(session.completion(uri, 15).isEmpty())
+    }
+
+    // ── XE4 : manifest, balise inconnue, values, quick-fixes ─────
+
+    /** Vue de noms factice (garde balise inconnue X4). */
+    private class VueNomsFactice(private val connues: Set<String>) : jo.lspxml.api.VueNomsXml {
+        override fun nomsCommencantPar(prefixe: String, limite: Int): List<String> =
+            connues.filter { it.endsWith(".$prefixe") || it == prefixe }
+    }
+
+    @Test
+    fun `manifest — package et composants nommes diagnostiques`() {
+        val uri = "file:///p/app/src/main/AndroidManifest.xml"
+        session.ouvrirDocument(
+            uri,
+            "<manifest><application><activity/></application></manifest>",
+        )
+        val codes = session.diagnostics(uri).map { it.code }
+        assertTrue(codes.contains("xml.manifestSansPackage"))
+        assertTrue(codes.contains("xml.composantSansNom"))
+    }
+
+    @Test
+    fun `manifest sain — silence`() {
+        val uri = "file:///p/app/src/main/AndroidManifest.xml"
+        session.ouvrirDocument(
+            uri,
+            "<manifest package=\"p\"><application><activity android:name=\".A\"/></application></manifest>",
+        )
+        assertTrue(session.diagnostics(uri).isEmpty())
+    }
+
+    @Test
+    fun `balise inconnue — catalogue et vue de noms d'accord`() {
+        val plateforme = plateformeFixture()
+        session.definirClasspath(
+            ClasspathXml(plateforme, emptyList(), VueNomsFactice(emptySet())),
+        )
+        val uri = "file:///p/res/layout/main.xml"
+        val source = "<LinearLayout><Buton/></LinearLayout>"
+        session.ouvrirDocument(uri, source)
+        val codes = session.diagnostics(uri).map { it.code }
+        assertTrue(codes.contains("xml.tagInconnu"))
+        // Sans vue de noms : silence (garde X4).
+        val sessionMuette = SessionLangageXmlImpl(jo.lspxml.parse.ParseurXml())
+        sessionMuette.definirClasspath(ClasspathXml(plateforme, emptyList(), null))
+        sessionMuette.ouvrirDocument(uri, source)
+        assertTrue(sessionMuette.diagnostics(uri).none { it.code == "xml.tagInconnu" })
+        sessionMuette.close()
+    }
+
+    @Test
+    fun `balise inconnue — connue du classpath, silence`() {
+        session.definirClasspath(
+            ClasspathXml(
+                plateformeFixture(),
+                emptyList(),
+                VueNomsFactice(setOf("com.ex.MonBouton")),
+            ),
+        )
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<LinearLayout><MonBouton/></LinearLayout>")
+        assertTrue(session.diagnostics(uri).none { it.code == "xml.tagInconnu" })
+    }
+
+    @Test
+    fun `completion values — entrees et styles du parent`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/values/styles.xml"
+        session.ouvrirDocument(uri, "<resources><st")
+        val balises = session.completion(uri, 15).map { it.libelle }
+        assertTrue(balises.contains("style"))
+        assertTrue(balises.contains("string"))
+        // Attributs d'entrée.
+        session.ouvrirDocument(uri, "<resources><string ")
+        val attributs = session.completion(uri, 20).map { it.libelle }
+        assertEquals("name", attributs.first())
+        // parent= : styles du projet (fixture projetComplet : hello…
+        // pas de style — la fixture en ajoute un ici).
+        racine.resolve("res/values/styles.xml").writeText(
+            "<resources><style name=\"Theme.X\"/></resources>",
+        )
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        session.ouvrirDocument(uri, "<resources><style name=\"y\" parent=\"")
+        val parents = session.completion(uri, 37).map { it.libelle }
+        assertTrue(parents.contains("Theme.X"))
+    }
+
+    @Test
+    fun `correctifs — insertion xmlns android`() {
+        val uri = "file:///p/res/layout/main.xml"
+        val source = "<LinearLayout android:id=\"@+id/x\">"
+        session.ouvrirDocument(uri, source)
+        val diagnostic = session.diagnostics(uri).first { it.code == "xml.manqueXmlnsAndroid" }
+        val correctifs = session.correctifs(uri, diagnostic.debut)
+        val correctif = correctifs.single()
+        assertEquals("Insérer xmlns:android sur « LinearLayout »", correctif.titre)
+        val edition = correctif.editions.single()
+        // Insertion JUSTE APRÈS le nom de la racine (fin du nom exclusif).
+        val finNom = "<LinearLayout".length
+        assertEquals(finNom, edition.debut)
+        assertEquals(finNom, edition.fin)
+        assertEquals(
+            " xmlns:android=\"http://schemas.android.com/apk/res/android\"",
+            edition.texte,
+        )
+    }
+
+    @Test
+    fun `correctifs — did you mean renomme ouvrante et fermante`() {
+        session.definirClasspath(
+            ClasspathXml(plateformeFixture(), emptyList(), VueNomsFactice(emptySet())),
+        )
+        val uri = "file:///p/res/layout/main.xml"
+        val source = "<LinearLayout><Buton></Buton></LinearLayout>"
+        session.ouvrirDocument(uri, source)
+        val diagnostic = session.diagnostics(uri).first { it.code == "xml.tagInconnu" }
+        val correctifs = session.correctifs(uri, diagnostic.debut)
+        // Le candidat le plus proche de « Buton » est « Button ».
+        val renommage = correctifs.first { it.titre.contains("Button") }
+        assertEquals(2, renommage.editions.size)
+        // Ouvrante : remplace « Buton » par Button — positions CALCULÉES
+        // depuis la source (aucun décalage codé en dur).
+        val debutOuvrante = source.indexOf("Buton")
+        val ouvrante = renommage.editions[0]
+        assertEquals(debutOuvrante, ouvrante.debut)
+        assertEquals(debutOuvrante + "Buton".length, ouvrante.fin)
+        assertEquals("Button", ouvrante.texte)
+        // Fermante : remplace « Buton » dans </Buton>.
+        val debutFermante = source.indexOf("</Buton>") + "</".length
+        val fermante = renommage.editions[1]
+        assertEquals(debutFermante, fermante.debut)
+        assertEquals(debutFermante + "Buton".length, fermante.fin)
+        assertEquals("Button", fermante.texte)
+    }
+
+    @Test
+    fun `correctifs — diagnostic inconnu, liste vide`() {
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<LinearLayout>")
+        assertTrue(session.correctifs(uri, 0).isEmpty())
     }
 
     @Test

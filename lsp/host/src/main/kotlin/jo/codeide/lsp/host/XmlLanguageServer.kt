@@ -5,6 +5,10 @@ import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SessionLangageXml
 import jo.lspxml.api.SeveriteXml
+import org.eclipse.lsp4j.CodeAction
+import org.eclipse.lsp4j.CodeActionKind
+import org.eclipse.lsp4j.CodeActionParams
+import org.eclipse.lsp4j.Command
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.CompletionList
@@ -30,6 +34,8 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.TextDocumentSyncKind
+import org.eclipse.lsp4j.TextEdit
+import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
@@ -112,6 +118,9 @@ internal class XmlLanguageServer(
         // res/values déclarant). Honnête : rien d'autre.
         capacites.setHoverProvider(true)
         capacites.setDefinitionProvider(true)
+        // XE4 : QUICK-FIXES (codeAction — insertion xmlns:android,
+        // renommage « did you mean » des balises inconnues).
+        capacites.setCodeActionProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -298,6 +307,56 @@ internal class XmlLanguageServer(
             return CompletableFuture.completedFuture(Either.forRight(CompletionList(false, items)))
         }
 
+        /**
+         * Quick-fixes (XE4) : pour chaque diagnostic `xml.*` de la
+         * requête, le moteur rend des ÉDITIONS neutres (CorrectifXml) —
+         * l'hôte les traduit en CodeAction (il possède le document
+         * LSP, les positions UTF-16 sont locales).
+         *
+         * Exemption detekt ciblée (règle 16) : LoopWithTooMany-
+         * JumpStatements — les gardes du balayage (code absent, code
+         * hors moteur) sont des états DISTINCTS du protocole.
+         */
+        @Suppress("LoopWithTooManyJumpStatements")
+        override fun codeAction(params: CodeActionParams): CompletableFuture<List<Either<Command, CodeAction>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri]
+            val actions = mutableListOf<CodeAction>()
+            for (diagnostic in params.context.diagnostics) {
+                val code = diagnostic.code?.left ?: continue
+                if (!code.startsWith(PREFIXE_CODE)) continue
+                val texte = document?.texte ?: ""
+                val decalage = decalageDe(diagnostic.range.start, texte)
+                val correctifs =
+                    try {
+                        if (document != null) session.correctifs(uri, decalage) else emptyList()
+                    } catch (t: Throwable) {
+                        LOGGER.log(Level.WARNING, "quick-fixes XML échoués ($uri)", t)
+                        emptyList()
+                    }
+                correctifs.forEach { correctif ->
+                    val editions =
+                        correctif.editions.map { edition ->
+                            TextEdit(
+                                Range(
+                                    positionDe(edition.debut, texte),
+                                    positionDe(edition.fin, texte),
+                                ),
+                                edition.texte,
+                            )
+                        }
+                    val action = CodeAction(correctif.titre)
+                    action.kind = CodeActionKind.QuickFix
+                    action.diagnostics = listOf(diagnostic)
+                    action.edit = WorkspaceEdit(linkedMapOf(uri to editions))
+                    actions.add(action)
+                }
+            }
+            return CompletableFuture.completedFuture(
+                actions.map { action -> Either.forRight<Command, CodeAction>(action) },
+            )
+        }
+
         /** Survol (XE3) : contenu texte simple, `null` si non résolu. */
         override fun hover(params: HoverParams): CompletableFuture<Hover?> {
             val uri = params.textDocument.uri
@@ -435,5 +494,8 @@ internal class XmlLanguageServer(
 
         /** Nom du serveur (serverInfo, source des diagnostics). */
         private const val NOM_SERVEUR: String = "codeide-xml"
+
+        /** Préfixe des codes de diagnostics QUICK-FIXABLES du moteur. */
+        private const val PREFIXE_CODE: String = "xml."
     }
 }

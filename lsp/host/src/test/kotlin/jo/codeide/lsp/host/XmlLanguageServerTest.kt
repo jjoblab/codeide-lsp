@@ -61,14 +61,15 @@ class XmlLanguageServerTest {
         val resultat = espace.serveur.initialize(InitializeParams()).join()
         val capacites = resultat.capabilities
         // XE2 : complétion déclarée (balises/attributs) ; XE3 : survol et
-        // définition — RIEN d'autre.
+        // définition ; XE4 : quick-fixes — RIEN d'autre.
         assertEquals(org.eclipse.lsp4j.TextDocumentSyncKind.Full, capacites.textDocumentSync.left)
         assertTrue(capacites.completionProvider != null, "complétion déclarée à XE2")
         assertEquals(listOf("<", "=", ":"), capacites.completionProvider?.triggerCharacters)
-        // lsp4j : les fournisseurs simples voyagent en Either<Boolean, …>.
+        // lsp4j : les fournisseurs simples voyagent en Either<Boolean, …>
+        // (codeAction en Either<Boolean, CodeActionOptions>).
         assertEquals(true, capacites.hoverProvider.left, "survol déclaré à XE3")
         assertEquals(true, capacites.definitionProvider.left, "définition déclarée à XE3")
-        assertTrue(capacites.codeActionProvider == null, "quick-fixes non déclarés avant XE4")
+        assertEquals(true, capacites.codeActionProvider.left, "quick-fixes déclarés à XE4")
         assertEquals("codeide-xml", resultat.serverInfo.name)
         assertTrue(resultat.serverInfo.version != "inconnue")
         espace.fermer()
@@ -263,6 +264,80 @@ class XmlLanguageServerTest {
         val locations = definition.left
         assertEquals(1, locations.size)
         assertTrue(locations.single().uri.endsWith("strings.xml"))
+        espace.fermer()
+    }
+
+    @Test
+    fun `codeAction - insertion xmlns android traduite en quick-fix`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        // Layout SANS xmlns:android (attribut android: utilisé) →
+        // diagnostic xml.manqueXmlnsAndroid sur la racine, quick-fix
+        // d'insertion attendu (did-you-mean : mêmes tests session).
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(
+                TextDocumentItem("file:///res/layout/main.xml", "xml", 1, "<LinearLayout android:id=\"@+id/x\"/>"),
+            ),
+        )
+        val publication = espace.espion.recus.single()
+        val manqueXmlns =
+            publication.diagnostics.single { it.code.left == "xml.manqueXmlnsAndroid" }
+        val actions =
+            espace.serveur.textDocumentService
+                .codeAction(
+                    org.eclipse.lsp4j.CodeActionParams(
+                        TextDocumentIdentifier("file:///res/layout/main.xml"),
+                        manqueXmlns.range,
+                        org.eclipse.lsp4j.CodeActionContext(listOf(manqueXmlns)),
+                    ),
+                ).join()
+        assertEquals(1, actions.size)
+        val action = actions.single().right
+        assertEquals("Insérer xmlns:android sur « LinearLayout »", action.title)
+        assertEquals(org.eclipse.lsp4j.CodeActionKind.QuickFix, action.kind)
+        assertEquals(1, action.diagnostics.size)
+        // Insertion juste APRÈS le nom de racine (fin exclusive = 13).
+        val editions = action.edit.changes[publication.uri].orEmpty()
+        assertEquals(1, editions.size)
+        val edition = editions.single()
+        assertEquals(13, edition.range.start.character)
+        assertEquals(13, edition.range.end.character)
+        assertEquals(
+            " xmlns:android=\"http://schemas.android.com/apk/res/android\"",
+            edition.newText,
+        )
+        espace.fermer()
+    }
+
+    @Test
+    fun `codeAction - diagnostic non xml ignore, liste vide`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(
+                TextDocumentItem("file:///res/layout/main.xml", "xml", 1, "<LinearLayout android:id=\"@+id/x\"/>"),
+            ),
+        )
+        // Diagnostic d'un AUTRE serveur (code hors « xml. ») : silence.
+        val etranger =
+            org.eclipse.lsp4j.Diagnostic().apply {
+                code =
+                    org.eclipse.lsp4j.jsonrpc.messages.Either
+                        .forLeft("kotlin.quelconque")
+            }
+        val actions =
+            espace.serveur.textDocumentService
+                .codeAction(
+                    org.eclipse.lsp4j.CodeActionParams(
+                        TextDocumentIdentifier("file:///res/layout/main.xml"),
+                        org.eclipse.lsp4j.Range(
+                            org.eclipse.lsp4j.Position(0, 1),
+                            org.eclipse.lsp4j.Position(0, 13),
+                        ),
+                        org.eclipse.lsp4j.CodeActionContext(listOf(etranger)),
+                    ),
+                ).join()
+        assertTrue(actions.isEmpty(), "aucun quick-fix pour un code étranger")
         espace.fermer()
     }
 

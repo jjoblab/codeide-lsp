@@ -2,23 +2,26 @@ package jo.lspxml.session
 
 import jo.lspxml.api.ClasspathXml
 import jo.lspxml.api.ContenuSurvoleXml
+import jo.lspxml.api.CorrectifXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
 import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SeveriteXml
 import jo.lspxml.catalog.CataloguesPartages
 import jo.lspxml.completion.ClassementXml
+import jo.lspxml.completion.CompletionEntreesXml
 import jo.lspxml.completion.CompletionXml
 import jo.lspxml.context.Contexte
 import jo.lspxml.context.ContexteCurseur
 import jo.lspxml.parse.ParseurXml
-import jo.lspxml.parse.Plage
 import jo.lspxml.parse.XmlElement
 import jo.lspxml.resolution.ReferencesXml
 import jo.lspxml.resources.IndexRessources
 import jo.lspxml.rules.GenreDocument
+import jo.lspxml.rules.ReglesManifeste
 import jo.lspxml.rules.ReglesReferences
 import jo.lspxml.rules.ReglesStructure
+import jo.lspxml.rules.ReglesTagInconnu
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -114,6 +117,21 @@ internal class SessionLangageXmlImpl(
         diagnostics.addAll(
             ReglesReferences.diagnostiquer(document.document, indexRessources, catalogueCourant()),
         )
+        // XE4 : règles de MANIFEST (package, composants nommés).
+        if (genre == GenreDocument.MANIFEST) {
+            diagnostics.addAll(ReglesManifeste.diagnostiquer(document.document))
+        }
+        // XE4 : balise de classe INCONNUE (couture conservatrice X4 —
+        // catalogue + vue de noms TOUS d'accord, sinon silence).
+        if (genre == GenreDocument.LAYOUT) {
+            diagnostics.addAll(
+                ReglesTagInconnu.diagnostiquer(
+                    document.document,
+                    catalogueCourant(),
+                    classpath?.vueNoms,
+                ),
+            )
+        }
         // Publication : ordre du document (stable — le recouvrement
         // précède les règles au même décalage par construction du
         // parcours ; même décalage = même cause).
@@ -141,35 +159,57 @@ internal class SessionLangageXmlImpl(
     private fun catalogueCourant() = catalogues.catalogue(classpath?.dossierPlateforme)
 
     /**
-     * Complétion à [decalage] (XE2/XE3) — le scanner de contexte tranche
-     * la ZONE, les contributeurs fusionnent : balises (catalogue
-     * plateforme), attributs (styleables de la chaîne + layout du
-     * parent + tools:) et VALEURS (références `@type/` de l'index
-     * projet + framework + énumérations du catalogue). XE2/XE3
-     * couvrent le genre LAYOUT seul (values et manifest suivent XE4) —
-     * les autres genres sous-rapportent (X4).
+     * Complétion à [decalage] (XE2/XE3/XE4) — le scanner de contexte
+     * tranche la ZONE, les contributeurs fusionnent PAR GENRE :
+     * LAYOUT (balises, attributs, valeurs) et VALUES (entrées
+     * nommées, name/parent, styles du parent) ; le manifest reste
+     * sans complétion à XE4 (règles seules).
      *
-     * Exemption detekt ciblée (règle 16) : ReturnCount — les gardes
-     * sont des RÉGIMES distincts (session fermée, genre hors périmètre,
-     * document inconnu) — chacun porte sa décision de silence.
+     * Exemption detekt ciblée (règle 16) : ReturnCount/Complexity —
+     * les gardes sont des RÉGIMES distincts (session fermée, document
+     * inconnu, genre hors périmètre) et le dispatch PAR GENRE/ZONE est
+     * un when de protocole — chacun porte sa décision de silence.
      */
-    @Suppress("ReturnCount")
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
     override fun completion(
         uri: String,
         decalage: Int,
     ): List<PropositionCompletionXml> {
         if (fermee) return emptyList()
         val document = documents[uri] ?: return emptyList()
-        if (GenreDocument.depuisUri(uri) != GenreDocument.LAYOUT) return emptyList()
-        return when (val contexte = ContexteCurseur.analyser(document.texte, decalage, document.document)) {
-            is Contexte.NomDeBalise -> CompletionXml.balises(contexte, catalogueCourant())
+        val genre = GenreDocument.depuisUri(uri)
+        if (genre != GenreDocument.LAYOUT && genre != GenreDocument.VALEURS) return emptyList()
+        val contexte = ContexteCurseur.analyser(document.texte, decalage, document.document)
+        return when (genre) {
+            GenreDocument.VALEURS ->
+                when (contexte) {
+                    is Contexte.NomDeBalise -> CompletionEntreesXml.balises(contexte)
 
-            is Contexte.NomAttribut -> CompletionXml.attributs(contexte, catalogueCourant())
+                    is Contexte.NomAttribut -> CompletionEntreesXml.attributs(contexte)
 
-            is Contexte.Valeur ->
-                jo.lspxml.completion.CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources)
+                    is Contexte.Valeur ->
+                        CompletionEntreesXml.valeurs(contexte, catalogueCourant(), indexRessources)
 
-            Contexte.Muet -> emptyList()
+                    Contexte.Muet -> emptyList()
+                }
+
+            GenreDocument.LAYOUT ->
+                when (contexte) {
+                    is Contexte.NomDeBalise -> CompletionXml.balises(contexte, catalogueCourant())
+
+                    is Contexte.NomAttribut -> CompletionXml.attributs(contexte, catalogueCourant())
+
+                    is Contexte.Valeur ->
+                        jo.lspxml.completion.CompletionValeursXml.valeurs(
+                            contexte,
+                            catalogueCourant(),
+                            indexRessources,
+                        )
+
+                    Contexte.Muet -> emptyList()
+                }
+
+            else -> emptyList()
         }
     }
 
@@ -284,6 +324,48 @@ internal class SessionLangageXmlImpl(
         }
         document.racines.forEach { sonder(it) }
         return trouve
+    }
+
+    /**
+     * Correctifs d'un diagnostic (XE4) — le diagnostic visé est celui
+     * dont le DÉBUT est [decalageDuDiagnostic] (l'hôte traduit la
+     * plage LSP) ; PLUSIEURS diagnostics peuvent partager un début
+     * (balise non fermée + xmlns manquant sur la même racine) : les
+     * codes QUICK-FIXABLES sont essayés TOUS. Les éditions couvrent
+     * ouvrante ET fermante quand la correction renomme une balise.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — les sorties
+     * sont des régimes distincts (session fermée, document inconnu,
+     * codes sans correctif).
+     */
+    @Suppress("ReturnCount")
+    override fun correctifs(
+        uri: String,
+        decalageDuDiagnostic: Int,
+    ): List<CorrectifXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        val candidats =
+            diagnostics(uri).filter { it.debut == decalageDuDiagnostic }
+        val correctifs = mutableListOf<CorrectifXml>()
+        for (diagnostic in candidats) {
+            when (diagnostic.code) {
+                jo.lspxml.api.CodesDiagnosticsXml.MANQUE_XMLNS_ANDROID ->
+                    correctifs.addAll(CorrectifsXml.insererXmlnsAndroid(document.document))
+
+                jo.lspxml.api.CodesDiagnosticsXml.TAG_INCONNU -> {
+                    val element =
+                        elementsDe(document.document)
+                            .firstOrNull { it.plageNom.debut == decalageDuDiagnostic }
+                    element?.let {
+                        correctifs.addAll(CorrectifsXml.renommerBalise(it, catalogueCourant()))
+                    }
+                }
+
+                else -> Unit
+            }
+        }
+        return correctifs
     }
 
     override fun close() {

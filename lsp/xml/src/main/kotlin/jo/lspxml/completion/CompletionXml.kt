@@ -28,14 +28,12 @@ public object CompletionXml {
 
     /**
      * Balises SPÉCIALES d'un layout (hors classes de vues — le gonfleur
-     * les connaît, le catalogue ne les porte pas).
+     * les connaît, le catalogue ne les porte pas) — EXPOSÉES aux règles
+     * (garde « balise inconnue » X4 : jamais signalées).
      */
-    private val BALISES_SPECIALES: List<Pair<String, String>> =
-        listOf(
-            "merge" to "racine de fusion (le gonfleur insère les enfants directement)",
-            "include" to "inclusion d'un autre layout (@layout/…)",
-            "fragment" to "fragment android.app (class/name)",
-            "requestFocus" to "prise de focus initiale de l'élément parent",
+    internal val BALISES_SPECIALES_NOMS: Set<String> =
+        setOf(
+            "merge", "include", "fragment", "requestFocus",
         )
 
     /**
@@ -51,6 +49,15 @@ public object CompletionXml {
 
     /** Longueur du mot-clé `xmlns` (garde de frappe symétrique). */
     private const val LONGUEUR_XMLNS: Int = 5
+
+    /** Détails des balises spéciales (BALISES_SPECIALES_NOMS). */
+    private val DETAILS_SPECIALES: Map<String, String> =
+        mapOf(
+            "merge" to "racine de fusion (le gonfleur insère les enfants directement)",
+            "include" to "inclusion d'un autre layout (@layout/…)",
+            "fragment" to "fragment android.app (class/name)",
+            "requestFocus" to "prise de focus initiale de l'élément parent",
+        )
 
     /**
      * Complétion du NOM DE BALISE — toutes les vues du catalogue
@@ -80,9 +87,11 @@ public object CompletionXml {
                 )
             }
         }
-        for ((nom, detail) in BALISES_SPECIALES) {
-            val visible = (prefixe.isEmpty() || nom.startsWith(prefixe)) &&
-                !catalogue.balises.containsKey(nom)
+        for (nom in BALISES_SPECIALES_NOMS) {
+            val detail = DETAILS_SPECIALES[nom] ?: ""
+            val visible =
+                (prefixe.isEmpty() || nom.startsWith(prefixe)) &&
+                    !catalogue.balises.containsKey(nom)
             if (visible) {
                 propositions.add(
                     PropositionCompletionXml(
