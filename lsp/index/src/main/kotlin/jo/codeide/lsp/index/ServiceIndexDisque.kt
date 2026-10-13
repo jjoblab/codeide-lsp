@@ -17,8 +17,10 @@ import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.IOException
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Service de l'index disque — construit en ARRIÈRE-PLAN les segments des
@@ -118,7 +120,18 @@ public class ServiceIndexDisque internal constructor(
         val positions = vue.positionsInternes()
         val barriere = Semaphore(parallelisme.coerceAtLeast(1))
         val statistiques = StatistiquesConstruction(positions.size)
-        vue.etatMutable.value = statistiques.etat(PhaseIndex.CONSTRUCTION, null)
+        // B2 (Phase B prompt 2, ADR 0117 §4.4) : mesure des durées par
+        // phase. La phase bibliothèques couvre l'indexation des jars du
+        // classpath (toutes les positions). La phase sources n'est pas
+        // gérée par ServiceIndexDisque (elle vivra dans un indexeur
+        // dédié aux fichiers `.java` du projet — hors périmètre B2).
+        val debutBibliotheques = System.currentTimeMillis()
+        vue.etatMutable.value =
+            statistiques.etat(
+                phase = PhaseIndex.CONSTRUCTION,
+                entreeCourante = null,
+                phaseDetaillee = PhaseDetailleeIndex.BIBLIOTHEQUES,
+            )
         coroutineScope {
             positions
                 .map { position ->
@@ -129,7 +142,31 @@ public class ServiceIndexDisque internal constructor(
                     }
                 }.awaitAll()
         }
-        vue.etatMutable.value = statistiques.etat(phaseFinale(statistiques), null)
+        val finBibliotheques = System.currentTimeMillis()
+        val durees =
+            DureesPhases(
+                bibliothequesMs = finBibliotheques - debutBibliotheques,
+                sourcesMs = 0L,
+            )
+        vue.etatMutable.value =
+            statistiques.etat(
+                phase = phaseFinale(statistiques),
+                entreeCourante = null,
+                phaseDetaillee = PhaseDetailleeIndex.AUCUNE,
+                dureesPhases = durees,
+                bilanDernierPassage =
+                    BilanDernierPassage(
+                        dureeMs = durees.bibliothequesMs + durees.sourcesMs,
+                        artefactsTotal = statistiques.total,
+                        artefactsRepris = statistiques.reprises.get(),
+                        artefactsReconstruits = statistiques.faits.get() - statistiques.reprises.get(),
+                        fichiersParcourus = 0,
+                        fichiersReanalyses = 0,
+                        indexeurPlusCouteux = "noms-classes-java",
+                        horodatageMs = finBibliotheques,
+                    ),
+                settled = true,
+            )
     }
 
     /** Construit (ou reprend) la position d'UNE entrée. */
@@ -139,7 +176,14 @@ public class ServiceIndexDisque internal constructor(
         statistiques: StatistiquesConstruction,
     ) {
         currentCoroutineContext().ensureActive()
-        vue.etatMutable.value = statistiques.etat(PhaseIndex.CONSTRUCTION, position.entree.chemin)
+        // B2 : l'entrée passe en ACTIF dans la liste de travail.
+        statistiques.marquerActif(position.entree.chemin)
+        vue.etatMutable.value =
+            statistiques.etat(
+                phase = PhaseIndex.CONSTRUCTION,
+                entreeCourante = position.entree.chemin,
+                phaseDetaillee = PhaseDetailleeIndex.BIBLIOTHEQUES,
+            )
         val repriseValide: (String) -> Boolean = { cle ->
             entrepot.enTeteValide(cle, position.tailleValidation, position.mtimeValidation)
         }
@@ -147,6 +191,7 @@ public class ServiceIndexDisque internal constructor(
             is ResultatAnalyse.Reprise -> {
                 adopter(position, resultat.cle)
                 statistiques.reprise()
+                statistiques.marquer(position.entree.chemin, EtatEntreeTravail.REPRIS)
             }
 
             is ResultatAnalyse.Ok -> {
@@ -164,18 +209,26 @@ public class ServiceIndexDisque internal constructor(
                     entrepot.ecrire(resultat.donnees, resultat.donnees.cle)
                     adopter(position, resultat.donnees.cle)
                     statistiques.terminee()
+                    statistiques.marquer(position.entree.chemin, EtatEntreeTravail.TERMINE)
                 } catch (e: IOException) {
                     // Stockage défaillant : entrée en erreur (état final
                     // ERREUR) — jamais de crash de la construction.
                     statistiques.erreur("écriture impossible (${position.entree.chemin}) : ${e.message}")
+                    statistiques.marquer(position.entree.chemin, EtatEntreeTravail.ECARTE)
                 }
             }
 
             is ResultatAnalyse.Illisible -> {
                 statistiques.avertissement("${position.entree.chemin} : ${resultat.raison}")
+                statistiques.marquer(position.entree.chemin, EtatEntreeTravail.ECARTE)
             }
         }
-        vue.etatMutable.value = statistiques.etat(PhaseIndex.CONSTRUCTION, null)
+        vue.etatMutable.value =
+            statistiques.etat(
+                phase = PhaseIndex.CONSTRUCTION,
+                entreeCourante = null,
+                phaseDetaillee = PhaseDetailleeIndex.BIBLIOTHEQUES,
+            )
     }
 
     /** Position adopte sa clé définitive et devient prête. */
@@ -245,7 +298,10 @@ public class ServiceIndexDisque internal constructor(
         )
     }
 
-    /** Comptes atomiques de la construction (progression par jar). */
+    /** Comptes atomiques de la construction (progression par jar).
+     *  B2 (Phase B prompt 2, ADR 0117 §4.4) : suit aussi la liste de
+     *  travail par entrée (état en attente / actif / terminé / repris /
+     *  écarté) pour l'écran d'indexation. */
     private class StatistiquesConstruction(
         val total: Int,
     ) {
@@ -253,6 +309,23 @@ public class ServiceIndexDisque internal constructor(
         val reprises = AtomicInteger()
         val avertissements = ConcurrentLinkedQueue<String>()
         val erreurs = ConcurrentLinkedQueue<String>()
+
+        /** B2 : liste de travail par entrée (chemin → état). ConcurrentHashMap
+         *  pour la sécurité concurrente (les entrées sont traitées en parallèle). */
+        val listeTravail = ConcurrentHashMap<String, EtatEntreeTravail>()
+
+        /** B2 : marque une entrée comme ACTIF (début de traitement). */
+        fun marquerActif(chemin: String) {
+            listeTravail[chemin] = EtatEntreeTravail.ACTIF
+        }
+
+        /** B2 : marque une entrée avec un état donné (terminé / repris / écarté). */
+        fun marquer(
+            chemin: String,
+            etat: EtatEntreeTravail,
+        ) {
+            listeTravail[chemin] = etat
+        }
 
         fun reprise() {
             reprises.incrementAndGet()
@@ -271,9 +344,25 @@ public class ServiceIndexDisque internal constructor(
             erreurs.add(raison)
         }
 
+        /** B2 : construit l'état avec les nouveaux champs étendus. Les
+         *  paramètres ajoutés ont des valeurs par défaut pour préserver
+         *  les sites d'appel existants (rétrocompatibilité).
+         *
+         *  Exemption detekt ciblée (règle 8 : exception commentée) :
+         *  `LongParameterList` — 7 paramètres, seuil à 6. Chaque
+         *  paramètre est un champ distinct de `EtatIndex` ; les regrouper
+         *  dans un objet paramètre casserait la lisibilité (l'appelant
+         *  devrait construire un objet intermédiaire) et la
+         *  rétrocompatibilité (les valeurs par défaut ne s'appliqueraient
+         *  plus automatiquement). */
+        @Suppress("LongParameterList")
         fun etat(
             phase: PhaseIndex,
             entreeCourante: String?,
+            phaseDetaillee: PhaseDetailleeIndex = PhaseDetailleeIndex.AUCUNE,
+            dureesPhases: DureesPhases? = null,
+            bilanDernierPassage: BilanDernierPassage? = null,
+            settled: Boolean = false,
         ): EtatIndex =
             EtatIndex(
                 phase = phase,
@@ -283,6 +372,15 @@ public class ServiceIndexDisque internal constructor(
                 reprises = reprises.get(),
                 avertissements = avertissements.toList(),
                 erreurs = erreurs.toList(),
+                phaseDetaillee = phaseDetaillee,
+                listeTravail =
+                    listeTravail.entries
+                        .sortedBy { it.key }
+                        .map { EntreeTravail(nom = it.key, etat = it.value) },
+                breakdownIndexeurs = emptyList(),
+                dureesPhases = dureesPhases,
+                bilanDernierPassage = bilanDernierPassage,
+                settled = settled,
             )
     }
 
