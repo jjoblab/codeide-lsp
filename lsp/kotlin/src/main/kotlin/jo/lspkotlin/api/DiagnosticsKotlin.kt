@@ -43,8 +43,9 @@ public enum class SeveriteKotlin {
 
 /**
  * Catalogue des codes de diagnostics du moteur Kotlin (K2 : périmètre
- * SYNTAXIQUE seul — les diagnostics sémantiques arrivent K3/K4 avec le
- * modèle de symboles, LSP_KOTLIN.md §4.3).
+ * SYNTAXIQUE ; K4 : périmètre SÉMANTIQUE conservateur — LSP_KOTLIN.md
+ * §4.3 « diagnostics initiaux », chacun avec sa fixture TDD et sa
+ * garde de sous-rapport).
  *
  * Convention de nommage héritée du cadrage : préfixe `kt.` — l'éditeur
  * distingue nos diagnostics de ceux du compilateur Gradle (qui n'ont pas
@@ -75,4 +76,79 @@ public object CodesDiagnosticsKotlin {
      * plus tardif, message portant les deux noms qualifiés.
      */
     public const val IMPORT_CONFLIT: String = "kt.conflictingImport"
+
+    /**
+     * Référence NON RÉSOLUE (K4) : un identifiant simple en position
+     * d'expression qui ne résout NI par les portées (locales,
+     * paramètres, membres des englobantes, premier niveau du fichier),
+     * NI par les déclarations du projet, NI par les classes (imports,
+     * paquet, imports par défaut), NI par les appelables de premier
+     * niveau de l'index. Conservateur : SÉLECTEURS qualifiés jamais
+     * signalés (le récepteur peut être inconnu), `it` jamais signalé,
+     * fichiers portant une erreur de parse jamais diagnostiqués (édition
+     * en cours), régime sans classpath jamais signalé (sous-rapport D3).
+     * C'est LA cible des quick-fixes d'import ([importsCandidats]).
+     */
+    public const val REFERENCE_NON_RESOLUE: String = "kt.unresolved"
+
+    /**
+     * Type d'initialiseur INCOMPATIBLE avec le type écrit (K4, cas
+     * SIMPLES seulement) : littéral de famille A affecté à un type écrit
+     * d'une famille B DÉMONTRABLE (primitives Kotlin usuels). Les
+     * familles : numérique (littéral entier → Int/Long/Short/Byte/
+     * Float/Double — conversion littérale légale), décimal (Float/
+     * Double), chaîne, booléen, caractère. Tout ce qui n'est pas un
+     * littéral, ou un type écrit hors des familles connues, n'est JAMAIS
+     * signalé (opérateurs, conversions, sous-rapport D3).
+     */
+    public const val TYPE_INCOMPATIBLE: String = "kt.typeMismatch"
+
+    /**
+     * Nombre d'ARGUMENTS incompatible (K4) : appel d'une candidate du
+     * PROJET (fonction locale/membre/premier niveau, constructeur de
+     * classe du projet) dont AUCUNE surcharge n'accepte l'arité écrite.
+     * Les paramètres par défaut élargissent la plage légale
+     * (minimum = paramètres − défauts) et un `vararg` rend la candidate
+     * inéligible au contrôle (sous-rapport). Les cibles du classpath ne
+     * sont pas contrôlées à K4 (surcharges par arité non lues).
+     */
+    public const val NOMBRE_ARGUMENTS: String = "kt.argumentCount"
+
+    /**
+     * Accès SÛR manquant (K4) : sélecteur par `.` sur un récepteur de
+     * type écrit NULLABLE démontrable (`String?`), sans garde de
+     * nullité dominante (`!= null`, garde `== null` à sortie précoce)
+     * — Kotlin exige `?.` ou `!!`. Uniquement les récepteurs PAR NOM
+     * SIMPLE au type écrit nullable : retours d'appels, chaînes et
+     * récepteurs inconnus jamais signalés (sous-rapport D3).
+     */
+    public const val ACCES_NON_SUR: String = "kt.unsafeNullable"
+
+    /**
+     * RETOUR manquant (K4) : fonction à corps de BLOC, type de retour
+     * ÉCRIT non Unit, dont le corps ne contient NI return NI throw (en
+     * dehors des littéraux de fonction et fonctions locales imbriquées).
+     * Les corps d'expression, types inférés et fonctions abstraites ne
+     * sont jamais signalés.
+     */
+    public const val RETOUR_MANQUANT: String = "kt.missingReturn"
+
+    /**
+     * Code INATTEIGNABLE (K4) : première déclaration d'un bloc qui suit
+     * un `return`/`throw` FRÈRE direct — le reste du bloc est mort.
+     * Signalé UNE fois par bloc, sur la plage de cette première
+     * déclaration ; `break`/`continue` ne comptent pas (terminaux
+     * seulement dans les boucles, K5).
+     */
+    public const val CODE_INATTEIGNABLE: String = "kt.unreachable"
+
+    /**
+     * Réaffectation d'un `val` (K4) : affectation (`=`, pas `==`) à un
+     * nom simple déclaré `val` — locale, paramètre (immuable par
+     * construction en Kotlin) ou propriété de premier niveau/membre.
+     * L'affectation QUALIFIÉE (`a.b = …`) n'est jamais signalée (le
+     * propriétaire peut être mutable ailleurs), idem les cibles
+     * introuvables (sous-rapport D3).
+     */
+    public const val REAFFECTATION_VAL: String = "kt.valReassign"
 }

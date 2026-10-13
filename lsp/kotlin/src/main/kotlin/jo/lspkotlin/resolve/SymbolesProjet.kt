@@ -34,9 +34,15 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * @property paquet package du fichier porteur.
  * @property recepteur récepteur d'extension ÉCRIT (`Vue`), `null` sinon.
  * @property typeRetour type de retour/valeur ÉCRIT, `null` sinon.
- * @property parametres paramètres (nom, type écrit) des fonctions.
+ * @property parametres paramètres (nom, type écrit) des fonctions ET
+ *           du constructeur PRIMAIRE d'une classe (K4 — contrôle
+ *           d'arité des appels de constructeur).
  * @property conteneur qualifié du conteneur (`pkg.Classe` pour un
  *           membre ; null au premier niveau).
+ * @property nombreParametresDefaut paramètres portant une valeur PAR
+ *           DÉFAUT (K4 — élargit la plage d'arité légale d'un appel).
+ * @property aVararg la déclaration porte un paramètre VARARG (K4 —
+ *           arité d'appel ouverte, contrôle d'arité écarté).
  */
 public data class DeclarationProjet(
     public val genre: GenreDeclaration,
@@ -49,6 +55,8 @@ public data class DeclarationProjet(
     public val typeRetour: String?,
     public val parametres: List<Pair<String?, String?>>,
     public val conteneur: String?,
+    public val nombreParametresDefaut: Int = 0,
+    public val aVararg: Boolean = false,
 )
 
 /** Genre de déclaration projet. */
@@ -162,7 +170,9 @@ public object SymbolesProjet {
                     paquet = paquet,
                     recepteur = null,
                     typeRetour = null,
-                    parametres = emptyList(),
+                    // K4 : paramètres du constructeur PRIMAIRE (contrôle
+                    // d'arité des appels de constructeur du projet).
+                    parametres = parametresPrimaires(declaration),
                     conteneur = conteneur,
                 )
                 parcourirConteneur(declaration.membres(), uri, paquet, qualifieConteneur, resultat)
@@ -180,6 +190,8 @@ public object SymbolesProjet {
                     typeRetour = declaration.typeRetour(),
                     parametres = declaration.parametres().map { parametre -> parametreExtraire(parametre) },
                     conteneur = conteneur,
+                    nombreParametresDefaut = declaration.parametres().count { parametre -> parametre.aDefaut() },
+                    aVararg = declaration.parametres().any { parametre -> parametre.aVararg() },
                 )
                 // Paramètres : portée du corps (déclarations à part).
                 declaration.parametres().forEach { parametre ->
@@ -227,6 +239,20 @@ public object SymbolesProjet {
     /** (nom, type écrit) d'un paramètre. */
     private fun parametreExtraire(parametre: KtParameter): Pair<String?, String?> =
         Pair(parametre.nom(), parametre.type())
+
+    /**
+     * Paramètres du constructeur PRIMAIRE d'une classe (K4) : la liste
+     * de paramètres ENFANT DIRECTE du nœud CLASS (celles des
+     * constructeurs secondaires vivent dans SECONDARY_CONSTRUCTOR).
+     */
+    private fun parametresPrimaires(classe: KtClass): List<Pair<String?, String?>> =
+        classe.noeud.sousNoeuds
+            .firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+            ?.sousNoeuds
+            ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
+            ?.map { KtParameter(it) }
+            ?.map { parametre -> parametreExtraire(parametre) }
+            ?: emptyList()
 
     /** Déclaration de PARAMÈTRE (portée du corps de fonction). */
     private fun parametreDeclaration(

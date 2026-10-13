@@ -315,6 +315,39 @@ public class KtParameter(
         typeReferences()
             .firstOrNull()
             ?.let { typeTexteDepuis(it.noeud) }
+
+    /**
+     * Le paramètre porte une valeur PAR DÉFAUT (`n: Int = 1` — K4,
+     * contrôle d'arité d'appel) : jeton `EQ` enfant direct.
+     */
+    public fun aDefaut(): Boolean = jetons().any { it.type == KtTokens.EQ }
+
+    /**
+     * Le paramètre est un VARARG (`vararg xs: Int` — K4) : l'arité
+     * d'appel devient 0..n, la candidate est INÉLIGIBLE au contrôle.
+     * Le modificateur vit sous MODIFIER_LIST — reconstruit soit en
+     * jeton, soit en nœud sans enfant selon la marche du parseur, les
+     * DEUX formes sont sondées.
+     */
+    public fun aVararg(): Boolean = contientType(noeud, KtTokens.VARARG_MODIFIER)
+}
+
+/**
+ * Le sous-arbre contient-il un élément (jeton OU nœud) du type donné ?
+ *
+ * ReturnCount justifié (règle 8) : correspondance, récursion, épuisement
+ * — trois issues distinctes du même parcours.
+ */
+@Suppress("ReturnCount")
+private fun contientType(
+    noeud: NoeudSyntaxique,
+    type: com.intellij.platform.syntax.SyntaxElementType,
+): Boolean {
+    for (enfant in noeud.enfants) {
+        if (enfant.type == type) return true
+        if (enfant is NoeudSyntaxique && contientType(enfant, type)) return true
+    }
+    return false
 }
 
 /** Alias de type (`typealias Foo = …`). */

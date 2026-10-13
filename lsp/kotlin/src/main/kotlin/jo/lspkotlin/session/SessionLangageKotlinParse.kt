@@ -7,11 +7,13 @@ import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.completion.CompletionKotlin
+import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
 import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
 import jo.lspkotlin.parse.ParseurKotlin
 import jo.lspkotlin.parse.kt.KtFile
+import jo.lspkotlin.resolve.CandidatsImport
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.InterrogationsSymboles
@@ -111,7 +113,24 @@ internal class SessionLangageKotlinParse(
     override fun diagnostics(uri: String): List<DiagnosticKotlin> =
         synchronized(verrou) {
             val document = documents[uri] ?: return emptyList()
-            DiagnosticsSyntaxiques.calculer(document.arbre)
+            val syntaxiques = DiagnosticsSyntaxiques.calculer(document.arbre)
+            // K4 : les diagnostics SÉMANTIQUES vivent sous le MÊME verrou
+            // (le contexte de résolution lit l'état de classpath).
+            val contexteNom = contexteNomDe(document, uri)
+            val semantiques =
+                DiagnosticsSemantiques.calculer(
+                    document.arbre,
+                    DiagnosticsSemantiques.Contexte(
+                        texte = document.texte,
+                        contexteNom = contexteNom,
+                        resolution = resolution,
+                        declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
+                        // Régime sans classpath poussé : AUCUN diagnostic
+                        // non résolu (impossible de prouver une absence).
+                        indexAppelables = if (classpath == null) null else indexAppelables,
+                    ),
+                )
+            (syntaxiques + semantiques).sortedWith(compareBy({ it.debut }, { it.code }))
         }
 
     override fun definirClasspath(classpath: ClasspathKotlin) {
@@ -168,6 +187,25 @@ internal class SessionLangageKotlinParse(
                 decalage,
                 uri,
                 contexteInterrogations(document, uri),
+            )
+        }
+
+    override fun importsCandidats(
+        uri: String,
+        decalage: Int,
+    ): List<String> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val contexteNom = contexteNomDe(document, uri)
+            CandidatsImport.fqcns(
+                racine = document.arbre.racine,
+                decalage = decalage,
+                contexteNom = contexteNom,
+                resolution = resolution,
+                declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
+                index = if (classpath == null) null else indexAppelables,
+                vue = classpath?.vue,
             )
         }
 
@@ -241,11 +279,14 @@ internal class SessionLangageKotlinParse(
             }
         }
         // Classes de premier niveau du projet (clé FQCN, lookups
-        // « paquet.nom » de fqcnDuNomEcrit).
+        // « paquet.nom » de fqcnDuNomEcrit) — classes ET interfaces
+        // (correctif K4 : la double garde K3 `!= CLASSE` suivie de
+        // `!= INTERFACE` rejetait TOUT, classesProjet restait vide).
         val classesProjet = HashMap<String, String>()
         for (declaration in scanProjet.declarations() + declarationsDocument(document, uri, paquet)) {
-            if (declaration.genre != GenreDeclaration.CLASSE) continue
-            if (declaration.genre != GenreDeclaration.INTERFACE) continue
+            if (declaration.genre != GenreDeclaration.CLASSE && declaration.genre != GenreDeclaration.INTERFACE) {
+                continue
+            }
             val fqcn = (declaration.paquet?.let { "$it." } ?: "") + declaration.nom
             classesProjet[fqcn] = fqcn
         }

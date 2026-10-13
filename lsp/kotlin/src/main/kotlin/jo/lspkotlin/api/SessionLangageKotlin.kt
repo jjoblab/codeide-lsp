@@ -138,6 +138,29 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun definitions(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
 
     /**
+     * FQCN CANDIDATS À L'IMPORT d'un nom non résolu (K4 — quick-fixes
+     * d'import : « un correctif par FQN candidate, position triée »).
+     *
+     * Le moteur rend les FQCN du classpath portant EXACTEMENT le nom de
+     * la référence à [decalage] (vue `nomsParPrefixe`, déjà importés
+     * exclus) ; l'HÔTE dérive l'édition LSP (additionalTextEdits /
+     * WorkspaceEdit — il possède le texte et l'heuristique d'insertion
+     * après le dernier import, miroir du LSP Java). Une référence RÉSOLUE
+     * ne rend AUCUN candidat (rien à importer) ; un document inconnu
+     * rend vide.
+     *
+     * Tolérance de version : défaut VIDE — un pack K3 face à un hôte K4
+     * dégrade honnêtement (pas de quick-fix, jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage de la référence (plage du diagnostic
+     *        `kt.unresolved` côté hôte).
+     * @return les FQCN candidates, ordre du classpath (le premier a la
+     *         préséance) ; liste VIDE sans candidat.
+     */
+    public fun importsCandidats(uri: String, decalage: Int): List<String> = emptyList()
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document. Idempotente — un appel après close est
      * sans effet, pas une erreur.

@@ -7,9 +7,14 @@ import jo.lspkotlin.api.GenreCompletionKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import org.eclipse.lsp4j.CodeActionContext
+import org.eclipse.lsp4j.CodeActionKind
+import org.eclipse.lsp4j.CodeActionParams
 import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DefinitionParams
+import org.eclipse.lsp4j.Diagnostic
+import org.eclipse.lsp4j.DiagnosticSeverity
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
@@ -28,6 +33,7 @@ import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
+import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.LanguageClient
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -442,6 +448,103 @@ class KotlinLanguageServerTest {
         session.close()
     }
 
+    // ── K4 : quick-fixes d'import (codeAction) ────────────────────────
+
+    @Test
+    fun `codeAction - un correctif par FQN candidate, insertion apres le dernier import`() {
+        val session =
+            SessionScriptee(
+                importsCandidats = listOf("android.widget.TextView", "demo.TextView"),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        val source = "package app\n\nimport alpha.Alpha\n\nfun main() { TextView() }\n"
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///fix.kt", "kotlin", 1, source)),
+        )
+        // Le client renvoie le diagnostic kt.unresolved dans le contexte.
+        val nonResolu =
+            org.eclipse.lsp4j.Diagnostic(
+                Range(Position(4, 12), Position(4, 21)),
+                "Référence non résolue : « TextView »",
+                org.eclipse.lsp4j.DiagnosticSeverity.Error,
+                "codeide-kotlin",
+                "kt.unresolved",
+            )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///fix.kt"),
+                nonResolu.range,
+                CodeActionContext(listOf(nonResolu)),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        assertEquals(2, actions.size)
+        val premiere = actions.first().right
+        assertEquals("Importer « android.widget.TextView »", premiere.title)
+        assertEquals(org.eclipse.lsp4j.CodeActionKind.QuickFix, premiere.kind)
+        assertEquals(1, premiere.diagnostics.size)
+        val editions = checkNotNull(premiere.edit?.changes?.get("file:///fix.kt"))
+        val edition = editions.single()
+        assertEquals("import android.widget.TextView\n", edition.newText)
+        // Après le DERNIER import (ligne 2) → tête de la ligne 3.
+        assertEquals(3, edition.range.start.line)
+        assertEquals(0, edition.range.start.character)
+        // La seconde candidate suit (ordre du classpath conservé).
+        assertEquals("Importer « demo.TextView »", actions[1].right.title)
+        session.close()
+    }
+
+    @Test
+    fun `codeAction - sans diagnostic non resolu, aucune action`() {
+        val session = SessionScriptee(importsCandidats = listOf("android.widget.TextView"))
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///rien.kt", "kotlin", 1, "val x = 1\n")),
+        )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///rien.kt"),
+                Range(Position(0, 0), Position(0, 1)),
+                CodeActionContext(emptyList()),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        assertTrue(actions.isEmpty())
+        session.close()
+    }
+
+    @Test
+    fun `codeAction - moteur en echec, liste vide honnete`() {
+        val session = SessionScriptee(leverSurImports = true)
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        val nonResolu =
+            org.eclipse.lsp4j.Diagnostic(
+                Range(Position(0, 0), Position(0, 1)),
+                "Référence non résolue : « x »",
+                org.eclipse.lsp4j.DiagnosticSeverity.Error,
+                "codeide-kotlin",
+                "kt.unresolved",
+            )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///a.kt"),
+                nonResolu.range,
+                CodeActionContext(listOf(nonResolu)),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        assertTrue(actions.isEmpty())
+        session.close()
+    }
+
+    @Test
+    fun `capacites K4 - codeAction declare (honnete)`() {
+        val espace = espaceAvecEspion()
+        val resultat = espace.serveur.initialize(InitializeParams()).join()
+        assertEquals(true, resultat.capabilities.codeActionProvider.left)
+        espace.fermer()
+    }
+
     // ── K3 : complétion, survol, définition, poussée de classpath ────
 
     @Test
@@ -540,12 +643,18 @@ class KotlinLanguageServerTest {
     }
 
     /**
-     * Session scriptée : les réponses des requêtes K3 sont INJECTÉES —
-     * les tests de TRADUCTION du serveur (kinds, éditions, tolérances)
+     * Session scriptée : les réponses des requêtes K3/K4 sont INJECTÉES
+     * — les tests de TRADUCTION du serveur (kinds, éditions, tolérances)
      * n'ont pas besoin du moteur réel.
+     *
+     * LongParameterList justifié (règle 8) : chaque paramètre est UNE
+     * réponse injectable du contrat de session testée.
      */
+    @Suppress("LongParameterList")
     private class SessionScriptee(
         private val propositions: List<PropositionCompletionKotlin> = emptyList(),
+        private val importsCandidats: List<String> = emptyList(),
+        private val leverSurImports: Boolean = false,
         private val survols: ContenuSurvoleKotlin? = null,
         private val emplacements: List<EmplacementKotlin> = emptyList(),
         private val leverSurCompletion: Boolean = false,
@@ -598,6 +707,14 @@ class KotlinLanguageServerTest {
         ): List<PropositionCompletionKotlin> {
             check(!leverSurCompletion) { "complétion scriptée en échec" }
             return propositions
+        }
+
+        override fun importsCandidats(
+            uri: String,
+            decalage: Int,
+        ): List<String> {
+            check(!leverSurImports) { "imports scriptés en échec" }
+            return importsCandidats
         }
 
         override fun survol(

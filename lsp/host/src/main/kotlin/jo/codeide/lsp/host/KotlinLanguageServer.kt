@@ -6,6 +6,10 @@ import jo.lspkotlin.api.GenreCompletionKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import org.eclipse.lsp4j.CodeAction
+import org.eclipse.lsp4j.CodeActionKind
+import org.eclipse.lsp4j.CodeActionParams
+import org.eclipse.lsp4j.Command
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.CompletionList
@@ -32,6 +36,7 @@ import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.TextEdit
+import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
@@ -107,15 +112,18 @@ internal class KotlinLanguageServer(
         val capacites = ServerCapabilities()
         capacites.setTextDocumentSync(TextDocumentSyncKind.Full)
         // K3 (LSP_KOTLIN §4.4) : complétion (déclencheur « . » — le
-        // membre est LE régime), survol, définition. Honnête : rien
-        // d'autre n'est déclaré (les méthodes non surchargées de LSP4J
-        // restent les défauts).
+        // membre est LE régime), survol, définition. K4 : QUICK-FIXES
+        // d'import (codeAction — un correctif par FQN candidate du
+        // diagnostic kt.unresolved). Honnête : rien d'autre n'est
+        // déclaré (les méthodes non surchargées de LSP4J restent les
+        // défauts).
         val completion = CompletionOptions()
         completion.triggerCharacters = listOf(".")
         completion.resolveProvider = false
         capacites.setCompletionProvider(completion)
         capacites.setHoverProvider(true)
         capacites.setDefinitionProvider(true)
+        capacites.setCodeActionProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -365,6 +373,51 @@ internal class KotlinLanguageServer(
         private fun emptyLeft(): Either<List<org.eclipse.lsp4j.Location>, List<org.eclipse.lsp4j.LocationLink>> =
             Either.forLeft(emptyList())
 
+        /**
+         * Quick-fixes d'import (K4) : pour chaque diagnostic
+         * `kt.unresolved` de la requête, UN CodeAction par FQN candidate
+         * rendue par le moteur ([SessionLangageKotlin.importsCandidats])
+         * — l'édition insère `import fqn` à l'heuristique partagée du
+         * serveur (après le dernier import, sinon le package, sinon la
+         * tête). Le tri du cadrage est l'ordre du classpath (le moteur
+         * l'a déjà appliqué) ; le plafond borne la palette.
+         */
+        override fun codeAction(params: CodeActionParams): CompletableFuture<List<Either<Command, CodeAction>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri]
+            val actions = mutableListOf<CodeAction>()
+            val nonResolues =
+                params.context.diagnostics.filter { diagnostic ->
+                    diagnostic.code?.left == CODE_NON_RESOLU
+                }
+            for (diagnostic in nonResolues) {
+                val texte = document?.texte ?: ""
+                val decalage = decalageDe(diagnostic.range.start, texte)
+                val candidats =
+                    try {
+                        session.importsCandidats(uri, decalage)
+                    } catch (t: Throwable) {
+                        LOGGER.log(Level.WARNING, "quick-fixes d'import échoués ($uri)", t)
+                        emptyList()
+                    }
+                candidats.take(PLAFOND_CORRECTIFS).forEach { fqn ->
+                    val position = positionDe(decalageInsertionImport(texte), texte)
+                    val action = CodeAction("Importer « $fqn »")
+                    action.kind = CodeActionKind.QuickFix
+                    action.diagnostics = listOf(diagnostic)
+                    action.edit =
+                        WorkspaceEdit(
+                            linkedMapOf(
+                                uri to listOf(TextEdit(Range(position, position), "import $fqn\n")),
+                            ),
+                        )
+                    actions.add(action)
+                }
+            }
+            val reponses = actions.map { action -> Either.forRight<Command, CodeAction>(action) }
+            return CompletableFuture.completedFuture(reponses)
+        }
+
         /** Extension de script (`.kts`) → mode script du parseur. */
         private fun estScript(uri: String): Boolean = uri.endsWith(".kts", ignoreCase = true)
 
@@ -520,5 +573,11 @@ internal class KotlinLanguageServer(
 
         /** Nom du serveur (serverInfo, source des diagnostics). */
         private const val NOM_SERVEUR: String = "codeide-kotlin"
+
+        /** Code des diagnostics ciblés par les quick-fixes d'import. */
+        private const val CODE_NON_RESOLU: String = "kt.unresolved"
+
+        /** Correctifs d'import maximum PAR diagnostic (palette bornée). */
+        private const val PLAFOND_CORRECTIFS: Int = 8
     }
 }

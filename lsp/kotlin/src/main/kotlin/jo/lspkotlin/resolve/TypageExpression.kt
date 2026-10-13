@@ -18,8 +18,9 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * Le résultat est un FQCN (« android.widget.TextView », «
  * kotlin.String ») ou `null` : ce que la preuve syntaxique + classpath
  * ne démontre pas n'est PAS deviné (D3 — la complétion membre qui en
- * dépend est omise, jamais fausse). L'inférence BORNÉE (génériques,
- * smart casts) est K4.
+ * dépend est omise, jamais fausse). K4 : SMART CASTS positionnels et
+ * inférence BORNÉE des paramètres de lambda (génériques et récepteurs
+ * `with` restent K5+).
  *
  * Bornes volontaires : profondeur de chaîne bornée (garde anti-cycle),
  * identifiants résolus par les PORTÉES locales/membres/fichier puis
@@ -153,7 +154,8 @@ internal object TypageExpression {
      * INITIALISEUR), membre englobant (idem), propriété de premier
      * niveau du fichier (initialisateur compris) puis du projet (type
      * écrit seul), classe (l'identifiant EST un type — companion
-     * exclu, D3).
+     * exclu, D3). K4 : SMART CAST positionnel d'abord, paramètre de
+     * lambda attendu ensuite (inférence bornée du consommateur).
  *
      * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements —
      * le continue du nom non porté est le patron même du parcours des
@@ -169,6 +171,22 @@ internal object TypageExpression {
         declarationsProjet: List<DeclarationProjet>,
         profondeur: Int,
     ): String? {
+        // 0. SMART CAST positionnel (K4) — le cast raffine TOUTE portée
+        // sauf une locale déclarée APRÈS la condition (ombrage).
+        val cast = SmartCasts.castPositionnel(racine, decalage, nom, contexteNom, resolution)
+        if (cast != null) {
+            val ombre =
+                SymbolesProjet.localesEnPortee(racine, decalage)
+                    .firstOrNull { it.declaration.nom == nom }
+            if (ombre == null || ombre.declaration.debutNom < cast.decalageCondition) {
+                return cast.fqcn
+            }
+        }
+        // 0 bis. Paramètre de LAMBDA (K4 — inférence bornée : attente du
+        // consommateur projet, `it` implicite compris).
+        ParametresLambda.typeParametre(racine, decalage, nom, contexteNom, resolution, declarationsProjet)?.let {
+            return it
+        }
         // 1. Locales/paramètres (la plus PROCHE gagne — ordre de
         // localesEnPortee) : type écrit, sinon initialiseur.
         for (locale in SymbolesProjet.localesEnPortee(racine, decalage)) {
