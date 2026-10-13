@@ -60,10 +60,11 @@ class XmlLanguageServerTest {
         val espace = espaceAvecEspion()
         val resultat = espace.serveur.initialize(InitializeParams()).join()
         val capacites = resultat.capabilities
-        // XE1 : synchronisation COMPLÈTE + diagnostics — RIEN d'autre.
+        // XE2 : complétion déclarée (balises/attributs), RIEN d'autre.
         assertEquals(org.eclipse.lsp4j.TextDocumentSyncKind.Full, capacites.textDocumentSync.left)
-        assertTrue(capacites.completionProvider == null, "complétion non déclarée à XE1")
-        assertTrue(capacites.hoverProvider == null, "survol non déclaré à XE1")
+        assertTrue(capacites.completionProvider != null, "complétion déclarée à XE2")
+        assertEquals(listOf("<", "=", ":"), capacites.completionProvider?.triggerCharacters)
+        assertTrue(capacites.hoverProvider == null, "survol non déclaré à XE2")
         assertEquals("codeide-xml", resultat.serverInfo.name)
         assertTrue(resultat.serverInfo.version != "inconnue")
         espace.fermer()
@@ -140,6 +141,78 @@ class XmlLanguageServerTest {
         assertEquals("file:///res/values/s.xml", derniere.uri)
         assertTrue(derniere.diagnostics.isEmpty(), "les squiggles partent avec le document")
         espace.fermer()
+    }
+
+    @Test
+    fun `completion — traduite en CompletionItems LSP (kind, detail, sortText)`() {
+        val espace = espaceAvecEspion()
+        espace.facade.appliquerModele(projetMiniPlateforme(), null)
+        val texte = "<But"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///res/layout/main.xml", "xml", 1, texte)),
+        )
+        val reponse =
+            espace.serveur.textDocumentService
+                .completion(
+                    org.eclipse.lsp4j.CompletionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/layout/main.xml"),
+                        org.eclipse.lsp4j.Position(0, texte.length),
+                    ),
+                ).join()
+        val items = reponse.right.items
+        assertTrue(items.isNotEmpty(), "la complétion balise répond")
+        val bouton = items.single { it.label == "Button" }
+        assertEquals(org.eclipse.lsp4j.CompletionItemKind.Class, bouton.kind)
+        assertEquals("android.widget.Button", bouton.detail)
+        // Clé de tri : rang 01 (fréquentes) + longueur 0006 + libellé.
+        assertEquals("010006Button", bouton.sortText)
+        espace.fermer()
+    }
+
+    /**
+     * Projet minimal portant une MINI-PLATEFORME (patron
+     * SessionLspXmlTest — le moteur y lira son catalogue).
+     */
+    private fun projetMiniPlateforme(): jo.codeide.lsp.model.ProjetLsp {
+        val plateforme = dossierTemp.resolve("platforms/android-test")
+        val data = plateforme.resolve("data").apply { mkdirs() }
+        data.resolve("widgets.txt").writeText(
+            "Wandroid.widget.Button android.widget.TextView android.view.View java.lang.Object\n",
+        )
+        val valeurs = data.resolve("res/values").apply { mkdirs() }
+        valeurs.resolve("attrs.xml").writeText(
+            "<resources>" +
+                "<declare-styleable name=\"TextView\"><attr name=\"text\" format=\"string\"/></declare-styleable>" +
+                "</resources>",
+        )
+        val androidJar = plateforme.resolve("android.jar").apply { writeBytes(byteArrayOf(1)) }
+        return jo.codeide.lsp.model.ProjetLsp(
+            dossierTemp.path,
+            listOf(
+                jo.codeide.lsp.model.ModuleLsp(
+                    nom = ":app",
+                    type = jo.codeide.lsp.model.TypeModuleLsp.JVM,
+                    variante = null,
+                    sources =
+                        jo.codeide.lsp.model.EnsemblesSources(
+                            principal = listOf(dossierTemp.resolve("src").apply { mkdirs() }.path),
+                            test = emptyList(),
+                            generes = emptyList(),
+                        ),
+                    classpath =
+                        jo.codeide.lsp.model
+                            .ClasspathInstantane(emptyList(), "instantane"),
+                    dependancesModules = emptyList(),
+                    androidJar = androidJar.path,
+                    ignore = false,
+                    raisonIgnore = null,
+                    avertissements = emptyList(),
+                    empreinte = "module-app",
+                ),
+            ),
+            "projet",
+        )
     }
 
     @Test

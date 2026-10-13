@@ -1,8 +1,15 @@
 package jo.codeide.lsp.host
 
 import jo.lspxml.api.DiagnosticXml
+import jo.lspxml.api.GenreCompletionXml
+import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SessionLangageXml
 import jo.lspxml.api.SeveriteXml
+import org.eclipse.lsp4j.CompletionItem
+import org.eclipse.lsp4j.CompletionItemKind
+import org.eclipse.lsp4j.CompletionList
+import org.eclipse.lsp4j.CompletionOptions
+import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DiagnosticSeverity
 import org.eclipse.lsp4j.DidChangeConfigurationParams
@@ -19,6 +26,7 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.TextDocumentSyncKind
+import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import org.eclipse.lsp4j.services.TextDocumentService
@@ -86,6 +94,15 @@ internal class XmlLanguageServer(
         LOGGER.info { "initialize: workspaceFolders=$dossiers (XE1, mono-espace)" }
         val capacites = ServerCapabilities()
         capacites.setTextDocumentSync(TextDocumentSyncKind.Full)
+        // XE2 (LSP_XML §4.4) : complétion (déclencheurs `<` (nouvelle
+        // balise), `=` (valeur) et `:` (espace de noms)) — balises du
+        // catalogue plateforme, attributs de la chaîne de classes.
+        // Honnête : rien d'autre n'est déclaré (le survol et la
+        // définition arrivent XE3).
+        val completion = CompletionOptions()
+        completion.triggerCharacters = listOf("<", "=", ":")
+        completion.resolveProvider = false
+        capacites.setCompletionProvider(completion)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -198,9 +215,10 @@ internal class XmlLanguageServer(
     /**
      * Service de documents : didOpen/didChange/didClose branchés sur la
      * session moteur, publication après chaque frappe ; didSave sans
-     * effet (les diagnostics vivent au fil de l'eau). Les requêtes
-     * (complétion, hover…) héritent des DÉFAUTS LSP4J — non déclarées
-     * dans les capacités, l'éditeur ne les émet pas.
+     * effet (les diagnostics vivent au fil de l'eau). La COMPLÉTION
+     * (XE2) traduit position→offset, consulte le moteur, traduit les
+     * propositions neutres en CompletionItems (kind, détail, sortText
+     * — le tri total voyage dans la clé, motif du LSP Java/Kotlin).
      */
     private inner class ServiceDocuments : TextDocumentService {
         override fun didOpen(params: DidOpenTextDocumentParams) {
@@ -251,6 +269,52 @@ internal class XmlLanguageServer(
         override fun didSave(params: DidSaveTextDocumentParams) {
             // Rien : les diagnostics vivent au didChange.
         }
+
+        /** Complétion au curseur (XE2) — traductions seules, moteur neutre. */
+        override fun completion(
+            params: CompletionParams,
+        ): CompletableFuture<Either<List<CompletionItem>, CompletionList>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri]
+            val texte = document?.texte ?: ""
+            val decalage = decalageDe(params.position, texte)
+            val propositions =
+                try {
+                    if (document != null) session.completion(uri, decalage) else emptyList()
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "complétion XML échouée ($uri)", t)
+                    emptyList()
+                }
+            val items = propositions.map { proposition -> itemLspDe(proposition) }
+            return CompletableFuture.completedFuture(Either.forRight(CompletionList(false, items)))
+        }
+
+        /** Proposition neutre → CompletionItem LSP (kind, détail, tri). */
+        private fun itemLspDe(proposition: PropositionCompletionXml): CompletionItem {
+            val item = CompletionItem(proposition.libelle)
+            item.kind = genreLspDe(proposition.genre)
+            proposition.detail?.let { item.detail = it }
+            item.sortText = proposition.texteTri
+            return item
+        }
+
+        /** Genre neutre → CompletionItemKind. */
+        private fun genreLspDe(genre: GenreCompletionXml): CompletionItemKind =
+            when (genre) {
+                GenreCompletionXml.BALISE -> CompletionItemKind.Class
+
+                GenreCompletionXml.ATTRIBUT -> CompletionItemKind.Field
+
+                GenreCompletionXml.VALEUR_ENUM,
+                GenreCompletionXml.VALEUR_FANION,
+                -> CompletionItemKind.EnumMember
+
+                GenreCompletionXml.REFERENCE -> CompletionItemKind.Reference
+
+                GenreCompletionXml.ENTREE_VALEURS -> CompletionItemKind.Value
+
+                GenreCompletionXml.STYLE -> CompletionItemKind.Struct
+            }
 
         /** Applique un changement par plage (client non conforme, robustesse). */
         private fun appliquerPlage(

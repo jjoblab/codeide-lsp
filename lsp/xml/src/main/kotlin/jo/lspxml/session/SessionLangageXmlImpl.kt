@@ -2,7 +2,12 @@ package jo.lspxml.session
 
 import jo.lspxml.api.ClasspathXml
 import jo.lspxml.api.DiagnosticXml
+import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SeveriteXml
+import jo.lspxml.catalog.CataloguesPartages
+import jo.lspxml.completion.CompletionXml
+import jo.lspxml.context.Contexte
+import jo.lspxml.context.ContexteCurseur
 import jo.lspxml.parse.ParseurXml
 import jo.lspxml.rules.GenreDocument
 import jo.lspxml.rules.ReglesStructure
@@ -27,9 +32,13 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * @param parseur parseur tolérant — PARTAGÉ par les sessions du moteur
  *        (sans état entre deux appels, sûr par construction).
+ * @param catalogues cache de catalogues de plateforme PARTAGÉ par le
+ *        moteur (XE2 : chargé une fois par plateforme, §4.2) — la
+ *        session y consulte la plateforme de SON classpath.
  */
 internal class SessionLangageXmlImpl(
     private val parseur: ParseurXml,
+    private val catalogues: CataloguesPartages = CataloguesPartages(),
 ) : jo.lspxml.api.SessionLangageXml {
     /** Documents ouverts : URI → dernier texte + DOM. */
     private val documents = ConcurrentHashMap<String, DocumentOuvert>()
@@ -99,6 +108,36 @@ internal class SessionLangageXmlImpl(
      * pour le catalogue plateforme et l'index ressources).
      */
     internal fun classpathCourant(): ClasspathXml? = classpath
+
+    /**
+     * Complétion à [decalage] (XE2) — le scanner de contexte tranche la
+     * ZONE, les contributeurs fusionnent : balises (catalogue
+     * plateforme) et attributs (styleables de la chaîne + layout du
+     * parent + tools:). XE2 couvre le genre LAYOUT seul (values et
+     * manifest suivent XE4) — les autres genres sous-rapportent (X4).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — les gardes
+     * sont des RÉGIMES distincts (session fermée, genre hors périmètre
+     * XE2, document inconnu) — chacun porte sa décision de silence.
+     */
+    @Suppress("ReturnCount")
+    override fun completion(
+        uri: String,
+        decalage: Int,
+    ): List<PropositionCompletionXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        val genre = GenreDocument.depuisUri(uri)
+        if (genre != GenreDocument.LAYOUT) return emptyList()
+        val catalogue = catalogues.catalogue(classpath?.dossierPlateforme)
+        return when (val contexte = ContexteCurseur.analyser(document.texte, decalage, document.document)) {
+            is Contexte.NomDeBalise -> CompletionXml.balises(contexte, catalogue)
+
+            is Contexte.NomAttribut -> CompletionXml.attributs(contexte, catalogue)
+
+            else -> emptyList()
+        }
+    }
 
     override fun close() {
         if (fermee) return

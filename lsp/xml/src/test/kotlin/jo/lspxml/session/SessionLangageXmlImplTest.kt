@@ -5,7 +5,10 @@ import jo.lspxml.api.CodesDiagnosticsXml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * Tests de la session de langue XML (XE1) — cycle de vie, tolérance du
@@ -13,6 +16,10 @@ import org.junit.Test
  * et diagnostics recalculés au fil de l'eau.
  */
 class SessionLangageXmlImplTest {
+    /** Dossiers temporaires (JUnit4 — plateforme fixture XE2). */
+    @get:Rule
+    public val dossierTemp: TemporaryFolder = TemporaryFolder()
+
     private val session = SessionLangageXmlImpl(jo.lspxml.parse.ParseurXml())
 
     @Test
@@ -119,5 +126,84 @@ class SessionLangageXmlImplTest {
         session.ouvrirDocument("file:///p/res/layout/main.xml", "<merge/>")
         assertTrue(session.diagnostics("file:///p/res/values/strings.xml").isNotEmpty())
         assertTrue(session.diagnostics("file:///p/res/layout/main.xml").isEmpty())
+    }
+
+    // ── Complétion (XE2) ───────────────────────────────────────────
+
+    /** Mini-plateforme pour le classpath de la session. */
+    private fun plateformeFixture(): File {
+        val dossier = dossierTemp.newFolder("platforms/android-test")
+        val data = dossier.resolve("data").apply { mkdirs() }
+        data.resolve("widgets.txt").writeText(
+            "Wandroid.widget.Button android.widget.TextView android.view.View java.lang.Object\n" +
+                "Wandroid.widget.LinearLayout android.view.ViewGroup android.view.View java.lang.Object\n",
+        )
+        val valeurs = data.resolve("res/values").apply { mkdirs() }
+        valeurs.resolve("attrs.xml").writeText(
+            "<resources>" +
+                "<declare-styleable name=\"View\"><attr name=\"id\" format=\"reference\"/></declare-styleable>" +
+                "<declare-styleable name=\"TextView\"><attr name=\"text\" format=\"string\"/></declare-styleable>" +
+                "<declare-styleable name=\"ViewGroup_Layout\"><attr name=\"layout_width\"/></declare-styleable>" +
+                "</resources>",
+        )
+        return dossier
+    }
+
+    @Test
+    fun `completion balise — catalogue de la plateforme du classpath`() {
+        session.definirClasspath(ClasspathXml(plateformeFixture(), emptyList(), null))
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<LinearLayout><But")
+        val propositions = session.completion(uri, 15)
+        assertTrue(propositions.any { it.libelle == "Button" })
+        // La proposition porte le FQCN du catalogue.
+        assertEquals(
+            "android.widget.Button",
+            propositions.single { it.libelle == "Button" }.detail,
+        )
+    }
+
+    @Test
+    fun `completion attribut — styleables de la chaine`() {
+        session.definirClasspath(ClasspathXml(plateformeFixture(), emptyList(), null))
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<LinearLayout><Button ")
+        val libelles = session.completion(uri, 27).map { it.libelle }
+        assertTrue(libelles.contains("android:text"))
+        assertTrue(libelles.contains("android:layout_width"))
+        assertTrue(libelles.contains("android:id"))
+    }
+
+    @Test
+    fun `completion — sans classpath, silencieuse (X4)`() {
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<LinearLayout><But")
+        // Pas de catalogue : les ATTRIBUTS tools restent, les BALISES
+        // se taisent (jamais de candidat inventé).
+        assertTrue(session.completion(uri, 15).isEmpty())
+    }
+
+    @Test
+    fun `completion — genre non layout, silencieuse (XE2, layout seul)`() {
+        session.definirClasspath(ClasspathXml(plateformeFixture(), emptyList(), null))
+        val uri = "file:///p/res/values/strings.xml"
+        session.ouvrirDocument(uri, "<resources><stri")
+        assertTrue(session.completion(uri, 15).isEmpty())
+    }
+
+    @Test
+    fun `completion — document inconnu et zone muette, silencieuses`() {
+        assertTrue(session.completion("file:///p/inconnu.xml", 0).isEmpty())
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<TextView>du texte</TextView>")
+        assertTrue(session.completion(uri, 12).isEmpty())
+    }
+
+    @Test
+    fun `completion — apres close, silencieuse`() {
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<LinearLayout><But")
+        session.close()
+        assertTrue(session.completion(uri, 15).isEmpty())
     }
 }

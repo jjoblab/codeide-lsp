@@ -23,6 +23,14 @@ import java.util.Properties
 public class MoteurXmlMaison(
     private val parseur: ParseurXml = ParseurXml(),
 ) : MoteurLangageXml {
+    /**
+     * Cache de catalogues de plateforme (XE2) — PARTAGÉ par toutes les
+     * sessions du moteur (un projet = un moteur côté façade hôte) :
+     * une plateforme n'est chargée QU'UNE fois (§4.2), les connexions
+     * successives ne re-lectent pas.
+     */
+    private val catalogues = jo.lspxml.catalog.CataloguesPartages()
+
     private val descripteur: Map<String, String> by lazy { lireDescripteurPack() }
 
     override val identifiant: String
@@ -36,7 +44,7 @@ public class MoteurXmlMaison(
 
     override fun analyserSource(texte: CharSequence): jo.lspxml.parse.DocumentXml = parseur.analyser(texte)
 
-    override fun creerSession(): SessionLangageXml = SessionLangageXmlImpl(parseur)
+    override fun creerSession(): SessionLangageXml = SessionLangageXmlImpl(parseur, catalogues)
 
     private fun lireDescripteurPack(): Map<String, String> {
         val chemin = "jo/lspxml/pack/version.properties"
