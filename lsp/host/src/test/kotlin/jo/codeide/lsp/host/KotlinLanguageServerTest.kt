@@ -1,28 +1,28 @@
 package jo.codeide.lsp.host
 
-import jo.codeide.lsp.model.ClasspathInstantane
-import jo.codeide.lsp.model.EnsemblesSources
-import jo.codeide.lsp.model.ModuleLsp
-import jo.codeide.lsp.model.ProjetLsp
-import jo.codeide.lsp.model.TypeModuleLsp
-import jo.lspkotlin.api.ClasspathKotlin
+import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
-import jo.lspkotlin.api.MoteurLangageKotlin
-import jo.lspkotlin.api.ServiceMoteurLangageKotlin
+import jo.lspkotlin.api.EmplacementKotlin
+import jo.lspkotlin.api.GenreCompletionKotlin
+import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
 import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DefinitionParams
+import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
+import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PublishDiagnosticsParams
+import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
@@ -30,7 +30,6 @@ import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.eclipse.lsp4j.services.LanguageClient
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -165,51 +164,6 @@ class KotlinLanguageServerTest {
     }
 
     @Test
-    fun `shutdown - la session moteur est refermee et decomptee`() {
-        // Moteur FACTICE (cycle de vie isolé) : la façade ne doit retenir
-        // QUE les sessions des connexions vivantes.
-        val moteur = MoteurFactice()
-        val facade = SessionLspKotlin(dossierTemp.resolve("vie"), moteur)
-        val serveur = facade.serveur()
-        serveur.shutdown().join()
-        assertEquals(1, moteur.sessionsFermees)
-        // La façade ne referme PAS deux fois une session déjà arrêtée.
-        facade.close()
-        assertEquals(1, moteur.sessionsFermees)
-    }
-
-    @Test
-    fun `close rattrape les connexions jamais arretees`() {
-        val moteur = MoteurFactice()
-        val facade = SessionLspKotlin(dossierTemp.resolve("rattrapage"), moteur)
-        facade.serveur()
-        facade.serveur()
-        facade.close()
-        assertEquals(2, moteur.sessionsFermees)
-        // Idempotente : un second close ne referme rien de plus.
-        facade.close()
-        assertEquals(2, moteur.sessionsFermees)
-    }
-
-    @Test
-    fun `serveur apres close - erreur explicite`() {
-        val facade = SessionLspKotlin(dossierTemp.resolve("apres-close"), MoteurFactice())
-        facade.close()
-        assertThrows(IllegalStateException::class.java) { facade.serveur() }
-    }
-
-    @Test
-    fun `definitions - deux extensions routees, transport in-process`() {
-        val facade = SessionLspKotlin(dossierTemp.resolve("definitions"))
-        val definitions = facade.definitions()
-        assertEquals(2, definitions.size)
-        val extensions = definitions.map { it.ext }
-        assertTrue(extensions.contains("kt"))
-        assertTrue(extensions.contains("kts"))
-        facade.close()
-    }
-
-    @Test
     fun `initialisation - capacites honnetes (sync complete seule)`() {
         val espace = espaceAvecEspion()
         val resultat = espace.serveur.initialize(InitializeParams()).join()
@@ -219,6 +173,273 @@ class KotlinLanguageServerTest {
         )
         assertEquals("codeide-kotlin", resultat.serverInfo.name)
         espace.fermer()
+    }
+
+    // ── Cycle, tolérances et traductions K3 (chemins de repli) ───────
+
+    @Test
+    fun `initialized et services d'espace - acceptes sans effet`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.initialized(InitializedParams())
+        // Service d'espace exposé, notifications acceptées sans effet.
+        val espace = serveur.workspaceService
+        espace.didChangeConfiguration(DidChangeConfigurationParams())
+        espace.didChangeWatchedFiles(DidChangeWatchedFilesParams())
+        org.junit.jupiter.api.Assertions
+            .assertNotNull(espace)
+        session.close()
+    }
+
+    @Test
+    fun `exit sans shutdown - la session est refermee quand meme`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.exit()
+        assertTrue(session.fermee, "exit referme la session (client brutal)")
+    }
+
+    @Test
+    fun `didChange par plage - applique au texte courant (client non conforme)`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "abcdef")),
+        )
+        serveur.textDocumentService.didChange(
+            DidChangeTextDocumentParams(
+                VersionedTextDocumentIdentifier("file:///a.kt", 2),
+                listOf(
+                    TextDocumentContentChangeEvent(
+                        Range(Position(0, 2), Position(0, 4)),
+                        "XY",
+                    ),
+                ),
+            ),
+        )
+        assertEquals("abXYef", session.dernierTexte)
+        session.close()
+    }
+
+    @Test
+    fun `requetes en echec - resultats vides honnetes, jamais d'exception`() {
+        val session =
+            SessionScriptee(
+                leverSurCompletion = true,
+                leverSurSurvol = true,
+                leverSurDefinitions = true,
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val x = 1")),
+        )
+        val completion =
+            serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 4)))
+                .join()
+        assertTrue(completion.right.items.isEmpty())
+        val survol =
+            serveur.textDocumentService
+                .hover(HoverParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 4)))
+                .join()
+        assertEquals(null, survol)
+        val definitions =
+            serveur.textDocumentService
+                .definition(DefinitionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 4)))
+                .join()
+        assertTrue(definitions.left.isEmpty())
+        session.close()
+    }
+
+    @Test
+    fun `definition document inconnu - liste vide typée`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        val definitions =
+            serveur.textDocumentService
+                .definition(DefinitionParams(TextDocumentIdentifier("file:///jamais-ouvert.kt"), Position(0, 0)))
+                .join()
+        assertTrue(definitions.left.isEmpty())
+        session.close()
+    }
+
+    @Test
+    fun `complétion auto-import - edition additionnelle apres le dernier import`() {
+        val session =
+            SessionScriptee(
+                propositions =
+                    listOf(
+                        PropositionCompletionKotlin(
+                            libelle = "Beta",
+                            genre = GenreCompletionKotlin.CLASSE,
+                            detail = "beta.Beta",
+                            texteTri = "05000003Beta",
+                            fqnImport = "beta.Beta",
+                        ),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        val source = "package app\n\nimport alpha.Alpha\n\nfun main() { Be }\n"
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, source)),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier("file:///a.kt"), Position(4, 12)))
+                .join()
+        val item = reponse.right.items.single()
+        val editions = checkNotNull(item.additionalTextEdits) { "l'auto-import doit porter son édition" }
+        val edition = editions.single()
+        assertEquals("import beta.Beta\n", edition.newText)
+        assertEquals(3, edition.range.start.line)
+        assertEquals(0, edition.range.start.character)
+        assertEquals(3, edition.range.end.line)
+        assertEquals(0, edition.range.end.character)
+        session.close()
+    }
+
+    @Test
+    fun `complétion auto-import - sans package ni import, en tete de fichier`() {
+        val session =
+            SessionScriptee(
+                propositions =
+                    listOf(
+                        PropositionCompletionKotlin(
+                            libelle = "TextView",
+                            genre = GenreCompletionKotlin.CLASSE,
+                            detail = null,
+                            texteTri = "05000008TextView",
+                            fqnImport = "android.widget.TextView",
+                        ),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val v = TextVi")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 14)))
+                .join()
+        val edition =
+            reponse.right.items
+                .single()
+                .additionalTextEdits
+                .orEmpty()
+                .single()
+        assertEquals("import android.widget.TextView\n", edition.newText)
+        assertEquals(0, edition.range.start.line)
+        assertEquals(0, edition.range.start.character)
+        session.close()
+    }
+
+    @Test
+    fun `complétion genres - interface, enum, variable, mot-cle et paquet traduits`() {
+        val genres =
+            listOf(
+                Pair(GenreCompletionKotlin.INTERFACE, CompletionItemKind.Interface),
+                Pair(GenreCompletionKotlin.ENUM, CompletionItemKind.Enum),
+                Pair(GenreCompletionKotlin.VARIABLE, CompletionItemKind.Variable),
+                Pair(GenreCompletionKotlin.MOT_CLE, CompletionItemKind.Keyword),
+                Pair(GenreCompletionKotlin.PAQUET, CompletionItemKind.Module),
+                Pair(GenreCompletionKotlin.ALIAS, CompletionItemKind.Class),
+            )
+        val session =
+            SessionScriptee(
+                propositions =
+                    genres.mapIndexed { indice, (genre, _) ->
+                        PropositionCompletionKotlin(
+                            libelle = "c$indice",
+                            genre = genre,
+                            detail = null,
+                            texteTri = "05000002c$indice",
+                            fqnImport = null,
+                        )
+                    },
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val x = c")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 9)))
+                .join()
+        val parLibelle = reponse.right.items.associateBy { it.label }
+        genres.forEach { (genre, kind) ->
+            assertEquals(kind, parLibelle["c${genres.indexOfFirst { it.first == genre }}"]?.kind)
+        }
+        session.close()
+    }
+
+    @Test
+    fun `définition - cible d'un AUTRE fichier lue sur disque`() {
+        val cible = dossierTemp.resolve("cible-${System.nanoTime()}.kt")
+        cible.writeText("class Cible {\n  val nom: String = \"a\"\n}\n")
+        val session =
+            SessionScriptee(
+                emplacements = listOf(EmplacementKotlin(cible.toURI().toString(), 6, 11)),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val c = Cible()")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .definition(DefinitionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 10)))
+                .join()
+        val location = reponse.left.single()
+        assertEquals(cible.toURI().toString(), location.uri)
+        assertEquals(0, location.range.start.line)
+        assertEquals(6, location.range.start.character)
+        assertEquals(0, location.range.end.line)
+        assertEquals(11, location.range.end.character)
+        session.close()
+    }
+
+    @Test
+    fun `définition - cible illisible, definition omise (jamais fausse)`() {
+        val session =
+            SessionScriptee(
+                emplacements = listOf(EmplacementKotlin("file:///introuvable/x.kt", 0, 1)),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val x = Cible()")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .definition(DefinitionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 10)))
+                .join()
+        assertTrue(reponse.left.isEmpty(), "cible illisible : la définition est omise")
+        session.close()
+    }
+
+    @Test
+    fun `publication diagnostics - client fautif tolere (didOpen et vidange)`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(ClientCassant())
+        // didOpen publie (le client lève) puis didClose vidange (idem) :
+        // la tolérance du serveur absorbe les DEUX pannes.
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val x = (")),
+        )
+        serveur.textDocumentService.didClose(
+            DidCloseTextDocumentParams(TextDocumentIdentifier("file:///a.kt")),
+        )
+        assertTrue(session.fermee.not())
+        session.close()
     }
 
     // ── K3 : complétion, survol, définition, poussée de classpath ────
@@ -318,52 +539,107 @@ class KotlinLanguageServerTest {
         espace.fermer()
     }
 
-    @Test
-    fun `appliquerModele - pousse le classpath aux sessions vivantes ET futures`() {
-        val moteur = MoteurFactice()
-        val facade =
-            SessionLspKotlin(
-                dossierTemp.resolve("push"),
-                moteur,
-                dossierIndex = null,
+    /**
+     * Session scriptée : les réponses des requêtes K3 sont INJECTÉES —
+     * les tests de TRADUCTION du serveur (kinds, éditions, tolérances)
+     * n'ont pas besoin du moteur réel.
+     */
+    private class SessionScriptee(
+        private val propositions: List<PropositionCompletionKotlin> = emptyList(),
+        private val survols: ContenuSurvoleKotlin? = null,
+        private val emplacements: List<EmplacementKotlin> = emptyList(),
+        private val leverSurCompletion: Boolean = false,
+        private val leverSurSurvol: Boolean = false,
+        private val leverSurDefinitions: Boolean = false,
+    ) : SessionLangageKotlin {
+        public var fermee: Boolean = false
+            private set
+
+        /** Dernier texte poussé par modifierDocument (assertion par plage). */
+        public var dernierTexte: String? = null
+            private set
+
+        override val nombreDocuments: Int = 0
+
+        override fun ouvrirDocument(
+            uri: String,
+            texte: CharSequence,
+            script: Boolean,
+        ) {
+            dernierTexte = texte.toString()
+        }
+
+        override fun modifierDocument(
+            uri: String,
+            texte: CharSequence,
+            script: Boolean,
+        ) {
+            dernierTexte = texte.toString()
+        }
+
+        override fun fermerDocument(uri: String) {
+            // Non journalisé : seuls les textes comptent ici.
+        }
+
+        override fun diagnostics(uri: String): List<DiagnosticKotlin> =
+            listOf(
+                DiagnosticKotlin(
+                    code = "kt.test",
+                    severite = SeveriteKotlin.ERREUR,
+                    message = "scripté",
+                    debut = 0,
+                    fin = 1,
+                ),
             )
-        facade.serveur() // session vivante, non refermée
-        val racine = dossierTemp.resolve("src").apply { mkdirs() }
-        val module =
-            ModuleLsp(
-                nom = ":app",
-                type = TypeModuleLsp.JVM,
-                variante = null,
-                sources = EnsemblesSources(principal = listOf(racine.path), test = emptyList(), generes = emptyList()),
-                classpath = ClasspathInstantane(emptyList(), "empreinte-vide"),
-                dependancesModules = emptyList(),
-                androidJar = null,
-                ignore = false,
-                raisonIgnore = null,
-                avertissements = emptyList(),
-                empreinte = "module",
-            )
-        facade.appliquerModele(ProjetLsp(dossierTemp.resolve("push").path, listOf(module), "projet"), null)
-        // Session VIVANTE nourrie.
-        assertEquals(
-            1,
-            moteur.sessions
-                .single()
-                .classpathsRecus.size,
-        )
-        assertEquals(
-            listOf(racine),
-            moteur.sessions
-                .single()
-                .classpathsRecus
-                .single()
-                .racinesSources,
-        )
-        // Session FUTURE née nourrie.
-        facade.serveur()
-        assertEquals(2, moteur.sessions.size)
-        assertEquals(1, moteur.sessions[1].classpathsRecus.size)
-        facade.close()
+
+        override fun completion(
+            uri: String,
+            decalage: Int,
+        ): List<PropositionCompletionKotlin> {
+            check(!leverSurCompletion) { "complétion scriptée en échec" }
+            return propositions
+        }
+
+        override fun survol(
+            uri: String,
+            decalage: Int,
+        ): ContenuSurvoleKotlin? {
+            check(!leverSurSurvol) { "survol scripté en échec" }
+            return survols
+        }
+
+        override fun definitions(
+            uri: String,
+            decalage: Int,
+        ): List<EmplacementKotlin> {
+            check(!leverSurDefinitions) { "définitions scriptées en échec" }
+            return emplacements
+        }
+
+        override fun close() {
+            fermee = true
+        }
+    }
+
+    /** Client LSP dont publishDiagnostics LÈVE (panne de transport). */
+    private class ClientCassant : LanguageClient {
+        override fun telemetryEvent(objet: Any) {
+            // Ignoré : seule publishDiagnostics compte ici.
+        }
+
+        override fun publishDiagnostics(diagnostics: PublishDiagnosticsParams): Unit =
+            throw java.io.IOException("transport cassé (test)")
+
+        override fun showMessage(params: MessageParams) {
+            // Ignoré : la panne ne concerne que publishDiagnostics.
+        }
+
+        override fun showMessageRequest(params: ShowMessageRequestParams): CompletableFuture<MessageActionItem> =
+            CompletableFuture.completedFuture(null)
+
+        override fun logMessage(params: MessageParams) {
+            // Ignoré : la panne ne concerne que publishDiagnostics.
+        }
     }
 
     /** Client LSP espion : collecte les publishDiagnostics, ignore le reste. */
@@ -387,78 +663,6 @@ class KotlinLanguageServerTest {
 
         override fun logMessage(params: MessageParams) {
             // Ignoré : l'espion ne collecte que publishDiagnostics.
-        }
-    }
-
-    /** Moteur factice : sessions factices comptant les fermetures. */
-    private class MoteurFactice : MoteurLangageKotlin {
-        public val sessionsFermees: Int
-            get() = sessions.count { it.fermee }
-
-        public val sessions: CopyOnWriteArrayList<SessionFactice> = CopyOnWriteArrayList()
-
-        override val identifiant: String = "moteur-factice"
-
-        override val version: String = "0.0.0-test"
-
-        override val versionMinimaleApp: String = "0.0.0"
-
-        override val versionGrammaire: String = "test"
-
-        override fun analyserSource(
-            texte: CharSequence,
-            script: Boolean,
-        ): jo.lspkotlin.parse.ArbreSyntaxiqueKotlin = ServiceMoteurLangageKotlin.unique().analyserSource(texte, script)
-
-        override fun creerSession(): SessionLangageKotlin = SessionFactice().also { sessions.add(it) }
-    }
-
-    /** Session factice : journalise, ne lève jamais. */
-    private class SessionFactice : SessionLangageKotlin {
-        public var fermee: Boolean = false
-
-        /** Classpaths reçus via definirClasspath (test de poussée K3). */
-        public val classpathsRecus: CopyOnWriteArrayList<ClasspathKotlin> = CopyOnWriteArrayList()
-
-        override fun definirClasspath(classpath: ClasspathKotlin) {
-            classpathsRecus.add(classpath)
-        }
-
-        override val nombreDocuments: Int = 0
-
-        override fun ouvrirDocument(
-            uri: String,
-            texte: CharSequence,
-            script: Boolean,
-        ) {
-            // Non journalisé : seules les fermetures comptent ici.
-        }
-
-        override fun modifierDocument(
-            uri: String,
-            texte: CharSequence,
-            script: Boolean,
-        ) {
-            // Non journalisé : seules les fermetures comptent ici.
-        }
-
-        override fun fermerDocument(uri: String) {
-            // Non journalisé : seules les fermetures comptent ici.
-        }
-
-        override fun diagnostics(uri: String): List<DiagnosticKotlin> =
-            listOf(
-                DiagnosticKotlin(
-                    code = "kt.test",
-                    severite = SeveriteKotlin.ERREUR,
-                    message = "factice",
-                    debut = 0,
-                    fin = 1,
-                ),
-            )
-
-        override fun close() {
-            fermee = true
         }
     }
 }

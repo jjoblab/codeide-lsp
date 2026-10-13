@@ -104,7 +104,17 @@ internal class AdaptateurVueClasspath(
             val conteneur = localisation.conteneur
             when (conteneur) {
                 is Conteneur.Jar -> {
-                    octetsDepuisJar(conteneur.chemin, localisation.entree)
+                    // Chemin COMPOSITE « aar!jarInterne » (vue fusion,
+                    // conteneurDe d'un segment AAR) : le jar interne est
+                    // lu DANS l'AAR ouvert (un seul ZipFile par AAR dans
+                    // le cache) ; jar plat sinon.
+                    if (conteneur.chemin.contains(SEPARATEUR_JAR_INTERNE)) {
+                        val cheminAar = conteneur.chemin.substringBefore(SEPARATEUR_JAR_INTERNE)
+                        val jarInterne = conteneur.chemin.substringAfter(SEPARATEUR_JAR_INTERNE)
+                        octetsDepuisJarCompose(cheminAar, jarInterne, localisation.entree)
+                    } else {
+                        octetsDepuisJar(conteneur.chemin, localisation.entree)
+                    }
                 }
 
                 is Conteneur.Arr -> {
@@ -207,5 +217,12 @@ internal class AdaptateurVueClasspath(
     private companion object {
         /** Poignées ouvertes au maximum (android.jar pèse déjà gros). */
         private const val TAILLE_CACHE: Int = 6
+
+        /**
+         * Séparateur jar interne d'un conteneur AAR tel que rendu par la
+         * vue fusion (`conteneurDe` : « chemin.aar!classes.jar ») — miroir
+         * du SEPARATEUR_JAR_INTERNE de :lsp:index, contrat du localisateur.
+         */
+        private const val SEPARATEUR_JAR_INTERNE: String = "!"
     }
 }
