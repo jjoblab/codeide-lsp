@@ -20,6 +20,15 @@ internal object ClassementXml {
     /** Aperçu des énumérations/fanions dans le détail d'une proposition. */
     internal const val APERCU_VALEURS: Int = 6
 
+    /** Rang de classement d'une RÉFÉRENCE projet (@type/nom, ?attr). */
+    internal const val RANG_REFERENCE: Int = 20
+
+    /** Rang de classement d'une référence FRAMEWORK (après projet). */
+    internal const val RANG_REFERENCE_FW: Int = 30
+
+    /** Rang de classement d'une VALEUR d'énumération/fanion. */
+    internal const val RANG_VALEUR: Int = 10
+
     /** Rang de classement d'une BALISE (fréquentes d'abord). */
     internal fun rangBalise(nom: String): Int {
         val rang = BALISES_FREQUCENTES.indexOf(nom)

@@ -31,6 +31,13 @@ public class MoteurXmlMaison(
      */
     private val catalogues = jo.lspxml.catalog.CataloguesPartages()
 
+    /**
+     * Index des ressources du PROJET (XE3) — PARTAGÉ lui aussi : les
+     * racines sources sont celles du PROJET, les connexions LSP
+     * successives n'ont chacune QUE leurs documents ouverts.
+     */
+    private val indexRessources = jo.lspxml.resources.IndexRessources()
+
     private val descripteur: Map<String, String> by lazy { lireDescripteurPack() }
 
     override val identifiant: String
@@ -44,7 +51,7 @@ public class MoteurXmlMaison(
 
     override fun analyserSource(texte: CharSequence): jo.lspxml.parse.DocumentXml = parseur.analyser(texte)
 
-    override fun creerSession(): SessionLangageXml = SessionLangageXmlImpl(parseur, catalogues)
+    override fun creerSession(): SessionLangageXml = SessionLangageXmlImpl(parseur, catalogues, indexRessources)
 
     private fun lireDescripteurPack(): Map<String, String> {
         val chemin = "jo/lspxml/pack/version.properties"

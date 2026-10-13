@@ -10,6 +10,7 @@ import org.eclipse.lsp4j.CompletionItemKind
 import org.eclipse.lsp4j.CompletionList
 import org.eclipse.lsp4j.CompletionOptions
 import org.eclipse.lsp4j.CompletionParams
+import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DiagnosticSeverity
 import org.eclipse.lsp4j.DidChangeConfigurationParams
@@ -18,8 +19,11 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.Hover
+import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
+import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
@@ -103,6 +107,11 @@ internal class XmlLanguageServer(
         completion.triggerCharacters = listOf("<", "=", ":")
         completion.resolveProvider = false
         capacites.setCompletionProvider(completion)
+        // XE3 (LSP_XML §4.4) : SURVOL (référence @type/nom, classe de
+        // balise, format d'attribut) et DÉFINITION (saut au
+        // res/values déclarant). Honnête : rien d'autre.
+        capacites.setHoverProvider(true)
+        capacites.setDefinitionProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -287,6 +296,73 @@ internal class XmlLanguageServer(
                 }
             val items = propositions.map { proposition -> itemLspDe(proposition) }
             return CompletableFuture.completedFuture(Either.forRight(CompletionList(false, items)))
+        }
+
+        /** Survol (XE3) : contenu texte simple, `null` si non résolu. */
+        override fun hover(params: HoverParams): CompletableFuture<Hover?> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(null)
+            val decalage = decalageDe(params.position, document.texte)
+            val contenu =
+                try {
+                    session.survol(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "survol XML échoué ($uri)", t)
+                    null
+                }
+            val resultat = contenu?.let { Hover(listOf(Either.forLeft(it.valeur))) }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Définition (XE3) : emplacements neutres traduits en Locations
+         * LSP — la cible se relit sur disque (FUSE), illisible = omise.
+         */
+        override fun definition(
+            params: DefinitionParams,
+        ): CompletableFuture<Either<List<Location>, List<org.eclipse.lsp4j.LocationLink>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyLeft())
+            val decalage = decalageDe(params.position, document.texte)
+            val emplacements =
+                try {
+                    session.definitions(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "définition XML échouée ($uri)", t)
+                    emptyList()
+                }
+            val locations =
+                emplacements.mapNotNull { emplacement ->
+                    locationLspDe(emplacement)
+                }
+            return CompletableFuture.completedFuture(Either.forLeft(locations))
+        }
+
+        /** Version vide typée de la réponse définition. */
+        private fun emptyLeft(): Either<List<Location>, List<org.eclipse.lsp4j.LocationLink>> =
+            Either.forLeft(emptyList())
+
+        /**
+         * Emplacement neutre → Location LSP : la cible se relit sur
+         * disque (lecture bornée par requête — FUSE).
+         *
+         * Exemption detekt ciblée (règle 16) : SwallowedException — une
+         * cible illisible = définition OMISE (X4 : jamais fausse),
+         * l'exception est le signal, pas une perte.
+         */
+        @Suppress("SwallowedException")
+        private fun locationLspDe(emplacement: jo.lspxml.api.EmplacementXml): Location? {
+            val texteCible =
+                try {
+                    java.io.File(java.net.URI(emplacement.uri)).readText()
+                } catch (t: Throwable) {
+                    null
+                }
+            val texte = texteCible ?: return null
+            return Location(
+                emplacement.uri,
+                Range(positionDe(emplacement.debut, texte), positionDe(emplacement.fin, texte)),
+            )
         }
 
         /** Proposition neutre → CompletionItem LSP (kind, détail, tri). */

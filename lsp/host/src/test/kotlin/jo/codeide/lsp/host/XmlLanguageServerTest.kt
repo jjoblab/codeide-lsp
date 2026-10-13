@@ -56,15 +56,19 @@ class XmlLanguageServerTest {
     }
 
     @Test
-    fun `initialize - capacites honnetes XE1 et serverInfo`() {
+    fun `initialize - capacites honnetes et serverInfo`() {
         val espace = espaceAvecEspion()
         val resultat = espace.serveur.initialize(InitializeParams()).join()
         val capacites = resultat.capabilities
-        // XE2 : complétion déclarée (balises/attributs), RIEN d'autre.
+        // XE2 : complétion déclarée (balises/attributs) ; XE3 : survol et
+        // définition — RIEN d'autre.
         assertEquals(org.eclipse.lsp4j.TextDocumentSyncKind.Full, capacites.textDocumentSync.left)
         assertTrue(capacites.completionProvider != null, "complétion déclarée à XE2")
         assertEquals(listOf("<", "=", ":"), capacites.completionProvider?.triggerCharacters)
-        assertTrue(capacites.hoverProvider == null, "survol non déclaré à XE2")
+        // lsp4j : les fournisseurs simples voyagent en Either<Boolean, …>.
+        assertEquals(true, capacites.hoverProvider.left, "survol déclaré à XE3")
+        assertEquals(true, capacites.definitionProvider.left, "définition déclarée à XE3")
+        assertTrue(capacites.codeActionProvider == null, "quick-fixes non déclarés avant XE4")
         assertEquals("codeide-xml", resultat.serverInfo.name)
         assertTrue(resultat.serverInfo.version != "inconnue")
         espace.fermer()
@@ -172,9 +176,11 @@ class XmlLanguageServerTest {
 
     /**
      * Projet minimal portant une MINI-PLATEFORME (patron
-     * SessionLspXmlTest — le moteur y lira son catalogue).
+     * SessionLspXmlTest — le moteur y lira son catalogue) ; la racine
+     * source est INJECTABLE (hover/définition : une racine avec res/).
      */
-    private fun projetMiniPlateforme(): jo.codeide.lsp.model.ProjetLsp {
+    private fun projetMiniPlateforme(racineSources: java.io.File? = null): jo.codeide.lsp.model.ProjetLsp {
+        val racine = racineSources ?: dossierTemp.resolve("src").apply { mkdirs() }
         val plateforme = dossierTemp.resolve("platforms/android-test")
         val data = plateforme.resolve("data").apply { mkdirs() }
         data.resolve("widgets.txt").writeText(
@@ -196,7 +202,7 @@ class XmlLanguageServerTest {
                     variante = null,
                     sources =
                         jo.codeide.lsp.model.EnsemblesSources(
-                            principal = listOf(dossierTemp.resolve("src").apply { mkdirs() }.path),
+                            principal = listOf(racine.path),
                             test = emptyList(),
                             generes = emptyList(),
                         ),
@@ -213,6 +219,51 @@ class XmlLanguageServerTest {
             ),
             "projet",
         )
+    }
+
+    @Test
+    fun `hover et definition — reference projet traduite en LSP`() {
+        val espace = espaceAvecEspion()
+        // Racine source avec une string DÉCLARÉE (l'index y puisera).
+        val racine = dossierTemp.resolve("src-res").apply { mkdirs() }
+        racine
+            .resolve("res/values")
+            .apply { mkdirs() }
+            .resolve("strings.xml")
+            .writeText("<resources><string name=\"hello\">Salut</string></resources>")
+        espace.facade.appliquerModele(projetMiniPlateforme(racine), null)
+        val texte = "<Button android:text=\"@string/hello\""
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///res/layout/main.xml", "xml", 1, texte)),
+        )
+        val colonne = texte.indexOf("hello") + 2
+        val survol =
+            espace.serveur.textDocumentService
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/layout/main.xml"),
+                        org.eclipse.lsp4j.Position(0, colonne),
+                    ),
+                ).join()
+        val contenuAttendu =
+            listOf(
+                org.eclipse.lsp4j.jsonrpc.messages.Either
+                    .forLeft<String, Any>("string « hello » — projet, strings.xml"),
+            )
+        assertEquals(contenuAttendu, survol?.contents?.left)
+        val definition =
+            espace.serveur.textDocumentService
+                .definition(
+                    org.eclipse.lsp4j.DefinitionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/layout/main.xml"),
+                        org.eclipse.lsp4j.Position(0, colonne),
+                    ),
+                ).join()
+        val locations = definition.left
+        assertEquals(1, locations.size)
+        assertTrue(locations.single().uri.endsWith("strings.xml"))
+        espace.fermer()
     }
 
     @Test

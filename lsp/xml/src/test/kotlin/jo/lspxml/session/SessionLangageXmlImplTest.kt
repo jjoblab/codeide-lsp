@@ -128,6 +128,111 @@ class SessionLangageXmlImplTest {
         assertTrue(session.diagnostics("file:///p/res/layout/main.xml").isEmpty())
     }
 
+    // ── Complétion de VALEURS, survol, définitions (XE3) ─────────
+
+    /** Racine source avec res/ + plateforme + classpath complets. */
+    private fun projetComplet(): Pair<File, File> {
+        val racine = dossierTemp.newFolder("src")
+        val values = racine.resolve("res/values").apply { mkdirs() }
+        values.resolve("strings.xml").writeText(
+            "<resources><string name=\"hello\">Salut</string></resources>",
+        )
+        racine.resolve("res/layout").apply { mkdirs() }
+            .resolve("principal.xml").writeText("<merge/>")
+        return racine to plateformeFixture()
+    }
+
+    @Test
+    fun `completion valeurs — references du projet et enums du catalogue`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/layout/main.xml"
+        // Valeur en frappe : `@` seul → les TYPES du projet.
+        session.ouvrirDocument(uri, "<Button android:text=\"@str")
+        val types = session.completion(uri, 23).map { it.libelle }
+        assertTrue(types.contains("@string/"))
+        assertTrue(types.contains("@drawable/") || types.contains("@layout/"))
+        // `@string/he` → les NOMS du type filtrés.
+        session.ouvrirDocument(uri, "<Button android:text=\"@string/he")
+        val noms = session.completion(uri, 32).map { it.libelle }
+        assertTrue(noms.contains("@string/hello"))
+        assertTrue(noms.none { it != "@string/hello" })
+    }
+
+    @Test
+    fun `survol — reference projet avec declarant`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/layout/main.xml"
+        val source = "<Button android:text=\"@string/hello\""
+        session.ouvrirDocument(uri, source)
+        val survol = session.survol(uri, source.indexOf("hello") + 2)
+        assertEquals("string « hello » — projet, strings.xml", survol?.valeur)
+    }
+
+    @Test
+    fun `survol — nom de balise (classe) et attribut (format)`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/layout/main.xml"
+        session.ouvrirDocument(uri, "<Button android:id=\"x\"")
+        assertEquals(
+            "class android.widget.Button",
+            session.survol(uri, 4)?.valeur,
+        )
+        // attribut id → format reference (fixture plateforme).
+        assertEquals(
+            "format: reference",
+            session.survol(uri, 13)?.valeur,
+        )
+    }
+
+    @Test
+    fun `definitions — saut au values declarant`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/layout/main.xml"
+        val source = "<Button android:text=\"@string/hello\""
+        session.ouvrirDocument(uri, source)
+        val emplacements = session.definitions(uri, source.indexOf("hello") + 2)
+        assertEquals(1, emplacements.size)
+        assertTrue(emplacements.single().uri.endsWith("strings.xml"))
+        assertTrue(emplacements.single().debut > 0)
+    }
+
+    @Test
+    fun `survol et definitions muets — hors reference`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/layout/main.xml"
+        val source = "<Button android:text=\"du texte"
+        session.ouvrirDocument(uri, source)
+        assertNull(session.survol(uri, source.length))
+        assertTrue(session.definitions(uri, source.indexOf("texte")).isEmpty())
+    }
+
+    @Test
+    fun `regle referenceNonResolue — projet et framework consultes, dumb mode garde`() {
+        val (racine, plateforme) = projetComplet()
+        session.definirClasspath(ClasspathXml(plateforme, listOf(racine), null))
+        val uri = "file:///p/res/layout/main.xml"
+        val source =
+            "<Button android:text=\"@string/hello\" android:id=\"@+id/x\" " +
+                "android:hint=\"@string/absent\""
+        session.ouvrirDocument(uri, source)
+        val diagnostics = session.diagnostics(uri)
+        val reference = diagnostics.single { it.code == "xml.referenceNonResolue" }
+        // Le marqueur porte sur le NOM de la référence manquante.
+        assertEquals("absent", source.substring(reference.debut, reference.fin))
+        // Dumb mode : SANS classpath, la même référence est muette.
+        val sessionFroide = SessionLangageXmlImpl(jo.lspxml.parse.ParseurXml())
+        sessionFroide.ouvrirDocument(uri, source)
+        assertTrue(
+            sessionFroide.diagnostics(uri).none { it.code == "xml.referenceNonResolue" },
+        )
+        sessionFroide.close()
+    }
+
     // ── Complétion (XE2) ───────────────────────────────────────────
 
     /** Mini-plateforme pour le classpath de la session. */

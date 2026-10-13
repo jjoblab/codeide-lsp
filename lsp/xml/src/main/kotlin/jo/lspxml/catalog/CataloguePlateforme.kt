@@ -31,6 +31,8 @@ public class CataloguePlateforme internal constructor(
     internal val styleables: Map<String, StyleableCatalogue>,
     /** Registre GLOBAL des attributs — nom → formats/énumérations. */
     internal val attributs: Map<String, AttrCatalogue>,
+    /** Ressources PUBLIQUES du framework (public-final.xml) — type → noms. */
+    internal val ressourcesFramework: Map<String, Set<String>>,
 ) {
     /**
      * Une balise de vue du catalogue (widgets.txt, préfixe `W`).
@@ -111,11 +113,50 @@ public class CataloguePlateforme internal constructor(
                     lireRessources(ressources, styleables, attributs)
                 }
             }
+            // XE3 : ressources PUBLIQUES du framework (public-final.xml)
+            // — la garde « référence framework non résolue » et la
+            // complétion @android: y puisent (X4 : absent = silence).
+            val ressourcesFramework = chargerPublicFinal(File(dossier, "data/res/values/public-final.xml"))
             // Rien de lisible : SANS catalogue (sous-rapport honnête, X4).
             return if (balises.isEmpty() && styleables.isEmpty()) {
                 null
             } else {
-                CataloguePlateforme(balises, styleables, attributs)
+                CataloguePlateforme(balises, styleables, attributs, ressourcesFramework)
+            }
+        }
+
+        /**
+         * public-final.xml : `<public type="…" name="…"…/>` par type.
+         */
+        private fun chargerPublicFinal(fichier: File): Map<String, Set<String>> {
+            val document = lireDocumentSurement(fichier) ?: return emptyMap()
+            val parType = mutableMapOf<String, MutableSet<String>>()
+            for (racine in document.racines) {
+                for (enfant in racine.descendants().filter { it.nom == "public" }) {
+                    val type = enfant.attribut("type")?.valeur
+                    val nom = enfant.attribut("name")?.valeur
+                    if (type != null && nom != null) {
+                        parType.getOrPut(type) { mutableSetOf() }.add(nom)
+                    }
+                }
+            }
+            return parType
+        }
+
+        /**
+         * Lecture défensive d'un fichier de données de plateforme.
+         *
+         * Exemption detekt ciblée (règle 16) : SwallowedException — un
+         * fichier illisible = données ABSENTES (X4 : sous-rapport),
+         * l'exception est le signal, pas une perte.
+         */
+        @Suppress("SwallowedException")
+        private fun lireDocumentSurement(fichier: File): DocumentXml? {
+            if (!fichier.isFile) return null
+            return try {
+                jo.lspxml.parse.ParseurXml().analyser(fichier.readText())
+            } catch (t: Throwable) {
+                null
             }
         }
 
