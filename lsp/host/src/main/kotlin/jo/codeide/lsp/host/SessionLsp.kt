@@ -368,24 +368,96 @@ public class SessionLsp(
         collecteEtat =
             scope.launch {
                 vue.etat.collect { etat ->
-                    etatIndexationMutable.value =
-                        EtatIndexation(
-                            phase =
-                                when (etat.phase) {
-                                    jo.codeide.lsp.index.PhaseIndex.CONSTRUCTION -> PhaseIndexation.CONSTRUCTION
-                                    jo.codeide.lsp.index.PhaseIndex.PRET -> PhaseIndexation.PRET
-                                    jo.codeide.lsp.index.PhaseIndex.PARTIEL -> PhaseIndexation.PARTIEL
-                                    jo.codeide.lsp.index.PhaseIndex.ERREUR -> PhaseIndexation.ERREUR
-                                },
-                            faits = etat.faits,
-                            total = etat.total,
-                            entreeCourante = etat.entreeCourante,
-                            avertissements = etat.avertissements,
-                            erreurs = etat.erreurs,
-                        )
+                    etatIndexationMutable.value = traduireEtatIndex(etat)
                 }
             }
     }
+
+    /** B3 (Phase B prompt 2) : traduit `EtatIndex` (lsp:index, interne)
+     *  en `EtatIndexation` (lsp:host, publique). Découplage des types :
+     *  `lsp:index` est en `implementation` (non transitive), l'UI ne voit
+     *  que les types publics de `lsp:host`.
+     *
+     *  Exemption detekt ciblée (règle 8 : exception commentée) :
+     *  `LongMethod` et `CyclomaticComplexMethod` — la traduction exhaustive
+     *  de TOUS les champs de `EtatIndex` (y compris les `when` sur les
+     *  enums) est par construction longue et cyclomatiquement complexe.
+     *  La découper en sous-fonctions par champ casserait la lisibilité
+     *  (une traduction par champ) sans réduire la complexité réelle. */
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
+    private fun traduireEtatIndex(etat: jo.codeide.lsp.index.EtatIndex): EtatIndexation =
+        EtatIndexation(
+            phase = traduirePhase(etat.phase),
+            faits = etat.faits,
+            total = etat.total,
+            entreeCourante = etat.entreeCourante,
+            avertissements = etat.avertissements,
+            erreurs = etat.erreurs,
+            phaseDetaillee = traduirePhaseDetaillee(etat.phaseDetaillee),
+            listeTravail = etat.listeTravail.map(::traduireEntreeTravail),
+            breakdownIndexeurs = etat.breakdownIndexeurs.map(::traduireBreakdown),
+            dureesPhases = etat.dureesPhases?.let(::traduireDurees),
+            bilanDernierPassage = etat.bilanDernierPassage?.let(::traduireBilan),
+            settled = etat.settled,
+            reprises = etat.reprises,
+        )
+
+    private fun traduirePhase(phase: jo.codeide.lsp.index.PhaseIndex): PhaseIndexation =
+        when (phase) {
+            jo.codeide.lsp.index.PhaseIndex.CONSTRUCTION -> PhaseIndexation.CONSTRUCTION
+            jo.codeide.lsp.index.PhaseIndex.PRET -> PhaseIndexation.PRET
+            jo.codeide.lsp.index.PhaseIndex.PARTIEL -> PhaseIndexation.PARTIEL
+            jo.codeide.lsp.index.PhaseIndex.ERREUR -> PhaseIndexation.ERREUR
+        }
+
+    private fun traduirePhaseDetaillee(phase: jo.codeide.lsp.index.PhaseDetailleeIndex): PhaseDetailleeIndexation =
+        when (phase) {
+            jo.codeide.lsp.index.PhaseDetailleeIndex.INITIAL -> PhaseDetailleeIndexation.INITIAL
+            jo.codeide.lsp.index.PhaseDetailleeIndex.BIBLIOTHEQUES -> PhaseDetailleeIndexation.BIBLIOTHEQUES
+            jo.codeide.lsp.index.PhaseDetailleeIndex.SOURCES -> PhaseDetailleeIndexation.SOURCES
+            jo.codeide.lsp.index.PhaseDetailleeIndex.AUCUNE -> PhaseDetailleeIndexation.AUCUNE
+        }
+
+    private fun traduireEntreeTravail(entree: jo.codeide.lsp.index.EntreeTravail): EntreeTravailIndexation =
+        EntreeTravailIndexation(
+            nom = entree.nom,
+            etat = traduireEtatEntree(entree.etat),
+        )
+
+    private fun traduireEtatEntree(etat: jo.codeide.lsp.index.EtatEntreeTravail): EtatEntreeTravailIndexation =
+        when (etat) {
+            jo.codeide.lsp.index.EtatEntreeTravail.EN_ATTENTE -> EtatEntreeTravailIndexation.EN_ATTENTE
+            jo.codeide.lsp.index.EtatEntreeTravail.ACTIF -> EtatEntreeTravailIndexation.ACTIF
+            jo.codeide.lsp.index.EtatEntreeTravail.TERMINE -> EtatEntreeTravailIndexation.TERMINE
+            jo.codeide.lsp.index.EtatEntreeTravail.REPRIS -> EtatEntreeTravailIndexation.REPRIS
+            jo.codeide.lsp.index.EtatEntreeTravail.ECARTE -> EtatEntreeTravailIndexation.ECARTE
+        }
+
+    private fun traduireBreakdown(b: jo.codeide.lsp.index.BreakdownIndexeur): BreakdownIndexeurIndexation =
+        BreakdownIndexeurIndexation(
+            identifiant = b.identifiant,
+            libelle = b.libelle,
+            millisecondesCumulees = b.millisecondesCumulees,
+            nombreEntrees = b.nombreEntrees,
+        )
+
+    private fun traduireDurees(d: jo.codeide.lsp.index.DureesPhases): DureesPhasesIndexation =
+        DureesPhasesIndexation(
+            bibliothequesMs = d.bibliothequesMs,
+            sourcesMs = d.sourcesMs,
+        )
+
+    private fun traduireBilan(b: jo.codeide.lsp.index.BilanDernierPassage): BilanDernierPassageIndexation =
+        BilanDernierPassageIndexation(
+            dureeMs = b.dureeMs,
+            artefactsTotal = b.artefactsTotal,
+            artefactsRepris = b.artefactsRepris,
+            artefactsReconstruits = b.artefactsReconstruits,
+            fichiersParcourus = b.fichiersParcourus,
+            fichiersReanalyses = b.fichiersReanalyses,
+            indexeurPlusCouteux = b.indexeurPlusCouteux,
+            horodatageMs = b.horodatageMs,
+        )
 
     /** Définition cel-lsp in-process du serveur Java. */
     private class DefinitionServeurLspJava(
@@ -452,7 +524,13 @@ public enum class PhaseIndexation {
     ERREUR,
 }
 
-/** État d'indexation exposé à l'UI (découplé des types internes d'index). */
+/** État d'indexation exposé à l'UI (découplé des types internes d'index).
+ *
+ *  B3 (Phase B prompt 2, ADR 0117 §4.4) : étendu avec les nouveaux champs
+ *  transportés depuis `EtatIndex` (lsp:index). Tous ont des valeurs par
+ *  défaut — la compatibilité binaire est préservée (les consommateurs
+ *  existants qui ne lisent que `phase`/`faits`/`total`/`entreeCourante`/
+ *  `avertissements`/`erreurs` ne sont pas affectés). */
 public data class EtatIndexation(
     public val phase: PhaseIndexation,
     public val faits: Int,
@@ -460,6 +538,13 @@ public data class EtatIndexation(
     public val entreeCourante: String?,
     public val avertissements: List<String>,
     public val erreurs: List<String>,
+    public val phaseDetaillee: PhaseDetailleeIndexation = PhaseDetailleeIndexation.AUCUNE,
+    public val listeTravail: List<EntreeTravailIndexation> = emptyList(),
+    public val breakdownIndexeurs: List<BreakdownIndexeurIndexation> = emptyList(),
+    public val dureesPhases: DureesPhasesIndexation? = null,
+    public val bilanDernierPassage: BilanDernierPassageIndexation? = null,
+    public val settled: Boolean = false,
+    public val reprises: Int = 0,
 ) {
     public companion object {
         /** Avant tout sync : aucune vue, aucune construction. */
