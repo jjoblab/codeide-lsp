@@ -65,6 +65,13 @@ dependencies {
     // ServiceLoader — le pack « langue » futur se branche là).
     api(project(":lsp:kotlin"))
 
+    // Moteur XML (XE1, LSP_XML.md §4.1 « session ») : même frontière —
+    // le SPI MoteurLangageXml traverse la surface publique (paramètre
+    // du constructeur SessionLspXml, injectable pour les tests), donc
+    // api ; SEUL type visible, résolution ServiceLoader (miroir
+    // :lsp:kotlin — le pack « langue » XML futur se branche là).
+    api(project(":lsp:xml"))
+
     // cel-lsp : la DefinitionServeurLspJava traverse la surface publique
     // (branchement LspProject côté feature à l'étape 4 h2).
     api(libs.codeeditor.lsp)

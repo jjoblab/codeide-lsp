@@ -73,8 +73,12 @@ import java.util.logging.Logger
  * stockage/lecteurStats, h4 écart 1 androidJar, D5 jdkHome), chacune à
  * VALEUR PAR DÉFAUT — le nouveau paramètre n'ajoute AUCUN site d'appel
  * contraint (les constructeurs existants compilent inchangés).
+ * TooManyFunctions — façade de mission : chaque méthode publique est une
+ * FRONTIÈRE consommée (serveur, définitions, vues par langue —
+ * vueClasspathKotlin K3, vueNomsXml XE1), pas un regroupement de
+ * convenance.
  */
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "TooManyFunctions")
 public class SessionLsp(
     racineProjet: File,
     stockageIndex: File =
@@ -245,6 +249,21 @@ public class SessionLsp(
     public fun vueClasspathKotlin(): jo.lspkotlin.api.VueClasspathKotlin? {
         val vueCourante = orchestrateur.etat() ?: return null
         return AdaptateurVueClasspath(vueCourante)
+    }
+
+    /**
+     * Vue de NOMS neutre XML de l'union courante (XE1, LSP_XML.md §4.1
+     * « classpath » : couture VueNomsXml — la garde « balise inconnue »
+     * XE4 exigera que le classpath soit d'accord) — même vue d'index
+     * fusion, même contrat D4, adaptateur recréé à chaque appel.
+     *
+     * @return l'adaptateur sur la vue courante, `null` avant le premier
+     *         sync réussi (la garde X4 reste alors ACTIVE : le moteur
+     *         XML ne signale jamais de balise inconnue).
+     */
+    public fun vueNomsXml(): jo.lspxml.api.VueNomsXml? {
+        val vueCourante = orchestrateur.etat() ?: return null
+        return AdaptateurVueNomsXml(vueCourante)
     }
 
     /**

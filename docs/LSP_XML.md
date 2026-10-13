@@ -3,6 +3,10 @@
 > Document de cadrage. Mission démarrée sur « GO » du propriétaire. Étude
 > comparative préalable : **projet de référence** `lang-xml` (2 858 lignes) — enseignements
 > d'architecture uniquement (GPL), aucune réutilisation de code.
+>
+> Versions cibles ORIGINELLES décalées d'un cran après l'exécution (K5 a
+> consommé v0.116.0) : XE1 → v0.117.0, XE2 → v0.118.0, XE3 → v0.119.0,
+> XE4 → v0.120.0.
 
 ## 1. Objectif et contexte
 
@@ -113,14 +117,14 @@ racine ; entrée `res/values` sans `name` ou `name` dupliqué ; référence
 `@color/…`/`@string/…` non résolue (projet + framework, jamais pendant que
 l'index est froid — même garde « dumb mode » que projet de référence).
 
-## 5. Étapes de livraison (indicatif)
+## 5. Étapes de livraison
 
 | Étape | Contenu | Version cible |
 |-------|---------|---------------|
-| XE1 | Parseur tolérant + DOM + diagnostics syntaxiques + session LSP minimale. | v0.116.0 |
-| XE2 | Catalogue plateforme (attrs/public.txt) + complétion balises/attributs. | v0.117.0 |
-| XE3 | Index ressources projet + complétion valeurs + résolution `@ref` + hover + definition + règles X4. | v0.118.0 |
-| XE4 | Manifest + values (styles/themes) + quick-fixes (insérer xmlns, renommer « did you mean »). | v0.119.0 |
+| XE1 ✅ | **Livré v0.117.0** : parseur tolérant écrit main (~600 lignes, pile de noms ouverts, reprise fermante incohérente/orpheline, guillemet en frappe SANS marqueur à chaud) + DOM neutre (XmlElement/XmlAttribute + plages, parents résolus top-down) + recouvrements `xml.tagNonFermee`/`xml.tagOrpheline`/`xml.tagFermanteIncoherente`/`xml.guillemetNonFerme` + règles de structure pures (génériques : attribut dupliqué, esperluette non échappée texte+valeurs ; layout : xmlns manquant si `android:` utilisé, tailles en AVERTISSEMENT, `@+id` dupliqué, `<include>` sans layout, `<merge>` hors racine ; values : entrée sans `name`, `name` dupliqué par type) + genre déduit de l'URI + session LSP minimale (SPI `MoteurLangageXml` + ServiceLoader + descripteur de pack) + façade `SessionLspXml` et adaptateur `XmlLanguageServer` dans `:lsp:host` + éditeur trilingue (garde par langue, définition cel-lsp `xml`, registre ADR 0114) + classpath neutre stocké (XE2/XE3 le consommeront) ; corpus LayoutLib 65 fichiers re-parsé en test (0 recouvrement, auto-skip sans frère) ; 67 tests module, kover 91,1 % ligne, jar 80 Ko zéro dépendance. | v0.117.0 |
+| XE2 | Catalogue plateforme (attrs/public.txt) + complétion balises/attributs. | v0.118.0 |
+| XE3 | Index ressources projet + complétion valeurs + résolution `@ref` + hover + definition + règles X4. | v0.119.0 |
+| XE4 | Manifest + values (styles/themes) + quick-fixes (insérer xmlns, renommer « did you mean »). | v0.120.0 |
 
 ## 6. Cibles non fonctionnelles
 
