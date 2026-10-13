@@ -1,16 +1,27 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.model.ClasspathInstantane
+import jo.codeide.lsp.model.EnsemblesSources
+import jo.codeide.lsp.model.ModuleLsp
+import jo.codeide.lsp.model.ProjetLsp
+import jo.codeide.lsp.model.TypeModuleLsp
+import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.MoteurLangageKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import org.eclipse.lsp4j.CompletionItemKind
+import org.eclipse.lsp4j.CompletionParams
+import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
+import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
+import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
@@ -210,6 +221,151 @@ class KotlinLanguageServerTest {
         espace.fermer()
     }
 
+    // ── K3 : complétion, survol, définition, poussée de classpath ────
+
+    @Test
+    fun `complétion membre - traduction LSP (kinds, libellés, tri)`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val source =
+            "class Vue {\n" +
+                "  val titre: String = \"a\"\n" +
+                "  fun demo() {\n" +
+                "    val v = Vue()\n" +
+                "    v.\n" +
+                "  }\n" +
+                "}\n"
+        val uri = "file:///vue.kt"
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem(uri, "kotlin", 1, source)),
+        )
+        val reponse =
+            espace.serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier(uri), Position(4, 6)))
+                .join()
+        val items = reponse.right.items
+        assertTrue(items.isNotEmpty(), "aucune proposition")
+        assertTrue(items.any { it.label == "titre" && it.kind == CompletionItemKind.Field })
+        assertTrue(items.any { it.label == "demo()" && it.kind == CompletionItemKind.Method })
+        // Chaque item porte sa clé de tri totale (le client trie par
+        // sortText seul — motif du LSP Java : pertinence décroissante
+        // codée sur 4, longueur sur 3, puis libellé).
+        assertTrue(items.all { proposition -> proposition.sortText.orEmpty().length >= 8 })
+        espace.fermer()
+    }
+
+    @Test
+    fun `survol - contenu texte simple (même forme que le LSP Java)`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val source = "fun demo() {\n  val titre: String = \"a\"\n}\n"
+        val uri = "file:///survol.kt"
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem(uri, "kotlin", 1, source)),
+        )
+        // « titre » ligne 1, colonne 6.
+        val survol =
+            espace.serveur.textDocumentService
+                .hover(HoverParams(TextDocumentIdentifier(uri), Position(1, 7)))
+                .join()
+        assertEquals(
+            "val titre: String",
+            survol
+                ?.contents
+                ?.left
+                ?.single()
+                ?.left,
+        )
+        espace.fermer()
+    }
+
+    @Test
+    fun `définition - Location LSP vers la plage du nom déclaré`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val source = "class Vue {\n  fun demo() {\n    val v = Vue()\n  }\n}\n"
+        val uri = "file:///def.kt"
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem(uri, "kotlin", 1, source)),
+        )
+        // « Vue() » ligne 2, colonne 12 → définition du nom de classe.
+        val reponse =
+            espace.serveur.textDocumentService
+                .definition(DefinitionParams(TextDocumentIdentifier(uri), Position(2, 12)))
+                .join()
+        val locations = reponse.left
+        assertEquals(1, locations.size)
+        val location = locations.single()
+        assertEquals(uri, location.uri)
+        assertEquals(0, location.range.start.line)
+        assertEquals(6, location.range.start.character)
+        assertEquals(0, location.range.end.line)
+        assertEquals(9, location.range.end.character)
+        espace.fermer()
+    }
+
+    @Test
+    fun `capacités K3 - complétion, survol et définition déclarés (honnêtes)`() {
+        val espace = espaceAvecEspion()
+        val resultat = espace.serveur.initialize(InitializeParams()).join()
+        assertEquals(
+            ".",
+            resultat.capabilities.completionProvider.triggerCharacters
+                .single(),
+        )
+        assertEquals(true, resultat.capabilities.hoverProvider.left)
+        assertEquals(true, resultat.capabilities.definitionProvider.left)
+        espace.fermer()
+    }
+
+    @Test
+    fun `appliquerModele - pousse le classpath aux sessions vivantes ET futures`() {
+        val moteur = MoteurFactice()
+        val facade =
+            SessionLspKotlin(
+                dossierTemp.resolve("push"),
+                moteur,
+                dossierIndex = null,
+            )
+        facade.serveur() // session vivante, non refermée
+        val racine = dossierTemp.resolve("src").apply { mkdirs() }
+        val module =
+            ModuleLsp(
+                nom = ":app",
+                type = TypeModuleLsp.JVM,
+                variante = null,
+                sources = EnsemblesSources(principal = listOf(racine.path), test = emptyList(), generes = emptyList()),
+                classpath = ClasspathInstantane(emptyList(), "empreinte-vide"),
+                dependancesModules = emptyList(),
+                androidJar = null,
+                ignore = false,
+                raisonIgnore = null,
+                avertissements = emptyList(),
+                empreinte = "module",
+            )
+        facade.appliquerModele(ProjetLsp(dossierTemp.resolve("push").path, listOf(module), "projet"), null)
+        // Session VIVANTE nourrie.
+        assertEquals(
+            1,
+            moteur.sessions
+                .single()
+                .classpathsRecus.size,
+        )
+        assertEquals(
+            listOf(racine),
+            moteur.sessions
+                .single()
+                .classpathsRecus
+                .single()
+                .racinesSources,
+        )
+        // Session FUTURE née nourrie.
+        facade.serveur()
+        assertEquals(2, moteur.sessions.size)
+        assertEquals(1, moteur.sessions[1].classpathsRecus.size)
+        facade.close()
+    }
+
     /** Client LSP espion : collecte les publishDiagnostics, ignore le reste. */
     private class EspionClient : LanguageClient {
         public val recus: MutableList<PublishDiagnosticsParams> = CopyOnWriteArrayList()
@@ -239,7 +395,7 @@ class KotlinLanguageServerTest {
         public val sessionsFermees: Int
             get() = sessions.count { it.fermee }
 
-        private val sessions = CopyOnWriteArrayList<SessionFactice>()
+        public val sessions: CopyOnWriteArrayList<SessionFactice> = CopyOnWriteArrayList()
 
         override val identifiant: String = "moteur-factice"
 
@@ -260,6 +416,13 @@ class KotlinLanguageServerTest {
     /** Session factice : journalise, ne lève jamais. */
     private class SessionFactice : SessionLangageKotlin {
         public var fermee: Boolean = false
+
+        /** Classpaths reçus via definirClasspath (test de poussée K3). */
+        public val classpathsRecus: CopyOnWriteArrayList<ClasspathKotlin> = CopyOnWriteArrayList()
+
+        override fun definirClasspath(classpath: ClasspathKotlin) {
+            classpathsRecus.add(classpath)
+        }
 
         override val nombreDocuments: Int = 0
 

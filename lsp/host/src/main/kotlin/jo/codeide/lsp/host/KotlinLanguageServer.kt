@@ -1,8 +1,17 @@
 package jo.codeide.lsp.host
 
 import jo.lspkotlin.api.DiagnosticKotlin
+import jo.lspkotlin.api.EmplacementKotlin
+import jo.lspkotlin.api.GenreCompletionKotlin
+import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import org.eclipse.lsp4j.CompletionItem
+import org.eclipse.lsp4j.CompletionItemKind
+import org.eclipse.lsp4j.CompletionList
+import org.eclipse.lsp4j.CompletionOptions
+import org.eclipse.lsp4j.CompletionParams
+import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DiagnosticSeverity
 import org.eclipse.lsp4j.DidChangeConfigurationParams
@@ -11,18 +20,24 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.Hover
+import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
+import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.TextDocumentSyncKind
+import org.eclipse.lsp4j.TextEdit
+import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import org.eclipse.lsp4j.services.TextDocumentService
 import org.eclipse.lsp4j.services.WorkspaceService
+import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
@@ -91,6 +106,16 @@ internal class KotlinLanguageServer(
         etat = EtatCycle.INITIALISE
         val capacites = ServerCapabilities()
         capacites.setTextDocumentSync(TextDocumentSyncKind.Full)
+        // K3 (LSP_KOTLIN §4.4) : complétion (déclencheur « . » — le
+        // membre est LE régime), survol, définition. Honnête : rien
+        // d'autre n'est déclaré (les méthodes non surchargées de LSP4J
+        // restent les défauts).
+        val completion = CompletionOptions()
+        completion.triggerCharacters = listOf(".")
+        completion.resolveProvider = false
+        capacites.setCompletionProvider(completion)
+        capacites.setHoverProvider(true)
+        capacites.setDefinitionProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -267,8 +292,189 @@ internal class KotlinLanguageServer(
             // Rien : les diagnostics vivent au didChange.
         }
 
+        // ── Requêtes K3 (complétion, survol, définition) ──────────────
+
+        /**
+         * Complétion au curseur : traduction position→offset, moteur,
+         * traduction des propositions neutres en CompletionItems (kind,
+         * détail, sortText — le tri total voyage dans la clé, motif du
+         * LSP Java), auto-import en additionalTextEdits quand le
+         * candidat porte un FQN hors de portée.
+         */
+        override fun completion(
+            params: CompletionParams,
+        ): CompletableFuture<Either<List<CompletionItem>, CompletionList>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri]
+            val texte = document?.texte ?: ""
+            val decalage = decalageDe(params.position, texte)
+            val propositions =
+                try {
+                    if (document != null) session.completion(uri, decalage) else emptyList()
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "complétion échouée ($uri)", t)
+                    emptyList()
+                }
+            val items = propositions.map { proposition -> itemLspDe(proposition, texte) }
+            return CompletableFuture.completedFuture(Either.forRight(CompletionList(false, items)))
+        }
+
+        /** Survol : contenu texte simple (même forme que le LSP Java). */
+        override fun hover(params: HoverParams): CompletableFuture<Hover?> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(null)
+            val decalage = decalageDe(params.position, document.texte)
+            val contenu =
+                try {
+                    session.survol(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "survol échoué ($uri)", t)
+                    null
+                }
+            val resultat =
+                contenu?.let { Hover(listOf(Either.forLeft(it.valeur))) }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Définition : emplacements neutres (offsets) traduits en
+         * Locations LSP (URI + plage) — la cible s'ouvre par le chemin
+         * FUSE courant, même mécanique que le LSP Java.
+         */
+        override fun definition(
+            params: DefinitionParams,
+        ): CompletableFuture<Either<List<Location>, List<org.eclipse.lsp4j.LocationLink>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyLeft())
+            val decalage = decalageDe(params.position, document.texte)
+            val emplacements =
+                try {
+                    session.definitions(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "définition échouée ($uri)", t)
+                    emptyList()
+                }
+            val locations =
+                emplacements.mapNotNull { emplacement ->
+                    locationLspDe(emplacement, uri)
+                }
+            return CompletableFuture.completedFuture(Either.forLeft(locations))
+        }
+
+        /** Version vide typée de la réponse définition. */
+        private fun emptyLeft(): Either<List<org.eclipse.lsp4j.Location>, List<org.eclipse.lsp4j.LocationLink>> =
+            Either.forLeft(emptyList())
+
         /** Extension de script (`.kts`) → mode script du parseur. */
         private fun estScript(uri: String): Boolean = uri.endsWith(".kts", ignoreCase = true)
+
+        // ── Traductions K3 ────────────────────────────────────────────
+
+        /** Proposition neutre → CompletionItem LSP (kind, détail, tri, import). */
+        private fun itemLspDe(
+            proposition: PropositionCompletionKotlin,
+            texte: String,
+        ): CompletionItem {
+            val item = CompletionItem(proposition.libelle)
+            item.kind = genreLspDe(proposition.genre)
+            proposition.detail?.let { item.detail = it }
+            // insertText ABSENT : le client insère le libellé (les
+            // fonctions y portent déjà leurs parenthèses).
+            item.sortText = proposition.texteTri
+            // Auto-import : le candidat porte un FQN hors de portée —
+            // additionalTextEdits appliqué À L'ACCEPTATION (contrat LSP),
+            // en syntaxe Kotlin (pas de point-virgule).
+            val fqn = proposition.fqnImport
+            if (fqn != null && texte.isNotEmpty() && item.additionalTextEdits == null) {
+                val decalageImport = decalageInsertionImport(texte)
+                if (decalageImport >= 0) {
+                    val position = positionDe(decalageImport, texte)
+                    item.additionalTextEdits = listOf(TextEdit(Range(position, position), "import $fqn\n"))
+                }
+            }
+            return item
+        }
+
+        /** Genre neutre → CompletionItemKind (miroir du LSP Java). */
+        private fun genreLspDe(genre: GenreCompletionKotlin): CompletionItemKind =
+            when (genre) {
+                GenreCompletionKotlin.CLASSE,
+                GenreCompletionKotlin.OBJET,
+                GenreCompletionKotlin.ALIAS,
+                -> CompletionItemKind.Class
+
+                GenreCompletionKotlin.INTERFACE -> CompletionItemKind.Interface
+
+                GenreCompletionKotlin.ENUM -> CompletionItemKind.Enum
+
+                GenreCompletionKotlin.FONCTION -> CompletionItemKind.Method
+
+                GenreCompletionKotlin.PROPRIETE -> CompletionItemKind.Field
+
+                GenreCompletionKotlin.VARIABLE -> CompletionItemKind.Variable
+
+                GenreCompletionKotlin.MOT_CLE -> CompletionItemKind.Keyword
+
+                GenreCompletionKotlin.PAQUET -> CompletionItemKind.Module
+            }
+
+        /**
+         * Emplacement neutre (offsets dans le texte CIBLE) → Location
+         * LSP : le document courant est en mémoire, une cible du PROJET
+         * se relit sur disque (FUSE — une lecture bornée par requête) ;
+         * illisible : null (la définition est omise, jamais fausse).
+         *
+         * SwallowedException ciblé (règle 16) : cible illisible =
+         * définition OMISE (D3) — l'exception est le signal, pas une
+         * perte (lecture FUSE best-effort).
+         */
+        @Suppress("SwallowedException")
+        private fun locationLspDe(
+            emplacement: EmplacementKotlin,
+            uriCourant: String,
+        ): Location? {
+            val texteCible: String? =
+                if (emplacement.uri == uriCourant) {
+                    documents[uriCourant]?.texte
+                } else {
+                    try {
+                        File(java.net.URI(emplacement.uri)).readText()
+                    } catch (t: Throwable) {
+                        null
+                    }
+                }
+            val texte = texteCible ?: return null
+            return Location(
+                emplacement.uri,
+                Range(positionDe(emplacement.debut, texte), positionDe(emplacement.fin, texte)),
+            )
+        }
+
+        /**
+         * Décalage d'insertion d'un nouvel import — après le DERNIER
+         * import du fichier, sinon après la directive package, sinon
+         * en début de fichier (heuristique textuelle, miroir Kotlin de
+         * CodeActionService.importInsertOffset côté Java).
+         */
+        private fun decalageInsertionImport(texte: String): Int {
+            var apresPackage = -1
+            var apresDernierImport = -1
+            var decalage = 0
+            for (ligne in texte.split("\n")) {
+                val coupe = ligne.trimStart()
+                if (coupe.startsWith("package ")) {
+                    apresPackage = decalage + ligne.length + 1
+                } else if (coupe.startsWith("import ")) {
+                    apresDernierImport = decalage + ligne.length + 1
+                }
+                decalage += ligne.length + 1
+            }
+            return when {
+                apresDernierImport >= 0 -> apresDernierImport
+                apresPackage >= 0 -> apresPackage
+                else -> 0
+            }
+        }
 
         /** Applique un changement par plage (client non conforme, robustesse). */
         private fun appliquerPlage(

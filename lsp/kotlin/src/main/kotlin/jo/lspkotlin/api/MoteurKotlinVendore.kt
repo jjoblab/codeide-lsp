@@ -16,6 +16,23 @@ import java.util.Properties
  */
 public class MoteurKotlinVendore : MoteurLangageKotlin {
     private val parseur = ParseurKotlin()
+
+    /**
+     * Index des appelables Kotlin du classpath (K3) — PARTAGÉ par
+     * toutes les sessions du moteur (un projet = un moteur côté façade
+     * hôte) : segments disque par empreinte, un jar inchangé n'est
+     * jamais redécodé (ADR 0111 §3 pour l'esprit, l'identité vient de
+     * l'hôte W6).
+     */
+    private val indexAppelables = jo.lspkotlin.index.IndexAppelablesKotlin()
+
+    /**
+     * Scan des racines sources du projet (K3) — PARTAGÉ lui aussi : les
+     * connexions LSP successives ne re-scannent pas (invalidé quand les
+     * racines changent ; les documents OUVERTS dominent côté session).
+     */
+    private val scanProjet = jo.lspkotlin.session.ScanProjet(parseur)
+
     private val descripteur: Map<String, String> by lazy { lireDescripteurPack() }
 
     override val identifiant: String
@@ -36,7 +53,7 @@ public class MoteurKotlinVendore : MoteurLangageKotlin {
     ): ArbreSyntaxiqueKotlin = parseur.analyser(texte, script)
 
     override fun creerSession(): SessionLangageKotlin =
-        jo.lspkotlin.session.SessionLangageKotlinParse(parseur)
+        jo.lspkotlin.session.SessionLangageKotlinParse(parseur, indexAppelables, scanProjet)
 
     private fun lireDescripteurPack(): Map<String, String> {
         val chemin = "jo/lspkotlin/pack/version.properties"

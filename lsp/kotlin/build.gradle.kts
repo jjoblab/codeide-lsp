@@ -70,6 +70,14 @@ dependencies {
     api(libs.jetbrains.syntax.api)
     implementation(libs.jetbrains.annotations)
 
+    // K3 (LSP_KOTLIN.md §5) : décodage des @Metadata des bibliothèques
+    // Kotlin du classpath — appelables de premier niveau + extensions.
+    // Externe Maven (pas un module CodeIDE) : le module reste une ENTITÉ
+    // INDÉPENDANTE (checkModuleDependencies) et embarquera cette
+    // dépendance dans le futur « pack langue » (§6) ; version = celle du
+    // compilateur du build, la bibliothèque suit le compilateur au pas.
+    implementation(libs.kotlin.metadata.jvm)
+
     testImplementation(libs.junit4)
 }
 

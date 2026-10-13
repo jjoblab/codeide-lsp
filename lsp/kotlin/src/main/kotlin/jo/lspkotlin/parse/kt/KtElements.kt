@@ -11,9 +11,12 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * d'accesseurs épient le vocabulaire du compilateur/PSI (`KtFile`,
  * `KtClass`, `nom()`, `declarations()`, …) : un contributeur qui connaît
  * le PSI de Kotlin se retrouve chez lui (leçon projet de référence, reprise par
- * LSP_KOTLIN.md D2). Périmètre K1 volontairement compact : fichier,
- * déclarations nommées, imports, package — les expressions et la
- * navigation fine arrivent avec la session (K2) et les symboles (K3).
+ * LSP_KOTLIN.md D2). Périmètre K1 compact : fichier, déclarations nommées,
+ * imports, package ; K2 y ajoute la session, K3 les ACCESSEURS DE
+ * SYMBOLES (jeton de nom, types, supertypes, récepteurs d'extension,
+ * initialiseurs, modificateurs — cf. [nomJeton], [typeReferences],
+ * [superTypes]) ; la navigation fine des expressions vit dans
+ * `KtExpressions.kt`.
  *
  * Toutes les lectures sont conservatrices (D3) : ce qui n'est pas trouvé
  * vaut `null` ou une liste vide — jamais de devinette.
@@ -125,6 +128,58 @@ public sealed interface KtDeclaration : KtElement {
         val jeton = direct ?: jetonsDescendants().firstOrNull { it.type == KtTokens.IDENTIFIER }
         return jeton?.texte?.toString()
     }
+
+    /**
+     * Jeton du NOM de la déclaration (K3 — définitions : la plage du nom
+     * déclaré est la cible de go-to-definition). Même règle conservatrice
+     * que [nom] ; `null` si anonyme/en édition.
+     */
+    public fun nomJeton(): JetonSyntaxique? {
+        val direct = jetons().firstOrNull { it.type == KtTokens.IDENTIFIER }
+        return direct ?: jetonsDescendants().firstOrNull { it.type == KtTokens.IDENTIFIER }
+    }
+
+    /**
+     * Références de type de la déclaration (K3 — types écrits), dans
+     * l'ordre du document : récepteur d'extension le cas échéant, type
+     * de la valeur/du retour ensuite. `fun Vue.titre(): String` porte
+     * DEUX références (`Vue`, `String`).
+     */
+    public fun typeReferences(): List<KtNoeud> =
+        enfantsParType(KtNodeTypes.TYPE_REFERENCE).mapNotNull { it as? KtNoeud }
+
+    /**
+     * Texte d'une référence de type (K3) : jetons significatifs réassemblés
+     * — `TextView`, `List<String>`, `Map<String, Int>?` (les blancs sont
+     * sautés, les virgules réespacées). Null si la référence est vide/en
+     * édition.
+     */
+    public fun texteType(): String? = typeTexteDepuis(noeud)
+}
+
+/**
+ * Réassemble le texte d'une référence de type depuis ses jetons
+ * significatifs (partagé façade/déclarations — KtNodeTypes.TYPE_REFERENCE
+ * et descendants).
+ */
+internal fun typeTexteDepuis(noeud: NoeudSyntaxique): String? {
+    val morceaux = mutableListOf<String>()
+    for (jeton in noeud.jetonsDescendants()) {
+        when (jeton.type) {
+            KtTokens.IDENTIFIER -> morceaux.add(jeton.texte.toString())
+            KtTokens.DOT -> morceaux.add(".")
+            KtTokens.LT -> morceaux.add("<")
+            KtTokens.GT -> morceaux.add(">")
+            KtTokens.QUEST -> morceaux.add("?")
+            KtTokens.COMMA -> morceaux.add(", ")
+            else -> {
+                // blancs, mots-clés de projection (in/out/* rendus tels quels)
+                val texte = jeton.texte.toString()
+                if (texte.isNotEmpty() && texte != " ") morceaux.add(texte)
+            }
+        }
+    }
+    return morceaux.joinToString("").ifBlank { null }
 }
 
 /** Déclaration de classe / interface / classe d'énumération / data class. */
@@ -133,6 +188,9 @@ public class KtClass(
 ) : KtElement, KtDeclaration {
     /** Vrai si le jeton `interface` est présent (une interface n'a pas de corps de constructeur). */
     public fun estInterface(): Boolean = jetonsDescendants().any { it.type == KtTokens.INTERFACE_KEYWORD }
+
+    /** Vrai si la déclaration est une classe d'énumération (`enum class`). */
+    public fun estEnum(): Boolean = jetons().any { it.type == KtTokens.ENUM_MODIFIER }
 
     /** Corps de la classe (CLASS_BODY), ou null (en-tête en cours d'édition). */
     public fun corps(): KtNoeud? = premierEnfantParType(KtNodeTypes.CLASS_BODY) as? KtNoeud
@@ -149,6 +207,23 @@ public class KtClass(
                 else -> null
             }
         } ?: emptyList()
+
+    /**
+     * Supertypes écrits de la classe (K3 — `class A : B, C`), TEXTES tels
+     * qu'écrits (`View`, `Iface<String>`) : la résolution contre les
+     * imports appartient au résolveur, pas à la façade. Vide si la
+     * clause est absente/en édition.
+     */
+    public fun superTypes(): List<String> {
+        val clause = premierEnfantParType(KtNodeTypes.SUPER_TYPE_LIST) ?: return emptyList()
+        val entrees =
+            clause.noeud.sousNoeuds.filter {
+                it.type == KtNodeTypes.SUPER_TYPE_ENTRY ||
+                    it.type == KtNodeTypes.SUPER_TYPE_CALL_ENTRY ||
+                    it.type == KtNodeTypes.DELEGATED_SUPER_TYPE_ENTRY
+            }
+        return entrees.mapNotNull { typeTexteDepuis(it) }
+    }
 }
 
 /** Déclaration d'objet (`object Foo`, `companion object Bar`). */
@@ -169,17 +244,78 @@ public class KtFunction(
             ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
             ?.map { KtParameter(it) }
             ?: emptyList()
+
+    /**
+     * Type de RETOUR écrit (`: String`), ou null (inféré/absent — K3,
+     * conservateur : un type non écrit n'est pas deviné).
+     */
+    public fun typeRetour(): String? =
+        typeReferences()
+            .lastOrNull()
+            ?.let { typeTexteDepuis(it.noeud) }
+
+    /**
+     * Récepteur d'extension écrit (`fun Vue.`), ou null (fonction
+     * simple). Le récepteur est la PREMIÈRE référence de type — AVANT le
+     * nom et la liste de paramètres (le type de retour vient APRÈS).
+     */
+    public fun recepteurExtension(): String? =
+        typeReferences()
+            .firstOrNull()
+            ?.takeIf { reference ->
+                listeParametres()?.let { it.debut > reference.debut } ?: (reference.debut < noeud.fin)
+            }
+            ?.let { typeTexteDepuis(it.noeud) }
 }
 
-/** Déclaration de propriété (`val`/`var`). */
+/**
+ * Déclaration de propriété (`val`/`var`) — K3 : type écrit, récepteur
+ * d'extension et initialiseur (résolution des locales par leur
+ * initialiseur, LSP_KOTLIN §4.3).
+ */
 public class KtProperty(
     override val noeud: NoeudSyntaxique,
-) : KtElement, KtDeclaration
+) : KtElement, KtDeclaration {
+    /**
+     * Type écrit (`: String`), ou null (inféré — l'initialiseur dit ce
+     * que le résolveur peut en tirer, la façade ne devine rien).
+     */
+    public fun type(): String? =
+        typeReferences()
+            .firstOrNull()
+            ?.let { typeTexteDepuis(it.noeud) }
 
-/** Paramètre de fonction ou de constructeur. */
+    /** Récepteur d'extension écrit (`val Vue.titre`), ou null. */
+    public fun recepteurExtension(): String? =
+        typeReferences()
+            .firstOrNull()
+            ?.takeIf { reference -> nomJeton()?.let { it.debut > reference.fin } ?: false }
+            ?.let { typeTexteDepuis(it.noeud) }
+
+    /**
+     * Expression INITIALIZER de la propriété (`= TextView(…)`), ou null
+     * (délégée/absente/en édition) — rendue comme nœud générique
+     * navigable (le résolveur en tire type d'appel de constructeur,
+     * littéral ou référence).
+     */
+    public fun initialisateur(): KtNoeud? {
+        val nom = nomJeton() ?: return null
+        return noeud.sousNoeuds
+            .firstOrNull { it.debut >= nom.fin && estExpression(it.type) }
+            ?.let { KtNoeud(it) }
+    }
+}
+
+/** Paramètre de fonction ou de constructeur — K3 : type écrit. */
 public class KtParameter(
     override val noeud: NoeudSyntaxique,
-) : KtElement, KtDeclaration
+) : KtElement, KtDeclaration {
+    /** Type écrit (`nom: String`), ou null (inféré). */
+    public fun type(): String? =
+        typeReferences()
+            .firstOrNull()
+            ?.let { typeTexteDepuis(it.noeud) }
+}
 
 /** Alias de type (`typealias Foo = …`). */
 public class KtTypeAlias(

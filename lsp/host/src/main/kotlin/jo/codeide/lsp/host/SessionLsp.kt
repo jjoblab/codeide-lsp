@@ -232,6 +232,22 @@ public class SessionLsp(
     }
 
     /**
+     * Vue de classpath NEUTRE Kotlin de l'union courante (K3,
+     * LSP_KOTLIN.md §4.1 « classpath », D4 : la vue d'index fusion
+     * ADR 0111 est PARTAGÉE avec le LSP Kotlin — l'adaptateur est
+     * recréé à CHAQUE appel : les requêtes sous-lisent tant que la
+     * construction n'est pas PRÊTE, jamais de double budget de cache).
+     *
+     * @return l'adaptateur sur la vue courante, `null` avant le premier
+     *         sync réussi (la session Kotlin vit alors en régime
+     *         dégradé : symboles projet seuls — jamais de mensonge).
+     */
+    public fun vueClasspathKotlin(): jo.lspkotlin.api.VueClasspathKotlin? {
+        val vueCourante = orchestrateur.etat() ?: return null
+        return AdaptateurVueClasspath(vueCourante)
+    }
+
+    /**
      * La définition cel-lsp du serveur Java de CodeIDE — à enregistrer
      * dans un `LspProject` (h2, branchement éditeur) : extension
      * `java`, transport IN-PROCESS (ADR 0109).
