@@ -1,9 +1,9 @@
 # ADR 0117 — Écran d'indexation LSP : pastille de toolbar + bottom sheet de détail
 
-- **Statut** : brouillon (phase A, v0.124.0 — non finalisé tant que
-  l'utilisateur n'a pas donné le GO pour la phase B). Voir
-  `docs/audit/INDEXATION_PHASE_A.md` pour l'audit complet, le plan
-  d'implémentation et la maquette HTML.
+- **Statut** : accepté (v0.125.0, Phase B du prompt 2 — lots B1 à B8
+  livrés entre v0.124.8 et v0.125.0). Voir `docs/audit/INDEXATION_PHASE_A.md`
+  pour l'audit complet (Phase A v0.124.0) et le CHANGELOG pour le détail
+  lot par lot.
 - **Contexte** : l'écran d'indexation actuel de CodeIDE est une ligne
   unique `barre_etat_lsp` (`activity_editor.xml` L72) : point d'état
   20 dp + texte « Indexation Java : 12/191 ». Cette ligne (a) consomme
