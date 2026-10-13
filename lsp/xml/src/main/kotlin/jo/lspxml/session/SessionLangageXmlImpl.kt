@@ -9,7 +9,10 @@ import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SeveriteXml
 import jo.lspxml.catalog.CataloguesPartages
 import jo.lspxml.completion.ClassementXml
+import jo.lspxml.completion.CompletionDrawablesXml
 import jo.lspxml.completion.CompletionEntreesXml
+import jo.lspxml.completion.CompletionMenusXml
+import jo.lspxml.completion.CompletionValeursXml
 import jo.lspxml.completion.CompletionXml
 import jo.lspxml.context.Contexte
 import jo.lspxml.context.ContexteCurseur
@@ -159,18 +162,16 @@ internal class SessionLangageXmlImpl(
     private fun catalogueCourant() = catalogues.catalogue(classpath?.dossierPlateforme)
 
     /**
-     * Complétion à [decalage] (XE2/XE3/XE4) — le scanner de contexte
-     * tranche la ZONE, les contributeurs fusionnent PAR GENRE :
-     * LAYOUT (balises, attributs, valeurs) et VALUES (entrées
-     * nommées, name/parent, styles du parent) ; le manifest reste
-     * sans complétion à XE4 (règles seules).
+     * Complétion à [decalage] (XE2/XE3/XE4/XE5) — le scanner de contexte
+     * tranche la ZONE, les contributeurs fusionnent PAR GENRE (chacun
+     * délégué à sa méthode privée : LAYOUT, VALUES, DRAWABLE, MENU) ;
+     * le manifest reste sans complétion (règles seules).
      *
-     * Exemption detekt ciblée (règle 16) : ReturnCount/Complexity —
-     * les gardes sont des RÉGIMES distincts (session fermée, document
-     * inconnu, genre hors périmètre) et le dispatch PAR GENRE/ZONE est
-     * un when de protocole — chacun porte sa décision de silence.
+     * Exemption detekt ciblée (règle 16) : ReturnCount — les sorties
+     * sont les RÉGIMES distincts (session fermée, document inconnu,
+     * genre hors périmètre) — chacun porte sa décision de silence.
      */
-    @Suppress("ReturnCount", "CyclomaticComplexMethod")
+    @Suppress("ReturnCount")
     override fun completion(
         uri: String,
         decalage: Int,
@@ -178,40 +179,105 @@ internal class SessionLangageXmlImpl(
         if (fermee) return emptyList()
         val document = documents[uri] ?: return emptyList()
         val genre = GenreDocument.depuisUri(uri)
-        if (genre != GenreDocument.LAYOUT && genre != GenreDocument.VALEURS) return emptyList()
+        if (genre !in GENRES_COMPLETABLES) return emptyList()
         val contexte = ContexteCurseur.analyser(document.texte, decalage, document.document)
         return when (genre) {
-            GenreDocument.VALEURS ->
-                when (contexte) {
-                    is Contexte.NomDeBalise -> CompletionEntreesXml.balises(contexte)
+            GenreDocument.VALEURS -> completionValeurs(contexte)
 
-                    is Contexte.NomAttribut -> CompletionEntreesXml.attributs(contexte)
+            GenreDocument.LAYOUT -> completionLayout(contexte)
 
-                    is Contexte.Valeur ->
-                        CompletionEntreesXml.valeurs(contexte, catalogueCourant(), indexRessources)
+            GenreDocument.DRAWABLE -> completionDrawable(contexte)
 
-                    Contexte.Muet -> emptyList()
-                }
-
-            GenreDocument.LAYOUT ->
-                when (contexte) {
-                    is Contexte.NomDeBalise -> CompletionXml.balises(contexte, catalogueCourant())
-
-                    is Contexte.NomAttribut -> CompletionXml.attributs(contexte, catalogueCourant())
-
-                    is Contexte.Valeur ->
-                        jo.lspxml.completion.CompletionValeursXml.valeurs(
-                            contexte,
-                            catalogueCourant(),
-                            indexRessources,
-                        )
-
-                    Contexte.Muet -> emptyList()
-                }
+            GenreDocument.MENU -> completionMenu(contexte)
 
             else -> emptyList()
         }
     }
+
+    /** Genres dont la complétion est branchée (le manifest : règles seules). */
+    private companion object {
+        private val GENRES_COMPLETABLES: Set<GenreDocument> =
+            setOf(
+                GenreDocument.LAYOUT,
+                GenreDocument.VALEURS,
+                GenreDocument.DRAWABLE,
+                GenreDocument.MENU,
+            )
+    }
+
+    /** Complétion VALUES (XE4) — entrées nommées, styles du parent. */
+    private fun completionValeurs(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionEntreesXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionEntreesXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                CompletionEntreesXml.valeurs(contexte, catalogueCourant(), indexRessources)
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion LAYOUT (XE2/XE3) — catalogue plateforme + références. */
+    private fun completionLayout(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionXml.balises(contexte, catalogueCourant())
+
+            is Contexte.NomAttribut -> CompletionXml.attributs(contexte, catalogueCourant())
+
+            is Contexte.Valeur ->
+                CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources)
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /**
+     * Complétion DRAWABLE (XE5) — balises/attributs du catalogue fixe,
+     * valeurs FUSIONNÉES avec le contributeur général (références `@…`
+     * + énumérations du catalogue, dédoublonnées par libellé).
+     */
+    private fun completionDrawable(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionDrawablesXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionDrawablesXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionDrawablesXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion MENU (XE5) — comme DRAWABLE, contributeur menu. */
+    private fun completionMenu(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionMenusXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionMenusXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionMenusXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /**
+     * FUSION de listes de valeurs (XE5) — dédoublonnée par LIBELLÉ
+     * (le catalogue et le contributeur de genre peuvent connaître la
+     * même énumération), triée par clé de tri commune.
+     */
+    private fun fusionValeurs(vararg listes: List<PropositionCompletionXml>): List<PropositionCompletionXml> =
+        listes.asSequence()
+            .flatten()
+            .distinctBy { it.libelle }
+            .sortedBy { it.texteTri }
+            .toList()
 
     /**
      * Survol à [decalage] (XE3) — référence de ressource (projet /

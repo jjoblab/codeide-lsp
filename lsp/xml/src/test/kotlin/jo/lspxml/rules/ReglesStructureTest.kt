@@ -37,7 +37,11 @@ class ReglesStructureTest {
         assertEquals(GenreDocument.VALEURS, GenreDocument.depuisUri("file:///p/res/values/strings.xml"))
         assertEquals(GenreDocument.VALEURS, GenreDocument.depuisUri("file:///p/res/values-night/themes.xml"))
         assertEquals(GenreDocument.MANIFEST, GenreDocument.depuisUri("file:///p/app/src/main/AndroidManifest.xml"))
-        assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///p/res/drawable/ic.xml"))
+        // XE5 : drawables et menus ont leurs genres propres.
+        assertEquals(GenreDocument.DRAWABLE, GenreDocument.depuisUri("file:///p/res/drawable/ic.xml"))
+        assertEquals(GenreDocument.DRAWABLE, GenreDocument.depuisUri("file:///p/res/drawable-v24/ic.xml"))
+        assertEquals(GenreDocument.MENU, GenreDocument.depuisUri("file:///p/res/menu/main.xml"))
+        assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///p/res/xml/inconnu.xml"))
         assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///p/note.txt"))
     }
 

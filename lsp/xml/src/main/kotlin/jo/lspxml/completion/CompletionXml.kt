@@ -48,7 +48,17 @@ public object CompletionXml {
         )
 
     /** Longueur du mot-clé `xmlns` (garde de frappe symétrique). */
-    private const val LONGUEUR_XMLNS: Int = 5
+    internal const val LONGUEUR_XMLNS: Int = 5
+
+    /**
+     * Le préfixe tapé est-il une frappe de DÉCLARATION xmlns (x…, xmln,
+     * xmlns, xmlns:…) ? — garde SYMÉTRIQUE (le préfixe peut être PLUS
+     * COURT que « xmlns »), partagée avec drawables/menus (XE5).
+     */
+    internal fun frappeDeDeclarationXmlns(prefixe: String): Boolean =
+        prefixe.isNotEmpty() &&
+            (prefixe.length <= LONGUEUR_XMLNS && "xmlns".startsWith(prefixe) ||
+                prefixe.startsWith("xmlns"))
 
     /** Détails des balises spéciales (BALISES_SPECIALES_NOMS). */
     private val DETAILS_SPECIALES: Map<String, String> =
@@ -123,10 +133,7 @@ public object CompletionXml {
         // Préfixe xmlns en frappe (x…, xmln, xmlns, xmlns:…) : proposer
         // les déclarations utiles — la garde est SYMÉTRIQUE (le préfixe
         // peut être PLUS COURT que « xmlns »), VIDE = attributs normaux.
-        val frappeXmlns =
-            prefixe.isNotEmpty() &&
-                (prefixe.length <= LONGUEUR_XMLNS && "xmlns".startsWith(prefixe) || prefixe.startsWith("xmlns"))
-        if (frappeXmlns) {
+        if (frappeDeDeclarationXmlns(prefixe)) {
             return attributsXmlns(prefixe)
         }
         val candidats = LinkedHashSet<String>()
@@ -173,7 +180,7 @@ public object CompletionXml {
      * `android:` → tout android: ; `andr` → `android:…` (début du
      * préfixe d'espace de noms).
      */
-    private fun correspondancePrefixe(prefixe: String, nom: String): Boolean {
+    internal fun correspondancePrefixe(prefixe: String, nom: String): Boolean {
         if (prefixe.isEmpty()) return true
         return if (prefixe.contains(':')) {
             nom.startsWith(prefixe)
@@ -220,8 +227,12 @@ public object CompletionXml {
         return if (parties.isEmpty()) null else parties.joinToString(" — ")
     }
 
-    /** Déclarations xmlns: utiles (frappe du préfixe xmlns). */
-    private fun attributsXmlns(prefixe: String): List<PropositionCompletionXml> {
+    /**
+     * Déclarations xmlns: utiles (frappe du préfixe xmlns) — PARTAGÉ
+     * avec les contributeurs drawables/menus (XE5 : mêmes racines
+     * xmlns:android/tools/app).
+     */
+    internal fun attributsXmlns(prefixe: String): List<PropositionCompletionXml> {
         val propositions = mutableListOf<PropositionCompletionXml>()
         val candidates =
             listOf(

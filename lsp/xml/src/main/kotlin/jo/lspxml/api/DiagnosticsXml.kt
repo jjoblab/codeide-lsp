@@ -61,7 +61,10 @@ public object CodesDiagnosticsXml {
     /** Esperluette non échappée dans une section de texte. */
     public const val ENTITE_INVALIDE: String = "xml.entiteInvalide"
 
-    /** `xmlns:android` manquant sur la racine d'un layout. */
+    /**
+     * `xmlns:android` manquant sur la racine — layout, drawable et
+     * menu (XE5 : mêmes exigences du gonfleur, même quick-fix).
+     */
     public const val MANQUE_XMLNS_ANDROID: String = "xml.manqueXmlnsAndroid"
 
     /**

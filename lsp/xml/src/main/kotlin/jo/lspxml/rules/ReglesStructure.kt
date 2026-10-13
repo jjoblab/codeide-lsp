@@ -32,8 +32,17 @@ public object ReglesStructure {
             visiter(document.racines[indice], genre, diagnostics, contextes, estPremiereRacine = indice == 0)
         }
         ReglesGeneriques.regleEntitesTexte(document, diagnostics)
-        if (genre == GenreDocument.LAYOUT) {
+        // XE5 : l'exigence xmlns:android s'étend aux drawables/menus
+        // (un `android:shape=` sans déclaration est la même ERREUR de
+        // gonfleur) ; les ids @+id/ dupliqués gardent le layout et le
+        // MENU (les ids d'items de menu sont des vrais ids).
+        if (genre == GenreDocument.LAYOUT ||
+            genre == GenreDocument.DRAWABLE ||
+            genre == GenreDocument.MENU
+        ) {
             ReglesLayout.regleXmlnsAndroid(document, diagnostics)
+        }
+        if (genre == GenreDocument.LAYOUT || genre == GenreDocument.MENU) {
             ReglesLayout.regleIdsDupliques(contextes, diagnostics)
         }
         if (genre == GenreDocument.VALEURS) {
@@ -62,7 +71,10 @@ public object ReglesStructure {
 
             GenreDocument.VALEURS -> ReglesValues.regleEntreeSansNom(element, diagnostics)
 
-            GenreDocument.MANIFEST, GenreDocument.AUTRE -> Unit
+            GenreDocument.MANIFEST,
+            GenreDocument.DRAWABLE,
+            GenreDocument.MENU,
+            GenreDocument.AUTRE -> Unit
         }
         element.enfants.forEach { enfant ->
             visiter(enfant, genre, diagnostics, contextes, estPremiereRacine = false)

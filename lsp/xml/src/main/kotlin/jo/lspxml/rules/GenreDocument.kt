@@ -19,6 +19,12 @@ public enum class GenreDocument {
     /** `AndroidManifest.xml` (XE4 — règles dédiées). */
     MANIFEST,
 
+    /** `res/drawable*` — drawables XML (`shape`, `selector`, `vector`… — XE5). */
+    DRAWABLE,
+
+    /** `res/menu*` — menus d'options (`item`, `group` — XE5). */
+    MENU,
+
     /** Chemin inconnu — règles GÉNÉRIQUES seules (X4 conservatoire). */
     AUTRE, ;
 
@@ -40,6 +46,10 @@ public enum class GenreDocument {
                 normalise.contains("/res/values") -> VALEURS
 
                 normalise.endsWith("/AndroidManifest.xml") -> MANIFEST
+
+                normalise.contains("/res/drawable") -> DRAWABLE
+
+                normalise.contains("/res/menu") -> MENU
 
                 else -> AUTRE
             }
