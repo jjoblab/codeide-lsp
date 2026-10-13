@@ -24,6 +24,8 @@ import org.eclipse.lsp4j.services.LanguageServer
 import java.io.Closeable
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -273,7 +275,13 @@ public class SessionLsp(
      */
     public fun definition(): LanguageServerDefinition = DefinitionServeurLspJava { serveur() }
 
-    /** Arrêt exhaustif : coroutines annulées, moteurs disposés, modèle vidé. */
+    /**
+     * Arrêt exhaustif : coroutines annulées **puis attendues dans la
+     * borne** (v0.121.1 — retour CI du run 38412598199 : l'indexation en
+     * vol continuait d'écrire des segments après le retour de [close],
+     * en course avec le nettoyage `@TempDir` de JUnit), moteurs disposés,
+     * modèle vidé.
+     */
     public override fun close() {
         if (fermee) return
         fermee = true
@@ -282,12 +290,50 @@ public class SessionLsp(
         } catch (t: Throwable) {
             LOGGER.log(Level.WARNING, "annulation du scope échouée", t)
         }
+        attendreArretCoroutines()
         try {
             environnement.dispose()
         } catch (t: Throwable) {
             LOGGER.log(Level.WARNING, "dispose de l'environnement échoué", t)
         }
         depot.vider()
+    }
+
+    /**
+     * Attend l'arrêt EFFECTIF des coroutines de la session, borné dans le
+     * temps (I2 : la fermeture ne bloque jamais indéfiniment — CYCLE_DE_VIE
+     * §4) : `cancel` ne fait que SIGNALER, une analyse de jar en vol sur
+     * `Dispatchers.IO` ne s'interrompt qu'à son prochain point de contrôle —
+     * entre les deux, elle peut encore écrire un segment sur le disque.
+     * Après cette attente, le contrat « arrêt propre exhaustif » est honnête
+     * dans le cas courant ; le cas dégénéré (coroutine réellement coincée)
+     * est JOURNALISÉ et la fermeture continue (jamais bloquante).
+     *
+     * [CountDownLatch] plutôt que `runBlocking` (interdit hors tests) :
+     * [close] est un contrat SYNCHRONE de `Closeable`, l'attente borne le
+     * fil appelant (registre de fermeture en production — FermablesEspace
+     * consomme son délai, pas un fil de travail). L'appel ne peut pas se
+     * joindre lui-même : les appelants de production vivent hors du scope
+     * de la session ; un éventuel auto-join dégénéré retomberait sur le
+     * délai borné ci-dessous (journalisé, jamais de blocage infini).
+     */
+    private fun attendreArretCoroutines() {
+        val travail = scope.coroutineContext[Job] ?: return
+        if (travail.isCompleted) return
+        val fin = CountDownLatch(1)
+        travail.invokeOnCompletion { fin.countDown() }
+        try {
+            if (!fin.await(DELAI_ARRET_COROUTINES_MS, TimeUnit.MILLISECONDS)) {
+                LOGGER.log(
+                    Level.WARNING,
+                    "coroutines de session encore vivantes ${DELAI_ARRET_COROUTINES_MS} ms " +
+                        "après l'annulation — fermeture forcée (écritures d'index possibles)",
+                )
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            LOGGER.log(Level.WARNING, "attente d'arrêt des coroutines interrompue", e)
+        }
     }
 
     /**
@@ -352,9 +398,20 @@ public class SessionLsp(
     private companion object {
         private val LOGGER: Logger = Logger.getLogger("SessionLsp")
 
-        /** Extension et nom du serveur (langage Java, ADR 0109). */
+        /** Extension du serveur (langage Java, ADR 0109). */
         private const val EXTENSION: String = "java"
+
+        /** Nom du serveur (langage Java, ADR 0109). */
         private const val NOM: String = "codeide-java"
+
+        /**
+         * Borne de l'attente d'arrêt des coroutines dans [close] (I2) :
+         * le travail restant est UNE écriture de segment (rapide, la mise
+         * à jour CI a montré des courses au niveau de l'analyse) ; une
+         * analyse de jar réellement coincée est coupée ici et JOURNALISÉE,
+         * la fermeture ne l'attend jamais indéfiniment.
+         */
+        private const val DELAI_ARRET_COROUTINES_MS: Long = 2_000
     }
 }
 

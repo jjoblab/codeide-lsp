@@ -151,6 +151,16 @@ public class ServiceIndexDisque internal constructor(
 
             is ResultatAnalyse.Ok -> {
                 try {
+                    // v0.121.1 (retour CI du run 38412598199) : une session
+                    // fermée n'écrit PLUS de segment — l'analyse ci-dessus est
+                    // un travail bloquant (lecture de zip) qui ne voit
+                    // l'annulation qu'ici ; écrire ensuite laisserait des
+                    // fichiers apparaître APRÈS le retour de SessionLsp.close
+                    // (course avec le nettoyage @TempDir des tests, fichiers
+                    // fantômes en production). La CancellationException se
+                    // propage (jamais avalée — règle 6) : la construction
+                    // s'arrête honnêtement, l'état reste CONSTRUCTION.
+                    currentCoroutineContext().ensureActive()
                     entrepot.ecrire(resultat.donnees, resultat.donnees.cle)
                     adopter(position, resultat.donnees.cle)
                     statistiques.terminee()
@@ -190,6 +200,10 @@ public class ServiceIndexDisque internal constructor(
             try {
                 val resultat = analyseur.analyser(position.entree) { false }
                 if (resultat is ResultatAnalyse.Ok) {
+                    // v0.121.1 : même garde que construirePosition — une
+                    // reconstruction lancée juste avant l'annulation n'écrit
+                    // plus rien après celle-ci.
+                    currentCoroutineContext().ensureActive()
                     entrepot.ecrire(resultat.donnees, resultat.donnees.cle)
                     cache.invaliderRefus(empreinte)
                     position.adopter(resultat.donnees.cle)

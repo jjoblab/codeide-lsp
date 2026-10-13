@@ -1216,8 +1216,11 @@ branchement cel-lsp in-process :
 `LanguageServerDefinition("java")` + `InProcessStreamConnectionProvider`),
 `modele`/`etatIndexation` (flux publics DÉCOUPLÉS des types internes de
 `:lsp:index` — `PhaseIndexation`/`EtatIndexation` sont à l'hôte), et
-`close()` : scope de coroutines annulé, moteurs (défaut + modules)
-disposés, modèle vidé — usage ultérieur REFUSÉ explicitement.
+`close()` : scope de coroutines annulé PUIS ATTENDU dans la borne
+(v0.121.1 — retour CI : une indexation en vol écrivait des segments
+après le retour de `close` ; l'attente est bornée à 2 s, I2, cas
+dégénéré journalisé), moteurs (défaut + modules) disposés, modèle vidé
+— usage ultérieur REFUSÉ explicitement.
 
 **`OrchestrateurLsp`** (interne) — le triptyque :
 1. **Modèle** : `ConvertisseurModeleLsp.depuisClasspathResult` (v8,

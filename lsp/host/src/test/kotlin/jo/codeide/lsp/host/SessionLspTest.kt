@@ -1,11 +1,13 @@
 package jo.codeide.lsp.host
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
+import java.io.File
 import java.lang.ref.WeakReference
 import java.nio.file.Files
 import java.nio.file.Path
@@ -140,6 +142,48 @@ class SessionLspTest {
         assertNotNull(session.modele.value)
         session.close()
         session.close() // idempotent
+        assertTrue(session.modele.value == null, "le modèle est vidé à la fermeture")
+    }
+
+    /**
+     * Régression v0.121.1 (retour CI du run 38412598199) : `close` doit
+     * attendre l'arrêt EFFECTIF des coroutines — la construction d'index
+     * encore en vol à la fermeture (cas de ce test : PAS d'attente du
+     * PRÊT) ne doit PLUS écrire de segment APRÈS le retour de [close].
+     * Avant le correctif, l'IOException « Failed to delete temp
+     * directory » de JUnit provenait exactement de là : des fichiers
+     * apparaissaient dans le stockage PENDANT le nettoyage `@TempDir`.
+     */
+    @Test
+    fun `close attend l arret effectif - aucun segment ecrit apres fermeture`() {
+        val racine = Files.createDirectories(tmp.resolve("projet-arret"))
+        val fixture = ProjetFixture(racine)
+        val jar = fixture.construireJarFixture(tmp.resolve("fixture-arret"))
+        val stockage = tmp.resolve("index-arret").toFile()
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = stockage,
+            )
+        session.appliquerClasspath(fixture.resultatClasspath(jar))
+        // Fermeture SANS attendre le PRÊT : la construction est en vol —
+        // c'est la course observée sur la CI (machine lente).
+        session.close()
+
+        // PREUVE du contrat : plus AUCUN fichier n'apparaît dans le
+        // stockage après le retour de close (le « après » est borné :
+        // toute écriture fantôme se produit dans les instants qui
+        // suivent la fermeture).
+        val dossierSegments = File(stockage, "segments")
+        val instantane = dossierSegments.listFiles()?.map { it.name }?.toSet() ?: emptySet()
+        Thread.sleep(500)
+        val apres = dossierSegments.listFiles()?.map { it.name }?.toSet() ?: emptySet()
+        assertEquals(
+            instantane,
+            apres,
+            "des segments apparaissent dans le stockage après close — " +
+                "la fermeture n'attend pas l'arrêt effectif (régression v0.121.0)",
+        )
         assertTrue(session.modele.value == null, "le modèle est vidé à la fermeture")
     }
 
