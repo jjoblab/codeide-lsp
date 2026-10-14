@@ -3,6 +3,7 @@ package jo.lspxml.session
 import jo.lspxml.api.ClasspathXml
 import jo.lspxml.api.ContenuSurvoleXml
 import jo.lspxml.api.CorrectifXml
+import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
 import jo.lspxml.api.PropositionCompletionXml
@@ -218,10 +219,17 @@ internal class SessionLangageXmlImpl(
             Contexte.Muet -> emptyList()
         }
 
-    /** Complétion LAYOUT (XE2/XE3) — catalogue plateforme + références. */
+    /** Complétion LAYOUT (XE2/XE3/XP5) — catalogue plateforme +
+     *  références + vues projet. */
     private fun completionLayout(contexte: Contexte): List<PropositionCompletionXml> =
         when (contexte) {
-            is Contexte.NomDeBalise -> CompletionXml.balises(contexte, catalogueCourant())
+            is Contexte.NomDeBalise -> {
+                // XP5 : fusionner les balises du catalogue plateforme
+                // avec les vues projet (VueNomsXml) si disponibles.
+                val balisesCatalogue = CompletionXml.balises(contexte, catalogueCourant())
+                val balisesProjet = completionBalisesProjet(contexte)
+                (balisesCatalogue + balisesProjet).distinctBy { it.libelle }
+            }
 
             is Contexte.NomAttribut -> CompletionXml.attributs(contexte, catalogueCourant())
 
@@ -230,6 +238,27 @@ internal class SessionLangageXmlImpl(
 
             Contexte.Muet -> emptyList()
         }
+
+    /**
+     * XP5 : vues personnalisées du projet comme propositions de balises.
+     * VueNomsXml porte les noms de classes du projet (venant de la
+     * session Java) — on les propose comme balises quand l'utilisateur
+     * tape `<`.
+     */
+    private fun completionBalisesProjet(contexte: Contexte.NomDeBalise): List<PropositionCompletionXml> {
+        val vueNoms = classpath?.vueNoms ?: return emptyList()
+        val prefixe = contexte.prefixeTape
+        return vueNoms.nomsCommencantPar(prefixe, 50)
+            .map { fqcn ->
+                val nomSimple = fqcn.substringAfterLast('.')
+                PropositionCompletionXml(
+                    libelle = nomSimple,
+                    genre = GenreCompletionXml.BALISE,
+                    detail = "vue projet — $fqcn",
+                    texteTri = ClassementXml.cleTri(50, nomSimple),
+                )
+            }
+    }
 
     /**
      * Complétion DRAWABLE (XE5) — balises/attributs du catalogue fixe,
