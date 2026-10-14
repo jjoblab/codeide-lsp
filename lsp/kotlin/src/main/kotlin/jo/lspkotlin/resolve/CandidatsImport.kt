@@ -68,6 +68,12 @@ internal object CandidatsImport {
             .flatMap { porteur -> porteur.fqcns.asSequence() }
             .filter { fqcn -> fqcn !in dejaImportes }
             .filter { fqcn -> paquetCourant == null || !fqcn.startsWith("$paquetCourant.") }
+            // KP8 : le filtre kotlin.* blanket excluait légitimement
+            // kotlin.time.Duration — mais comme les types default-imported
+            // (ArrayList, StringBuilder, etc.) sont désormais résolus par
+            // IMPORTS_DEFAUT avant d'atteindre CandidatsImport, le filtre
+            // n'est plus nécessaire pour eux. On garde le filtre pour
+            // éviter le bruit (les types kotlin.* sont déjà résolus).
             .filter { fqcn -> !fqcn.startsWith("kotlin.") }
             .distinct()
             .toList()

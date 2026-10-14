@@ -269,9 +269,13 @@ internal class ResolutionKotlin(
         /** Profondeur maximale de la chaîne de supertypes. */
         private const val BORN_PROFONDEUR: Int = 6
 
-        /** Importants par défaut du Kotlin (JVM) — noms usuels. */
+        /** Importants par défaut du Kotlin (JVM) — noms usuels.
+         *  Source : https://kotlinlang.org/docs/packages.html#default-imports
+         *  KP8 : ajout des types manquants (ArrayList, StringBuilder, etc.)
+         *  qui causaient de faux `kt.unresolved` sur du code parfaitement valide. */
         private val IMPORTS_DEFAUT: Map<String, String> =
             mapOf(
+                // kotlin.*
                 "String" to "kotlin.String",
                 "Int" to "kotlin.Int",
                 "Long" to "kotlin.Long",
@@ -284,6 +288,18 @@ internal class ResolutionKotlin(
                 "Any" to "kotlin.Any",
                 "Unit" to "kotlin.Unit",
                 "Nothing" to "kotlin.Nothing",
+                "Pair" to "kotlin.Pair",
+                "Triple" to "kotlin.Triple",
+                "Array" to "kotlin.Array",
+                "ByteArray" to "kotlin.ByteArray",
+                "IntArray" to "kotlin.IntArray",
+                "LongArray" to "kotlin.LongArray",
+                "Result" to "kotlin.Result",
+                "UByte" to "kotlin.UByte",
+                "UShort" to "kotlin.UShort",
+                "UInt" to "kotlin.UInt",
+                "ULong" to "kotlin.ULong",
+                // kotlin.collections.*
                 "List" to "kotlin.collections.List",
                 "MutableList" to "kotlin.collections.MutableList",
                 "Map" to "kotlin.collections.Map",
@@ -291,15 +307,51 @@ internal class ResolutionKotlin(
                 "Set" to "kotlin.collections.Set",
                 "MutableSet" to "kotlin.collections.MutableSet",
                 "Collection" to "kotlin.collections.Collection",
+                "MutableCollection" to "kotlin.collections.MutableCollection",
                 "Iterable" to "kotlin.collections.Iterable",
+                "MutableIterable" to "kotlin.collections.MutableIterable",
+                "ArrayList" to "kotlin.collections.ArrayList",
+                "HashMap" to "kotlin.collections.HashMap",
+                "HashSet" to "kotlin.collections.HashSet",
+                "LinkedHashMap" to "kotlin.collections.LinkedHashMap",
+                "LinkedHashSet" to "kotlin.collections.LinkedHashSet",
                 "Sequence" to "kotlin.sequences.Sequence",
-                "Pair" to "kotlin.Pair",
-                "Triple" to "kotlin.Triple",
+                // kotlin.ranges.*
+                "IntRange" to "kotlin.ranges.IntRange",
+                "LongRange" to "kotlin.ranges.LongRange",
+                "CharRange" to "kotlin.ranges.CharRange",
+                // kotlin.text.*
+                "StringBuilder" to "kotlin.text.StringBuilder",
+                "Regex" to "kotlin.text.Regex",
+                "MatchResult" to "kotlin.text.MatchResult",
+                // kotlin.comparisons.*
+                "Comparator" to "kotlin.comparisons.Comparator",
+                // kotlin.exceptions.*
                 "RuntimeException" to "kotlin.RuntimeException",
                 "Exception" to "kotlin.Exception",
                 "Throwable" to "kotlin.Throwable",
                 "IllegalArgumentException" to "kotlin.IllegalArgumentException",
                 "IllegalStateException" to "kotlin.IllegalStateException",
+                "NullPointerException" to "kotlin.NullPointerException",
+                "IndexOutOfBoundsException" to "kotlin.IndexOutOfBoundsException",
+                "ClassCastException" to "kotlin.ClassCastException",
+                "ArithmeticException" to "kotlin.ArithmeticException",
+                "NumberFormatException" to "kotlin.NumberFormatException",
+                "UnsupportedOperationException" to "kotlin.UnsupportedOperationException",
+                "NoSuchElementException" to "kotlin.NoSuchElementException",
+                // kotlin.io.*
+                "PrintStream" to "kotlin.io.PrintStream",
+                // java.lang.* (default import JVM)
+                "Object" to "java.lang.Object",
+                "Class" to "java.lang.Class",
+                "System" to "java.lang.System",
+                "Math" to "java.lang.Math",
+                "Comparable" to "java.lang.Comparable",
+                "Runnable" to "java.lang.Runnable",
+                "Thread" to "java.lang.Thread",
+                "Override" to "java.lang.Override",
+                "Deprecated" to "java.lang.Deprecated",
+                "SuppressWarnings" to "java.lang.SuppressWarnings",
             )
 
         /** Alias JVM ↔ Kotlin (récepteurs d'extensions). */
