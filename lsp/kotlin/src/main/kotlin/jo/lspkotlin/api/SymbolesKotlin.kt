@@ -119,3 +119,63 @@ public object PertinencesKotlin {
     /** Mot-clé du langage. */
     public const val MOT_CLE: Int = 100
 }
+
+/**
+ * Symbole de document (`textDocument/documentSymbol`, S1) — un nœud
+ * HIÉRARCHIQUE de l'arbre Kotlin (classe, fonction, propriété…),
+ * miroir AST → outline éditeur. La traduction vers `DocumentSymbol`
+ * LSP (kinds, ranges UTF-16, enfants imbriqués) appartient à l'hôte.
+ *
+ * Plages : décalages de caractères dans le texte source (la conversion
+ * ligne/colonne UTF-16 appartient à l'hôte, comme pour
+ * `EmplacementKotlin`).
+ *
+ * @property nom nom de la déclaration (`Foo`, `bar`, `x`).
+ * @property detail détail optionnel — signature courte pour les
+ *           fonctions (`(a: Int): String`), supertypes pour les classes
+ *           (`: Base`), type pour les propriétés (`: String`). `null`
+ *           si non pertinent.
+ * @property genre genre du symbole (→ SymbolKind LSP côté hôte).
+ * @property debutNom décalage de début du NOM (sélection fine —
+ *           curseur « aller à »).
+ * @property finNom décalage de fin du NOM (exclusif).
+ * @property debutTotal décalage de début de la DÉCLARATION COMPLÈTE
+ *           (du `class`/`fun`/`val` au `}` fermant).
+ * @property finTotal décalage de fin de la DÉCLARATION COMPLÈTE (exclusif).
+ * @property enfants symboles enfants (membres d'une classe, entrées
+ *           d'énumération…). Récursif — l'arbre LSP == l'arbre AST.
+ */
+public data class SymboleDocumentKotlin(
+    public val nom: String,
+    public val detail: String?,
+    public val genre: GenreSymboleKotlin,
+    public val debutNom: Int,
+    public val finNom: Int,
+    public val debutTotal: Int,
+    public val finTotal: Int,
+    public val enfants: List<SymboleDocumentKotlin>,
+)
+
+/** Genre d'un symbole de document Kotlin (→ SymbolKind LSP côté hôte). */
+public enum class GenreSymboleKotlin {
+    /** Classe (data / abstract / sealed / enum class). */
+    CLASSE,
+
+    /** Interface. */
+    INTERFACE,
+
+    /** Objet (compagnon compris). */
+    OBJET,
+
+    /** Fonction (extension comprise). */
+    FONCTION,
+
+    /** Propriété (extension comprise). */
+    PROPRIETE,
+
+    /** Entrée d'énumération. */
+    ENTREE_ENUM,
+
+    /** Alias de type. */
+    ALIAS,
+}

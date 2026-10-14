@@ -35,6 +35,7 @@ package jo.lspkotlin.api
  * descripteur (versionMinimaleApp) borne le passé, les défauts
  * supportent le présent.
  */
+@Suppress("TooManyFunctions")
 public interface SessionLangageKotlin : AutoCloseable {
     /**
      * Ouvre (ou remplace) le document [uri] avec le texte intégral
@@ -159,6 +160,21 @@ public interface SessionLangageKotlin : AutoCloseable {
      *         préséance) ; liste VIDE sans candidat.
      */
     public fun importsCandidats(uri: String, decalage: Int): List<String> = emptyList()
+
+    /**
+     * Symboles de document (`textDocument/documentSymbol`, S1) —
+     * structure hiérarchique de l'arbre Kotlin : classes, fonctions,
+     * propriétés, objets, enum entries, typealias. L'outline éditeur
+     * (bascule rapide vers une déclaration, pliage par membre) se
+     * branche ici. Document inconnu/fermé : liste VIDE.
+     *
+     * @param uri identité du document.
+     * @return la liste des symboles DE PREMIER NIVEAU (un fichier
+     *         Kotlin peut en avoir plusieurs — classes, fonctions,
+     *         propriétés top-level), chaque symbole portant ses
+     *         [SymboleDocumentKotlin.enfants] (membres, paramètres…).
+     */
+    public fun symbolesDocument(uri: String): List<SymboleDocumentKotlin> = emptyList()
 
     /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :

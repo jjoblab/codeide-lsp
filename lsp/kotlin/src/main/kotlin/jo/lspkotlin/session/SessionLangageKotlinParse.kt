@@ -6,6 +6,7 @@ import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
+import jo.lspkotlin.api.SymboleDocumentKotlin
 import jo.lspkotlin.completion.CompletionKotlin
 import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
@@ -19,6 +20,7 @@ import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.InterrogationsSymboles
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SymbolesProjet
+import jo.lspkotlin.symboles.SymbolesDocumentKotlin
 import jo.lspkotlin.synthetics.ClassesSynthetiques
 import java.io.File
 
@@ -213,6 +215,20 @@ internal class SessionLangageKotlinParse(
                 index = if (classpath == null) null else indexAppelables,
                 vue = classpath?.vue,
             )
+        }
+
+    /**
+     * Symboles de document (S1) — miroir AST → outline LSP. Le travail
+     * de classification (CLASSE / FONCTION / PROPRIETE…) vit dans
+     * [SymbolesDocumentKotlin] ; la session ne fait que piocher le
+     * document courant. Document inconnu/fermé : liste VIDE.
+     */
+    override fun symbolesDocument(uri: String): List<SymboleDocumentKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val fichier = KtFile(document.arbre.racine)
+            SymbolesDocumentKotlin.depuis(fichier)
         }
 
     override fun close() {

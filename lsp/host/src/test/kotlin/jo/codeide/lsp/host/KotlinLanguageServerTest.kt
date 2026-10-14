@@ -51,6 +51,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * vendorée du classpath de test) — seuls les tests de CYCLE DE VIE de la
  * façade utilisent un moteur factice injecté.
  */
+@Suppress("LargeClass")
 class KotlinLanguageServerTest {
     /** Dossier temporaire des racines de projet (Jupiter). */
     @field:TempDir
@@ -272,6 +273,87 @@ class KotlinLanguageServerTest {
                 .join()
         assertTrue(definitions.left.isEmpty())
         session.close()
+    }
+
+    @Test
+    fun `documentSymbol - classe avec membres rendue en arbre hiérarchique`() {
+        val espace = espaceAvecEspion()
+        val texte =
+            "class Foo(val a: Int) {\n" +
+                "    fun bar(x: Int): String = \"\"\n" +
+                "    val baz: Int = 0\n" +
+                "}\n"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, texte)),
+        )
+        val symboles =
+            espace.serveur.textDocumentService
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(TextDocumentIdentifier("file:///a.kt")),
+                ).join()
+        assertEquals(1, symboles.size, "un seul symbole top-level")
+        val classe = symboles.single().right
+        assertEquals("Foo", classe.name)
+        assertEquals(org.eclipse.lsp4j.SymbolKind.Class, classe.kind, "CLASSE → Class")
+        // 2 enfants : bar (fonction) + baz (propriété)
+        assertEquals(2, classe.children.size, "deux membres déclarés")
+        val noms = classe.children.map { it.name }
+        assertTrue(noms.contains("bar"), "fonction bar présente")
+        assertTrue(noms.contains("baz"), "propriété baz présente")
+        val bar = classe.children.first { it.name == "bar" }
+        assertEquals(org.eclipse.lsp4j.SymbolKind.Method, bar.kind, "FONCTION → Method")
+        assertTrue(bar.detail?.contains("(x: Int): String") == true, "détail = signature")
+        val baz = classe.children.first { it.name == "baz" }
+        assertEquals(org.eclipse.lsp4j.SymbolKind.Property, baz.kind, "PROPRIETE → Property")
+        assertTrue(baz.detail?.contains(": Int") == true, "détail = type")
+        espace.fermer()
+    }
+
+    @Test
+    fun `documentSymbol - objets et interfaces distingues`() {
+        val espace = espaceAvecEspion()
+        val texte =
+            "interface Iface { fun a() }\n" +
+                "object Obj { val x = 1 }\n" +
+                "typealias Str = String\n"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, texte)),
+        )
+        val symboles =
+            espace.serveur.textDocumentService
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(TextDocumentIdentifier("file:///a.kt")),
+                ).join()
+        assertEquals(3, symboles.size, "trois symboles top-level")
+        val noms = symboles.map { it.right.name }
+        assertTrue(noms.contains("Iface"), "interface présente")
+        assertTrue(noms.contains("Obj"), "objet présent")
+        assertTrue(noms.contains("Str"), "typealias présent")
+        val iface = symboles.first { it.right.name == "Iface" }.right
+        assertEquals(org.eclipse.lsp4j.SymbolKind.Interface, iface.kind, "INTERFACE → Interface")
+        val obj = symboles.first { it.right.name == "Obj" }.right
+        assertEquals(org.eclipse.lsp4j.SymbolKind.Object, obj.kind, "OBJET → Object")
+        val alias = symboles.first { it.right.name == "Str" }.right
+        assertEquals(org.eclipse.lsp4j.SymbolKind.TypeParameter, alias.kind, "ALIAS → TypeParameter")
+        // L'interface a 1 enfant (a), l'objet a 1 enfant (x).
+        assertEquals(1, iface.children.size, "interface a un membre")
+        assertEquals(1, obj.children.size, "objet a un membre")
+        espace.fermer()
+    }
+
+    @Test
+    fun `documentSymbol - document inconnu rend liste vide, sans exception`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val symboles =
+            espace.serveur.textDocumentService
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(TextDocumentIdentifier("file:///inconnu.kt")),
+                ).join()
+        assertTrue(symboles.isEmpty(), "document inconnu → outline vide")
+        espace.fermer()
     }
 
     @Test

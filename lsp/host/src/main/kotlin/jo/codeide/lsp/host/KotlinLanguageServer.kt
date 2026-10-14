@@ -3,9 +3,11 @@ package jo.codeide.lsp.host
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.GenreCompletionKotlin
+import jo.lspkotlin.api.GenreSymboleKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import jo.lspkotlin.api.SymboleDocumentKotlin
 import org.eclipse.lsp4j.CodeAction
 import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionParams
@@ -24,6 +26,8 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentSymbol
+import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
@@ -34,6 +38,8 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
+import org.eclipse.lsp4j.SymbolInformation
+import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
@@ -124,6 +130,9 @@ internal class KotlinLanguageServer(
         capacites.setHoverProvider(true)
         capacites.setDefinitionProvider(true)
         capacites.setCodeActionProvider(true)
+        // S1 : OUTLINE documentSymbol — miroir AST → DocumentSymbols
+        // hiérarchiques (CLASSE / FONCTION / PROPRIETE / OBJET…).
+        capacites.setDocumentSymbolProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -370,6 +379,72 @@ internal class KotlinLanguageServer(
                 }
             return CompletableFuture.completedFuture(Either.forLeft(locations))
         }
+
+        /**
+         * Outline (S1) : `textDocument/documentSymbol` — la session
+         * rend l'arbre AST neutre, l'hôte traduit en `DocumentSymbol`
+         * LSP (kinds, ranges UTF-16, enfants imbriqués). Liste VIDE
+         * pour un document inconnu ou fermé (jamais d'exception).
+         */
+        override fun documentSymbol(
+            params: DocumentSymbolParams,
+        ): CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val symboles =
+                try {
+                    session.symbolesDocument(uri)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "documentSymbol échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                symboles.map { symbole ->
+                    Either.forRight<SymbolInformation, DocumentSymbol>(symboleLspDe(symbole, document.texte))
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Symbole neutre → DocumentSymbol LSP : nom, détail, kind,
+         * plage (déclaration complète) et selectionRange (nom seul),
+         * enfants récursifs. La conversion offset → Position UTF-16 est
+         * partagée avec le reste du serveur (decalageDe / positionDe).
+         */
+        private fun symboleLspDe(
+            symbole: SymboleDocumentKotlin,
+            texte: String,
+        ): DocumentSymbol {
+            val plage = Range(positionDe(symbole.debutTotal, texte), positionDe(symbole.finTotal, texte))
+            val selection = Range(positionDe(symbole.debutNom, texte), positionDe(symbole.finNom, texte))
+            val enfants = symbole.enfants.map { enfant -> symboleLspDe(enfant, texte) }
+            val sym =
+                DocumentSymbol(
+                    // name =
+                    symbole.nom,
+                    // kind =
+                    kindLspDe(symbole.genre),
+                    // range =
+                    plage,
+                    // selectionRange =
+                    selection,
+                )
+            symbole.detail?.let { sym.detail = it }
+            if (enfants.isNotEmpty()) sym.children = enfants
+            return sym
+        }
+
+        /** Genre neutre → SymbolKind LSP. */
+        private fun kindLspDe(genre: GenreSymboleKotlin): SymbolKind =
+            when (genre) {
+                GenreSymboleKotlin.CLASSE -> SymbolKind.Class
+                GenreSymboleKotlin.INTERFACE -> SymbolKind.Interface
+                GenreSymboleKotlin.OBJET -> SymbolKind.Object
+                GenreSymboleKotlin.FONCTION -> SymbolKind.Method
+                GenreSymboleKotlin.PROPRIETE -> SymbolKind.Property
+                GenreSymboleKotlin.ENTREE_ENUM -> SymbolKind.EnumMember
+                GenreSymboleKotlin.ALIAS -> SymbolKind.TypeParameter
+            }
 
         /** Version vide typée de la réponse définition. */
         private fun emptyLeft(): Either<List<org.eclipse.lsp4j.Location>, List<org.eclipse.lsp4j.LocationLink>> =
