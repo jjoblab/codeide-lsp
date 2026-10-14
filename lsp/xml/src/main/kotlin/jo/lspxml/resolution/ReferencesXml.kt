@@ -183,9 +183,11 @@ public object ReferencesXml {
                     "${reference.type} « ${reference.nom} » — projet, ${declaration.fichier.name}",
                 )
 
-            reference.framework || !index.estChaud ->
-                ContenuSurvoleXml("${reference.type} « ${reference.nom} » — framework android")
-
+            // XP6 : si l'index est froid (dumb mode), on NE MENT PAS —
+            // retourner null (sous-rapport honnête) au lieu d'affirmer
+            // "framework android" pour une ressource projet non indexée.
+            reference.framework -> ContenuSurvoleXml("${reference.type} « ${reference.nom} » — framework android")
+            !index.estChaud -> null
             else -> null
         }
     }

@@ -38,7 +38,10 @@ internal object ReglesReferences {
         return diagnostics
     }
 
-    /** Sonne un élément : chaque valeur de référence est éprouvée. */
+    /** Sonne un élément : chaque valeur de référence est éprouvée.
+     *  XP2 : les attributs `tools:*` et `xmlns:*` sont IGNORÉS — aapt
+     *  ne les traite pas comme des références réelles (ils servent au
+     *  design-time uniquement). */
     private fun sonder(
         element: XmlElement,
         index: IndexRessources,
@@ -46,12 +49,19 @@ internal object ReglesReferences {
         diagnostics: MutableList<DiagnosticXml>,
     ) {
         for (attribut in element.attributs) {
+            // XP2 : ignorer les attributs tools:* et xmlns:* — ils ne
+            // sont pas des références réelles pour aapt.
+            if (attribut.prefixe == "tools" || attribut.prefixe == "xmlns") continue
             val reference = referenceDEntree(attribut)
             if (reference != null && !ReferencesXml.estResolue(reference, index, catalogue)) {
                 diagnostics.add(
                     DiagnosticXml(
                         code = CodesDiagnosticsXml.REFERENCE_NON_RESOLUE,
-                        severite = SeveriteXml.ERREUR,
+                        // XP1 : downgrade en WARNING tant que les
+                        // ressources de dépendances (AAR) ne sont pas
+                        // indexées — un ERROR sur @style/Theme.Material3
+                        // est un faux positif.
+                        severite = SeveriteXml.AVERTISSEMENT,
                         message =
                             "référence « ${reference.type}/${reference.nom} » " +
                                 "introuvable (projet et framework)",
