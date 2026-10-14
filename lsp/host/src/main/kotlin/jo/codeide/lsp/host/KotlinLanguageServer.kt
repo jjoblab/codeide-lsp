@@ -297,7 +297,9 @@ internal class KotlinLanguageServer(
         }
 
         override fun didSave(params: DidSaveTextDocumentParams) {
-            // Rien : les diagnostics vivent au didChange.
+            // KP2+KP9 : didSave republice les diagnostics — utile après
+            // un push de classpath qui aurait changé la résolution.
+            publier(params.textDocument.uri)
         }
 
         // ── Requêtes K3 (complétion, survol, définition) ──────────────
@@ -563,8 +565,13 @@ internal class KotlinLanguageServer(
         }
 
         override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
-            // K2 : les documents ouverts vivent au didChange, pas aux
-            // événements de fichiers.
+            // KP10 : republier les diagnostics des documents ouverts —
+            // un fichier externe (créé/modifié par Gradle, terminal,
+            // autre app) peut changer la résolution. Les diagnostics
+            // sont recalculés avec le classpath courant.
+            for (uri in documents.keys) {
+                publier(uri)
+            }
         }
     }
 
