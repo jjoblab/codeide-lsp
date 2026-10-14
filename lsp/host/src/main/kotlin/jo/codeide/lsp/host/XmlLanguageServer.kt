@@ -285,7 +285,9 @@ internal class XmlLanguageServer(
         }
 
         override fun didSave(params: DidSaveTextDocumentParams) {
-            // Rien : les diagnostics vivent au didChange.
+            // XP3+XP7 : didSave republice les diagnostics — utile après
+            // un push de classpath (rescan des ressources).
+            publier(params.textDocument.uri)
         }
 
         /** Complétion au curseur (XE2) — traductions seules, moteur neutre. */
@@ -484,8 +486,12 @@ internal class XmlLanguageServer(
         }
 
         override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
-            // XE1 : les documents ouverts vivent au didChange, pas aux
-            // événements de fichiers.
+            // XP8 : republier les diagnostics des documents ouverts —
+            // un fichier externe (ressource créée/modifiée) peut
+            // changer la résolution des références XML.
+            for (uri in documents.keys) {
+                publier(uri)
+            }
         }
     }
 
