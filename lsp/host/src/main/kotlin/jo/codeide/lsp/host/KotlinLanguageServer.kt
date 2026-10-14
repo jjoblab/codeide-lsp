@@ -118,7 +118,7 @@ internal class KotlinLanguageServer(
         // déclaré (les méthodes non surchargées de LSP4J restent les
         // défauts).
         val completion = CompletionOptions()
-        completion.triggerCharacters = listOf(".")
+        completion.triggerCharacters = listOf(".", ":") // KP12: ":" pour les imports qualifiés
         completion.resolveProvider = false
         capacites.setCompletionProvider(completion)
         capacites.setHoverProvider(true)
@@ -326,7 +326,7 @@ internal class KotlinLanguageServer(
                     emptyList()
                 }
             val items = propositions.map { proposition -> itemLspDe(proposition, texte) }
-            return CompletableFuture.completedFuture(Either.forRight(CompletionList(false, items)))
+            return CompletableFuture.completedFuture(Either.forRight(CompletionList(true, items)))
         }
 
         /** Survol : contenu texte simple (même forme que le LSP Java). */

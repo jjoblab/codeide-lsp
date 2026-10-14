@@ -633,9 +633,8 @@ class KotlinLanguageServerTest {
         val espace = espaceAvecEspion()
         val resultat = espace.serveur.initialize(InitializeParams()).join()
         assertEquals(
-            ".",
-            resultat.capabilities.completionProvider.triggerCharacters
-                .single(),
+            listOf(".", ":"),
+            resultat.capabilities.completionProvider.triggerCharacters,
         )
         assertEquals(true, resultat.capabilities.hoverProvider.left)
         assertEquals(true, resultat.capabilities.definitionProvider.left)
