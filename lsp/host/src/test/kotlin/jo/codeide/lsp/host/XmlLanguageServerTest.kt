@@ -248,11 +248,11 @@ class XmlLanguageServerTest {
                     ),
                 ).join()
         val contenuAttendu =
-            listOf(
-                org.eclipse.lsp4j.jsonrpc.messages.Either
-                    .forLeft<String, Any>("string « hello » — projet, strings.xml"),
+            org.eclipse.lsp4j.MarkupContent(
+                org.eclipse.lsp4j.MarkupKind.PLAINTEXT,
+                "string « hello » — projet, strings.xml",
             )
-        assertEquals(contenuAttendu, survol?.contents?.left)
+        assertEquals(contenuAttendu, survol?.contents?.right)
         val definition =
             espace.serveur.textDocumentService
                 .definition(

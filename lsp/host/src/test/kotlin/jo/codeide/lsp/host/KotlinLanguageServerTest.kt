@@ -678,9 +678,15 @@ class KotlinLanguageServerTest {
             "val titre: String",
             survol
                 ?.contents
-                ?.left
-                ?.single()
-                ?.left,
+                ?.right
+                ?.value,
+        )
+        assertEquals(
+            org.eclipse.lsp4j.MarkupKind.PLAINTEXT,
+            survol
+                ?.contents
+                ?.right
+                ?.kind,
         )
         espace.fermer()
     }

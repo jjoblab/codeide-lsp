@@ -351,7 +351,9 @@ internal class KotlinLanguageServer(
                     null
                 }
             val resultat =
-                contenu?.let { Hover(listOf(Either.forLeft(it.valeur))) }
+                contenu?.let {
+                    Hover(org.eclipse.lsp4j.MarkupContent(org.eclipse.lsp4j.MarkupKind.PLAINTEXT, it.valeur))
+                }
             return CompletableFuture.completedFuture(resultat)
         }
 

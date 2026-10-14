@@ -380,7 +380,10 @@ internal class XmlLanguageServer(
                     LOGGER.log(Level.WARNING, "survol XML échoué ($uri)", t)
                     null
                 }
-            val resultat = contenu?.let { Hover(listOf(Either.forLeft(it.valeur))) }
+            val resultat =
+                contenu?.let {
+                    Hover(org.eclipse.lsp4j.MarkupContent(org.eclipse.lsp4j.MarkupKind.PLAINTEXT, it.valeur))
+                }
             return CompletableFuture.completedFuture(resultat)
         }
 
