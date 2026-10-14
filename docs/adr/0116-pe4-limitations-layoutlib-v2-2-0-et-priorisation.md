@@ -1,6 +1,8 @@
-# ADR 0116 — PE4 : état des limitations LayoutLib v2.2.0 et priorisation de remontée
+# ADR 0116 — PE4 : état des limitations LayoutLib et résolution P0/P1/P2 (v3.0.0)
 
-- **Statut** : proposé (audit PE4, v0.122.2 — `docs/PREVIEW.md` §PE4)
+- **Statut** : accepté et mis à jour (v0.125.1 — P0/P1/P2 **résolus**
+  côté LayoutLib v3.0.0). Audit initial livré en v0.122.2, montée de
+  version LayoutLib v2.2.0 → v3.0.0 livrée en v0.125.1.
 - **Contexte** : la mission PE4 (`docs/PREVIEW.md` §1, table « PE4 »)
   est **continue** : « Remontée des limitations LayoutLib restantes à
   l'auteur + bump de version priorisé (ConstraintLayout solver d'abord
