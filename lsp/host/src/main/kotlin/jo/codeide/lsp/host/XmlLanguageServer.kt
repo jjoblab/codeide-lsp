@@ -2,9 +2,11 @@ package jo.codeide.lsp.host
 
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.GenreCompletionXml
+import jo.lspxml.api.GenreSymboleXml
 import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SessionLangageXml
 import jo.lspxml.api.SeveriteXml
+import jo.lspxml.api.SymboleDocumentXml
 import org.eclipse.lsp4j.CodeAction
 import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionParams
@@ -23,6 +25,8 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentSymbol
+import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
@@ -33,6 +37,8 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
+import org.eclipse.lsp4j.SymbolInformation
+import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
@@ -121,6 +127,9 @@ internal class XmlLanguageServer(
         // XE4 : QUICK-FIXES (codeAction — insertion xmlns:android,
         // renommage « did you mean » des balises inconnues).
         capacites.setCodeActionProvider(true)
+        // S1 : OUTLINE documentSymbol — miroir DOM → DocumentSymbols
+        // hiérarchiques (RACINE / VUE / CONTENEUR / ENTREE_VALEURS…).
+        capacites.setDocumentSymbolProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -399,6 +408,31 @@ internal class XmlLanguageServer(
             return CompletableFuture.completedFuture(Either.forLeft(locations))
         }
 
+        /**
+         * Outline (S1) : `textDocument/documentSymbol` — la session
+         * rend l'arbre DOM neutre, l'hôte traduit en `DocumentSymbol`
+         * LSP (kinds, ranges UTF-16, enfants imbriqués). Liste VIDE
+         * pour un document inconnu ou fermé (jamais d'exception).
+         */
+        override fun documentSymbol(
+            params: DocumentSymbolParams,
+        ): CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val symboles =
+                try {
+                    session.symbolesDocument(uri)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "documentSymbol XML échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                symboles.map { symbole ->
+                    Either.forRight<SymbolInformation, DocumentSymbol>(symboleLspDe(symbole, document.texte))
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
         /** Version vide typée de la réponse définition. */
         private fun emptyLeft(): Either<List<Location>, List<org.eclipse.lsp4j.LocationLink>> =
             Either.forLeft(emptyList())
@@ -451,6 +485,48 @@ internal class XmlLanguageServer(
                 GenreCompletionXml.ENTREE_VALEURS -> CompletionItemKind.Value
 
                 GenreCompletionXml.STYLE -> CompletionItemKind.Struct
+            }
+
+        /**
+         * Symbole neutre → DocumentSymbol LSP : nom, détail, kind,
+         * plage (balise complète) et selectionRange (nom seul), enfants
+         * récursifs. La conversion offset → Position UTF-16 est partagée
+         * avec le reste du serveur (decalageDe / positionDe).
+         */
+        private fun symboleLspDe(
+            symbole: SymboleDocumentXml,
+            texte: String,
+        ): DocumentSymbol {
+            val plage = Range(positionDe(symbole.debutSelection, texte), positionDe(symbole.finSelection, texte))
+            val selection = Range(positionDe(symbole.debutPlage, texte), positionDe(symbole.finPlage, texte))
+            val enfants = symbole.enfants.map { enfant -> symboleLspDe(enfant, texte) }
+            val sym =
+                DocumentSymbol(
+                    // name =
+                    symbole.nom,
+                    // kind =
+                    kindLspDe(symbole.genre),
+                    // range =
+                    plage,
+                    // selectionRange =
+                    selection,
+                )
+            symbole.detail?.let { sym.detail = it }
+            if (enfants.isNotEmpty()) sym.children = enfants
+            return sym
+        }
+
+        /** Genre neutre → SymbolKind LSP. */
+        private fun kindLspDe(genre: GenreSymboleXml): SymbolKind =
+            when (genre) {
+                GenreSymboleXml.RACINE -> SymbolKind.Module
+                GenreSymboleXml.VUE -> SymbolKind.Class
+                GenreSymboleXml.CONTENEUR -> SymbolKind.Class
+                GenreSymboleXml.INCLUSION -> SymbolKind.Object
+                GenreSymboleXml.ENTREE_VALEURS -> SymbolKind.Field
+                GenreSymboleXml.STYLE -> SymbolKind.Struct
+                GenreSymboleXml.ITEM -> SymbolKind.Object
+                GenreSymboleXml.AUTRE -> SymbolKind.Object
             }
 
         /** Applique un changement par plage (client non conforme, robustesse). */

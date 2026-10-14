@@ -358,6 +358,82 @@ class XmlLanguageServerTest {
         assertTrue(true, "aucune exception au fil du cycle brutal")
     }
 
+    @Test
+    fun `documentSymbol - layout hierarchique rendu en DocumentSymbols LSP`() {
+        val espace = espaceAvecEspion()
+        val texte =
+            "<LinearLayout xmlns:android=\"u\" android:layout_width=\"1\" " +
+                "android:layout_height=\"2\">" +
+                "<TextView android:text=\"x\"/>" +
+                "<Button android:id=\"@+id/b\"/>" +
+                "</LinearLayout>"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///res/layout/main.xml", "xml", 1, texte)),
+        )
+        val symboles =
+            espace.serveur.textDocumentService
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/layout/main.xml"),
+                    ),
+                ).join()
+        // La racine seule — pas de « sœurs de reprise » dans un layout sain.
+        assertEquals(1, symboles.size, "un seul symbole racine")
+        val racine = symboles.single().right
+        assertEquals("LinearLayout", racine.name)
+        assertEquals(org.eclipse.lsp4j.SymbolKind.Module, racine.kind, "RACINE → SymbolKind.Module")
+        // Deux enfants : TextView + Button (tous deux VUE → SymbolKind.Class).
+        assertEquals(2, racine.children.size, "deux enfants déclarés")
+        val noms = racine.children.map { it.name }
+        assertTrue(noms.contains("TextView"), "TextView présent dans l'outline")
+        assertTrue(noms.contains("Button"), "Button présent dans l'outline")
+        // La selectionRange est STRICTEMENT incluse dans range (spéc LSP).
+        racine.children.forEach { enfant ->
+            assertTrue(enfant.range.start.line <= enfant.selectionRange.start.line, "selectionRange dans range")
+            assertTrue(enfant.range.end.line >= enfant.selectionRange.end.line, "selectionRange dans range")
+        }
+        espace.fermer()
+    }
+
+    @Test
+    fun `documentSymbol - res values enrichi de l attribut name entre crochets`() {
+        val espace = espaceAvecEspion()
+        val texte = "<resources><string name=\"hello\">Salut</string><color name=\"bg\">#FFF</color></resources>"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///res/values/strings.xml", "xml", 1, texte)),
+        )
+        val symboles =
+            espace.serveur.textDocumentService
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/values/strings.xml"),
+                    ),
+                ).join()
+        val racine = symboles.single().right
+        assertEquals("resources", racine.name, "racine values = <resources>")
+        val noms = racine.children.map { it.name }
+        assertTrue(noms.contains("string[hello]"), "entrée string[name] marquée")
+        assertTrue(noms.contains("color[bg]"), "entrée color[name] marquée")
+        espace.fermer()
+    }
+
+    @Test
+    fun `documentSymbol - document inconnu rend liste vide, sans exception`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val symboles =
+            espace.serveur.textDocumentService
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///inconnu.xml"),
+                    ),
+                ).join()
+        assertTrue(symboles.isEmpty(), "document inconnu → outline vide")
+        espace.fermer()
+    }
+
     /** Client espion : collecte les publications de diagnostics. */
     private class EspionClient : LanguageClient {
         public val recus: CopyOnWriteArrayList<PublishDiagnosticsParams> = CopyOnWriteArrayList()

@@ -108,3 +108,67 @@ public data class CorrectifXml(
     public val titre: String,
     public val editions: List<EditionXml>,
 )
+
+/**
+ * Symbole de document (`textDocument/documentSymbol`, S1) — un nœud
+ * HIÉRARCHIQUE de l'arbre XML (racine, enfant, petit-enfant…), miroir
+ * DOM → outline éditeur. La traduction vers `DocumentSymbol` LSP
+ * (kinds, ranges UTF-16, enfants imbriqués) appartient à l'hôte.
+ *
+ * Plages : décalages de caractères dans le texte source (la conversion
+ * ligne/colonne appartient à l'hôte, comme pour `EmplacementXml`).
+ *
+ * @property nom nom de la balise (`LinearLayout`, `string`, `item`) ;
+ *           pour les entrées values l'attribut `name=` est ajouté entre
+ *           crochets (`string[hello]`) — l'outline distingue deux
+ *           entrées sœurs d'un même `values/strings.xml`.
+ * @property detail détail optionnel : préfixe d'espace de noms + nom
+ *           (`android.widget.LinearLayout`), ou nom local court. `null`
+ *           si non pertinent.
+ * @property genre genre du symbole (→ SymbolKind LSP côté hôte).
+ * @property debutPlage décalage de début du NOM du symbole (sélection
+ *           naturelle — curseur « aller à »).
+ * @property finPlage décalage de fin du NOM du symbole (exclusif).
+ * @property debutSelection décalage de début de la PLAGE COMPLÈTE du
+ *           symbole (balise ouvrante → fermante, ou `<>` auto-fermante).
+ * @property finSelection décalage de fin de la PLAGE COMPLÈTE (exclusif).
+ * @property enfants symboles enfants (récursif — l'arbre LSP est
+ *           strictement l'arbre DOM).
+ */
+public data class SymboleDocumentXml(
+    public val nom: String,
+    public val detail: String?,
+    public val genre: GenreSymboleXml,
+    public val debutPlage: Int,
+    public val finPlage: Int,
+    public val debutSelection: Int,
+    public val finSelection: Int,
+    public val enfants: List<SymboleDocumentXml>,
+)
+
+/** Genre d'un symbole de document XML (→ SymbolKind LSP côté hôte). */
+public enum class GenreSymboleXml {
+    /** Élément racine d'un layout/manifest/menu (`<LinearLayout>`, `<manifest>`). */
+    RACINE,
+
+    /** Vue usuelle (`TextView`, `Button`, `ImageView`…) — kind Class LSP. */
+    VUE,
+
+    /** Conteneur de vues (`LinearLayout`, `FrameLayout`…). */
+    CONTENEUR,
+
+    /** Balise « include » ou « merge » (référence / racine fragile). */
+    INCLUSION,
+
+    /** Entrée de `res/values` (`<string>`, `<color>`, `<dimen>`). */
+    ENTREE_VALEURS,
+
+    /** Style ou thème (`<style>`). */
+    STYLE,
+
+    /** Item d'un menu (`<item>`) ou élément générique inconnu. */
+    ITEM,
+
+    /** Balise inconnue / sans genre reconnu. */
+    AUTRE,
+}

@@ -24,6 +24,7 @@ package jo.lspxml.api
  * version), et les doubles de test n'implémentent que ce qu'ils
  * éprouvent (tolérance de version du pack, même patron que Kotlin).
  */
+@Suppress("TooManyFunctions")
 public interface SessionLangageXml : AutoCloseable {
     /**
      * Ouvre (ou remplace) le document [uri] avec le texte intégral
@@ -121,6 +122,19 @@ public interface SessionLangageXml : AutoCloseable {
      *         correctif (jamais d'exception).
      */
     public fun correctifs(uri: String, decalageDuDiagnostic: Int): List<CorrectifXml> = emptyList()
+
+    /**
+     * Symboles de document (`textDocument/documentSymbol`, S1) —
+     * structure hiérarchique du DOM : racine → enfants → petits-enfants.
+     * L'outline éditeur (bascule rapide vers une balise, pliage par
+     * section) se branche ici. Document inconnu/fermé : liste VIDE.
+     *
+     * @param uri identité du document.
+     * @return la liste des symboles RACINES (un document XML en a
+     *         canoniquement une ; les sœurs de reprise vivent dans la
+     *         liste), chaque racine portant ses [SymboleDocumentXml.enfants].
+     */
+    public fun symbolesDocument(uri: String): List<SymboleDocumentXml> = emptyList()
 
     /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :

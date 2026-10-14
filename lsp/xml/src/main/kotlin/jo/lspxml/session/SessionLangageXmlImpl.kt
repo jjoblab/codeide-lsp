@@ -8,6 +8,7 @@ import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
 import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SeveriteXml
+import jo.lspxml.api.SymboleDocumentXml
 import jo.lspxml.catalog.CataloguesPartages
 import jo.lspxml.completion.ClassementXml
 import jo.lspxml.completion.CompletionDrawablesXml
@@ -26,6 +27,7 @@ import jo.lspxml.rules.ReglesManifeste
 import jo.lspxml.rules.ReglesReferences
 import jo.lspxml.rules.ReglesStructure
 import jo.lspxml.rules.ReglesTagInconnu
+import jo.lspxml.symboles.SymbolesDocumentXml
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -465,6 +467,19 @@ internal class SessionLangageXmlImpl(
         }
         return correctifs
     }
+
+    /**
+     * Symboles de document (S1) — miroir DOM → outline LSP. Le travail
+     * de classification (RACINE / VUE / CONTENEUR / ENTREE_VALEURS…)
+     * vit dans [SymbolesDocumentXml] ; la session ne fait que piocher
+     * le document courant. Document inconnu/fermé : liste VIDE.
+     */
+    override fun symbolesDocument(uri: String): List<SymboleDocumentXml> =
+        if (fermee) {
+            emptyList()
+        } else {
+            documents[uri]?.let { SymbolesDocumentXml.depuis(it.document) } ?: emptyList()
+        }
 
     override fun close() {
         if (fermee) return
