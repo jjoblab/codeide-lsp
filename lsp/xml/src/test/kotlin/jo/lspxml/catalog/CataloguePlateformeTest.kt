@@ -84,7 +84,7 @@ class CataloguePlateformeTest {
         // Fixture : le catalogue vit.
         val catalogue = CataloguePlateforme.charger(plateformeFixture(dossier))
         assertNotNull(catalogue)
-        assertEquals(4, catalogue!!.balises.size) // les P ne comptent pas
+        assertEquals(8, catalogue!!.balises.size) // XP4: 4 W + 4 styleables enrichis
         assertTrue(catalogue.balises.containsKey("TextView"))
         assertEquals(
             "android.widget.TextView",

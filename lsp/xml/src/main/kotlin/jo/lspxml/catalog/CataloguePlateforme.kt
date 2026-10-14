@@ -104,7 +104,7 @@ public class CataloguePlateforme internal constructor(
          */
         public fun charger(dossier: File): CataloguePlateforme? {
             if (!dossier.isDirectory) return null
-            val balises = chargerWidgets(File(dossier, "data/widgets.txt"))
+            val balises = chargerWidgets(File(dossier, "data/widgets.txt")).toMutableMap()
             val documentAttrs = analyserAttrs(File(dossier, "data/res/values/attrs.xml"))
             val styleables = mutableMapOf<String, StyleableCatalogue>()
             val attributs = mutableMapOf<String, AttrCatalogue>()
@@ -113,6 +113,13 @@ public class CataloguePlateforme internal constructor(
                     lireRessources(ressources, styleables, attributs)
                 }
             }
+            // XP4 : enrichir le catalogue de balises depuis les
+            // declare-styleable de attrs.xml — les vues qui n'apparaissent
+            // PAS dans widgets.txt (LinearLayout, FrameLayout,
+            // RelativeLayout, ListView, ScrollView, Toolbar, etc.) ont
+            // pourtant un declare-styleable et sont des vues Android
+            // valides. On les ajoute comme balises connues.
+            enrichirBalisesDepuisStyleables(balises, styleables)
             // XE3 : ressources PUBLIQUES du framework (public-final.xml)
             // — la garde « référence framework non résolue » et la
             // complétion @android: y puisent (X4 : absent = silence).
@@ -122,6 +129,47 @@ public class CataloguePlateforme internal constructor(
                 null
             } else {
                 CataloguePlateforme(balises, styleables, attributs, ressourcesFramework)
+            }
+        }
+
+        /**
+         * XP4 : enrichir les balises de vues depuis les declare-styleable.
+         *
+         * `widgets.txt` ne contient que ~37 vues — un reliquat d'Android
+         * 1.x/2.x. `attrs.xml` contient 598 `declare-styleable` dont
+         * LinearLayout, FrameLayout, RelativeLayout, ListView, ScrollView,
+         * Toolbar, CoordinatorLayout, etc. — des vues fondamentales absentes
+         * du catalogue. On les ajoute avec une chaîne de supertypes
+         * déduite du nom (View pour les feuilles, ViewGroup pour les
+         * conteneurs connus).
+         */
+        private fun enrichirBalisesDepuisStyleables(
+            balises: MutableMap<String, BaliseCatalogue>,
+            styleables: Map<String, StyleableCatalogue>,
+        ) {
+            // Vues conteneur connues (ViewGroup) — supertypes déduits.
+            val conteneurs = setOf(
+                "LinearLayout", "FrameLayout", "RelativeLayout",
+                "GridLayout", "TableLayout", "TableRow",
+                "ListView", "GridView", "ScrollView", "HorizontalScrollView",
+                "NestedScrollView", "RecyclerView", "ConstraintLayout",
+                "CoordinatorLayout", "AppBarLayout", "Toolbar",
+                "TabLayout", "CardView", "ViewSwitcher", "ViewFlipper",
+                "AdapterView", "AdapterViewAnimator", "Gallery",
+                "AbsListView", "AbsSpinner", "ExpandableListView",
+                "DatePicker", "TimePicker", "CalendarView",
+                "NumberPicker", "GestureOverlayView",
+            )
+            for (nomStyleable in styleables.keys) {
+                val nomSimple = nomStyleable.substringAfterLast('.')
+                // Ne pas écraser les balises déjà chargées depuis widgets.txt.
+                if (nomSimple in balises) continue
+                val supertypes = if (nomSimple in conteneurs) {
+                    listOf("ViewGroup", "View", "Object")
+                } else {
+                    listOf("View", "Object")
+                }
+                balises[nomSimple] = BaliseCatalogue(nomSimple, "android.widget.$nomSimple", supertypes)
             }
         }
 
