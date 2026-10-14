@@ -197,6 +197,9 @@ internal class SessionLangageXmlImpl(
 
     /** Genres dont la complétion est branchée (le manifest : règles seules). */
     private companion object {
+        /** Nombre maximum de vues projet proposées en complétion de balise (XP5). */
+        private const val LIMITE_VUES_PROJET: Int = 50
+
         private val GENRES_COMPLETABLES: Set<GenreDocument> =
             setOf(
                 GenreDocument.LAYOUT,
@@ -248,14 +251,14 @@ internal class SessionLangageXmlImpl(
     private fun completionBalisesProjet(contexte: Contexte.NomDeBalise): List<PropositionCompletionXml> {
         val vueNoms = classpath?.vueNoms ?: return emptyList()
         val prefixe = contexte.prefixeTape
-        return vueNoms.nomsCommencantPar(prefixe, 50)
+        return vueNoms.nomsCommencantPar(prefixe, LIMITE_VUES_PROJET)
             .map { fqcn ->
                 val nomSimple = fqcn.substringAfterLast('.')
                 PropositionCompletionXml(
                     libelle = nomSimple,
                     genre = GenreCompletionXml.BALISE,
                     detail = "vue projet — $fqcn",
-                    texteTri = ClassementXml.cleTri(50, nomSimple),
+                    texteTri = ClassementXml.cleTri(ClassementXml.RANG_VUE_PROJET, nomSimple),
                 )
             }
     }

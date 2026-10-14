@@ -26,6 +26,9 @@ internal object ClassementXml {
     /** Rang de classement d'une référence FRAMEWORK (après projet). */
     internal const val RANG_REFERENCE_FW: Int = 30
 
+    /** Rang de classement d'une BALISE de vue PROJET (après framework, avant courant). */
+    internal const val RANG_VUE_PROJET: Int = 50
+
     /** Rang de classement d'une VALEUR d'énumération/fanion. */
     internal const val RANG_VALEUR: Int = 10
 
