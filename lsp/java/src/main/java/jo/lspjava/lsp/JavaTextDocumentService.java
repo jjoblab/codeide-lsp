@@ -1502,6 +1502,50 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return CompletableFuture.completedFuture(new org.eclipse.lsp4j.WorkspaceEdit());
     }
 
+    /**
+     * prepareRename (LSP 3.17) : le client demande si le symbole à la
+     * position est renommable AVANT d'ouvrir la boîte de dialogue.
+     * Retourne la plage du nom + un placeholder, ou null si non renommable.
+     */
+    @Override
+    public CompletableFuture<org.eclipse.lsp4j.jsonrpc.messages.Either3<
+            org.eclipse.lsp4j.Range,
+            org.eclipse.lsp4j.PrepareRenameResult,
+            org.eclipse.lsp4j.PrepareRenameDefaultBehavior>> prepareRename(
+            org.eclipse.lsp4j.PrepareRenameParams params) {
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        int offset = toOffset(source, params.getPosition());
+
+        try {
+            var jdt = environment.jdt();
+            if (jdt.isLikelyUsable()) {
+                var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
+                String filePath = uriToPath(uri);
+                var target = renameEngine.targetAt(filePath, source, offset);
+                if (target != null) {
+                    // Retourner la plage du nom + le nom courant comme placeholder
+                    int nameStart = jo.lspjava.ecj.EcjRenameEngine.findWord(
+                            source, target.oldName, offset, offset + 1, false);
+                    if (nameStart < 0) nameStart = offset;
+                    var range = new org.eclipse.lsp4j.Range(
+                            toPosition(source, nameStart),
+                            toPosition(source, nameStart + target.oldName.length()));
+                    return CompletableFuture.completedFuture(
+                        org.eclipse.lsp4j.jsonrpc.messages.Either3.forSecond(
+                            new org.eclipse.lsp4j.PrepareRenameResult(range, target.oldName)
+                        )
+                    );
+                }
+            }
+        } catch (Throwable t) {
+            if (server != null) server.logWarning("prepareRename handler failed for " + uriToPath(uri), t);
+        }
+
+        // null = pas renommable à cette position (le client n'ouvre pas la boîte)
+        return CompletableFuture.completedFuture(null);
+    }
+
     @Override
     public CompletableFuture<List<? extends org.eclipse.lsp4j.TextEdit>> formatting(
             org.eclipse.lsp4j.DocumentFormattingParams params) {

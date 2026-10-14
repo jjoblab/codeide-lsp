@@ -92,6 +92,11 @@ public final class ServerCapabilitiesProvider {
         caps.setDocumentHighlightProvider(true);    // occurrences du symbole
         caps.setReferencesProvider(true);           // find references
         caps.setRenameProvider(true);               // rename symbol
+        // prepareRename : le client demande si le symbole à la position
+        // est renommable AVANT d'ouvrir la boîte de dialogue.
+        org.eclipse.lsp4j.RenameOptions renameOpts = new org.eclipse.lsp4j.RenameOptions();
+        renameOpts.setPrepareProvider(true);
+        caps.setRenameProvider(renameOpts);
         caps.setDocumentFormattingProvider(true);   // format code
 
         // Signature help — déclenché par "(" et ","
