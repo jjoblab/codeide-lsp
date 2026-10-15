@@ -292,8 +292,12 @@ public class ParseurXml {
                     plage = Plage(debut, finBalise),
                 ),
             )
-            // Refermeture implicite : du sommet jusqu'au trouvé (inclus).
+            // v0.134.1 — XP14 : Refermeture implicite. Les éléments
+            // intermédiaires reçoivent une plageFermante (la position de
+            // la fermante qui les referme implicitement) pour que
+            // estFermee retourne true et que le DOM ne mente pas.
             while (ouverts.size - 1 > profondeur) {
+                ouverts.last().plageFermante = Plage(debut, finBalise)
                 fermer(ouverts.last())
             }
             ouverts.last().plageFermante = Plage(debut, finBalise)

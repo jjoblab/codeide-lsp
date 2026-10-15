@@ -108,28 +108,37 @@ internal class XmlLanguageServer(
     override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> {
         val dossiers = params.workspaceFolders?.size ?: 0
         LOGGER.info { "initialize: workspaceFolders=$dossiers (XE1, mono-espace)" }
+        // v0.134.1 — XP9 : négociation capabilities. Lire les capacités
+        // client pour ne déclarer QUE ce que le client consomme. Le client
+        // cel-lsp maison consomme tout, mais un client externe pourrait
+        // ne pas supporter hover/codeAction/documentSymbol — on s'adapte.
+        val capsClient = params.capabilities
+        val texteDoc = capsClient?.textDocument
         val capacites = ServerCapabilities()
         capacites.setTextDocumentSync(TextDocumentSyncKind.Full)
-        // XE2 (LSP_XML §4.4) : complétion (déclencheurs `<` (nouvelle
-        // balise), `=` (valeur) et `:` (espace de noms)) — balises du
-        // catalogue plateforme, attributs de la chaîne de classes.
-        // Honnête : rien d'autre n'est déclaré (le survol et la
-        // définition arrivent XE3).
+        // XE2 : complétion (déclencheurs `<`, `=`, `:`).
         val completion = CompletionOptions()
         completion.triggerCharacters = listOf("<", "=", ":")
         completion.resolveProvider = false
         capacites.setCompletionProvider(completion)
-        // XE3 (LSP_XML §4.4) : SURVOL (référence @type/nom, classe de
-        // balise, format d'attribut) et DÉFINITION (saut au
-        // res/values déclarant). Honnête : rien d'autre.
-        capacites.setHoverProvider(true)
-        capacites.setDefinitionProvider(true)
-        // XE4 : QUICK-FIXES (codeAction — insertion xmlns:android,
-        // renommage « did you mean » des balises inconnues).
-        capacites.setCodeActionProvider(true)
-        // S1 : OUTLINE documentSymbol — miroir DOM → DocumentSymbols
-        // hiérarchiques (RACINE / VUE / CONTENEUR / ENTREE_VALEURS…).
-        capacites.setDocumentSymbolProvider(true)
+        // XE3 : SURVOL et DÉFINITION — seulement si le client les consomme.
+        if (texteDoc?.hover != null) {
+            capacites.setHoverProvider(true)
+        }
+        if (texteDoc?.definition != null) {
+            capacites.setDefinitionProvider(true)
+        }
+        // XE4 : QUICK-FIXES (codeAction).
+        if (texteDoc?.codeAction != null) {
+            capacites.setCodeActionProvider(true)
+        }
+        // S1 : OUTLINE documentSymbol.
+        if (texteDoc?.documentSymbol != null) {
+            capacites.setDocumentSymbolProvider(true)
+        }
+        // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
+        // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
+        // Le client cel-lsp supporte MarkupContent → on l'utilise.
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -305,7 +314,13 @@ internal class XmlLanguageServer(
                     emptyList()
                 }
             val items = propositions.map { proposition -> itemLspDe(proposition) }
-            return CompletableFuture.completedFuture(Either.forRight(CompletionList(false, items)))
+            // v0.134.1 — XP16 : isIncomplete=true si le plafond est atteint.
+            // Le moteur limite à PLAFOND_PROPOSITIONS (60) — si on a exactement
+            // ce nombre, il y a potentiellement PLUS de propositions disponibles
+            // que ce qu'on rend. Le client doit savoir qu'il ne doit pas cacher
+            // d'autres résultats de filtrage.
+            val incomplet = items.size >= SEUIL_COMPLETION_INCOMPLETE
+            return CompletableFuture.completedFuture(Either.forRight(CompletionList(incomplet, items)))
         }
 
         /**
@@ -565,5 +580,9 @@ internal class XmlLanguageServer(
 
         /** Préfixe des codes de diagnostics QUICK-FIXABLES du moteur. */
         private const val PREFIXE_CODE: String = "xml."
+
+        /** v0.134.1 — XP16 : seuil au-delà duquel la complétion est marquée
+         *  isIncomplete=true (le moteur limite à 60 propositions). */
+        private const val SEUIL_COMPLETION_INCOMPLETE: Int = 60
     }
 }
