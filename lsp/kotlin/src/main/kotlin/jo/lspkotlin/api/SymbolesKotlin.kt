@@ -77,9 +77,33 @@ public enum class GenreCompletionKotlin {
  *
  * @property valeur texte du survol (`fun MutableList<T>.triRapide()`,
  *           `class android.widget.TextView`, `val nom: String`).
+ * @property documentation KDoc RENDU de la déclaration visée (S2 —
+ *           sections libres + tags `@param`/`@return`… en texte
+ *           lisible, extrait du commentaire DOC_COMMENT qui précède
+ *           la déclaration, parsé par le KDocParser vendoré) ; `null`
+ *           quand la déclaration n'a pas de KDoc (ou que la cible
+ *           n'est pas du document courant — les déclarations du SCAN
+ *           gardent le survol signature seule : re-parser un fichier
+ *           tiers pour son doc n'est pas un coût K3, choix documenté).
  */
 public data class ContenuSurvoleKotlin(
     public val valeur: String,
+    public val documentation: String? = null,
+)
+
+/**
+ * Plage pliable (`textDocument/foldingRange`, S2 — plan de
+ * stabilisation LSP §3.2) — décalages dans le texte du document, un
+ * pli par région repliable : corps à accolades (classe/objet, bloc,
+ * fonction, lambda, when), liste d'imports, commentaire multi-ligne
+ * (KDoc / bloc).
+ *
+ * @property debut décalage de début de la région (inclus).
+ * @property fin décalage de fin de la région (exclusif).
+ */
+public data class PlagePliableKotlin(
+    public val debut: Int,
+    public val fin: Int,
 )
 
 /**

@@ -2,6 +2,7 @@ package jo.lspkotlin.resolve
 
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.EmplacementKotlin
+import jo.lspkotlin.documentation.DocumentationKotlin
 import jo.lspkotlin.parse.JetonSyntaxique
 import jo.lspkotlin.parse.NoeudSyntaxique
 import jo.lspkotlin.parse.kt.KtDeclaration
@@ -70,14 +71,56 @@ internal object InterrogationsSymboles {
             ?: survolAppelablePortee(nom, contexte)
     }
 
-    /** Survol du NOM DÉCLARÉ sous le curseur (locale comprise). */
+    /**
+     * Survol du NOM DÉCLARÉ sous le curseur (locale comprise) — S2 :
+     * la KDoc du document courant accompagne la signature. Les
+     * déclarations du SCAN (autres fichiers) gardent la signature
+     * seule : re-parser un fichier tiers pour son doc n'est pas un
+     * coût K3 (choix documenté dans [ContenuSurvoleKotlin]).
+     */
     private fun survolNomDeclare(
         racine: NoeudSyntaxique,
         decalage: Int,
         contexte: Contexte,
     ): ContenuSurvoleKotlin? =
-        declarationAuCurseur(racine, decalage, contexte.contexteNom.paquet)
-            ?.let { declaration -> survolDeclaration(declaration) }
+        declarationAuCurseur(racine, decalage, contexte.contexteNom.paquet)?.let { projet ->
+            survolDeclaration(projet)?.let { base ->
+                // S2 : KDoc du document courant — la déclaration VIVE
+                // sous le curseur porte son DOC_COMMENT (les déclarations
+                // du SCAN gardent la signature seule, choix documenté).
+                val documentation =
+                    declarationViveAuCurseur(racine, decalage)?.let { declaration ->
+                        DocumentationKotlin.kdocDe(declaration)
+                    }
+                base.copy(documentation = documentation)
+            }
+        }
+
+    /**
+     * Déclaration VIVE dont le nom est sous le curseur (porteur du
+     * DOC_COMMENT — S2, KDoc). Même marche que [declarationAuCurseur]
+     * (la plus profonde gagne), mais rend l'élément d'arbre au lieu de
+     * sa projection [DeclarationProjet].
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount/LoopWithTooManyJumpStatements —
+     * chaque garde du parcours d'ancêtres (pas une déclaration, nom
+     * introuvable, hors plage) est une ISSUE distincte, même patron
+     * que [declarationAuCurseur].
+     */
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
+    private fun declarationViveAuCurseur(
+        racine: NoeudSyntaxique,
+        decalage: Int,
+    ): KtDeclaration? {
+        val chaine = chaineAncetresA(racine, decalage)
+        for (profondeur in chaine.indices.reversed()) {
+            val declaration = KtElement.depuis(chaine[profondeur]) as? KtDeclaration ?: continue
+            val jeton = declaration.nomJeton() ?: continue
+            if (jeton.debut > decalage || decalage > jeton.fin) continue
+            return declaration
+        }
+        return null
+    }
 
     /** Survol d'une LOCALE/paramètre en portée (la plus proche gagne). */
     private fun survolLocale(

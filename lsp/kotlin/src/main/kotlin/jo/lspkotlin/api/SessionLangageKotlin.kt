@@ -177,6 +177,26 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun symbolesDocument(uri: String): List<SymboleDocumentKotlin> = emptyList()
 
     /**
+     * Plages pliables (`textDocument/foldingRange`, S2 — plan de
+     * stabilisation LSP §3.2) : les régions REPLIABLES du document —
+     * chaque corps à accolades (classe/objet, bloc, fonction, lambda,
+     * when), la liste d'imports, chaque commentaire multi-ligne (KDoc,
+     * bloc). La plage couvre la PAIRE d'accolades (ou le commentaire
+     * entier) — un pli qui ne replie rien (mono-ligne) est filtré par
+     * l'hôte, pas ici (le moteur ne connaît pas les lignes).
+     *
+     * Document inconnu/fermé : liste VIDE (jamais d'exception).
+     *
+     * Tolérance de version : défaut VIDE — un pack K3 face à un hôte
+     * S2 dégrade honnêtement (pas de pliage, jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @return les plages en ordre du document (profondeur d'abord,
+     *         dédupliquées).
+     */
+    public fun plagesPliables(uri: String): List<PlagePliableKotlin> = emptyList()
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document. Idempotente — un appel après close est
      * sans effet, pas une erreur.

@@ -4,6 +4,7 @@ import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
+import jo.lspkotlin.api.PlagePliableKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SymboleDocumentKotlin
@@ -14,6 +15,7 @@ import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
 import jo.lspkotlin.parse.ParseurKotlin
 import jo.lspkotlin.parse.kt.KtFile
+import jo.lspkotlin.plis.PlisDocumentKotlin
 import jo.lspkotlin.resolve.CandidatsImport
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
@@ -229,6 +231,18 @@ internal class SessionLangageKotlinParse(
             val document = documents[uri] ?: return emptyList()
             val fichier = KtFile(document.arbre.racine)
             SymbolesDocumentKotlin.depuis(fichier)
+        }
+
+    /**
+     * Plages pliables (S2) — le travail de collecte vit dans
+     * [PlisDocumentKotlin] ; la session ne fait que piocher le document
+     * courant. Document inconnu/fermé : liste VIDE.
+     */
+    override fun plagesPliables(uri: String): List<PlagePliableKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            PlisDocumentKotlin.depuis(document.arbre.racine)
         }
 
     override fun close() {

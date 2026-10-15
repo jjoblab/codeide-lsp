@@ -5,6 +5,7 @@ import jo.lspkotlin.api.SeveriteKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.TagDiagnosticKotlin
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -256,6 +257,78 @@ class SessionLangageKotlinParseTest {
         session.ouvrirDocument("file:///a.kt", "import kotlin.math.PI\nval x = 1\n")
         val diagnostic = session.diagnostics("file:///a.kt").single()
         assertTrue(diagnostic.informationsLiees.isEmpty())
+        session.close()
+    }
+
+    // ── S2 — pliage + survol riche (plan de stabilisation LSP §3.2) ────
+
+    @Test
+    fun `plages pliables - classe, fonctions, imports et KDoc`() {
+        val session = sessionNeuve()
+        val texte =
+            "import android.view.View\n" +
+                "import android.view.ViewGroup\n" +
+                "\n" +
+                "/** La vue. */\n" +
+                "class Rendu {\n" +
+                "    fun taille(): Int {\n" +
+                "        return 1\n" +
+                "    }\n" +
+                "}\n"
+        session.ouvrirDocument("file:///a.kt", texte)
+        val plages = session.plagesPliables("file:///a.kt")
+        // Imports (1), KDoc (2), corps de classe (3), corps de fonction (4).
+        assertEquals(4, plages.size)
+        assertEquals(texte.indexOf("import"), plages[0].debut)
+        assertEquals("le KDoc commence après les imports", texte.indexOf("/**"), plages[1].debut)
+        assertEquals("corps de classe à l'accolade", texte.indexOf('{'), plages[2].debut)
+        assertEquals(
+            "corps de fonction à l'accolade",
+            texte.indexOf('{', texte.indexOf("taille")),
+            plages[3].debut,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `plages pliables - document inconnu, ferme ou vide, jamais d exception`() {
+        val session = sessionNeuve()
+        assertTrue(session.plagesPliables("file:///inconnu.kt").isEmpty())
+        session.ouvrirDocument("file:///a.kt", "")
+        assertTrue(session.plagesPliables("file:///a.kt").isEmpty())
+        session.close()
+        assertTrue(session.plagesPliables("file:///a.kt").isEmpty())
+    }
+
+    @Test
+    fun `survol riche - la KDoc du document courant accompagne la signature (S2)`() {
+        val session = sessionNeuve()
+        val texte =
+            "/**\n" +
+                " * La vue de rendu.\n" +
+                " * @param largeur en pixels\n" +
+                " */\n" +
+                "class Rendu(largeur: Int)\n"
+        session.ouvrirDocument("file:///a.kt", texte)
+        // Survol du NOM de la classe (offset du « R » de Rendu).
+        val curseur = texte.indexOf("Rendu") + 1
+        val survol = session.survol("file:///a.kt", curseur)!!
+        assertEquals("class Rendu", survol.valeur)
+        assertEquals(
+            "La vue de rendu.\n@param largeur — en pixels",
+            survol.documentation,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `survol sans KDoc - documentation absente, signature seule`() {
+        val session = sessionNeuve()
+        val texte = "class Nue(largeur: Int)\n"
+        session.ouvrirDocument("file:///a.kt", texte)
+        val survol = session.survol("file:///a.kt", texte.indexOf("Nue") + 1)!!
+        assertEquals("class Nue", survol.valeur)
+        assertNull(survol.documentation)
         session.close()
     }
 }

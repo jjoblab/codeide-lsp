@@ -31,6 +31,8 @@ import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.DocumentSymbol
 import org.eclipse.lsp4j.DocumentSymbolParams
+import org.eclipse.lsp4j.FoldingRange
+import org.eclipse.lsp4j.FoldingRangeRequestParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
@@ -136,6 +138,9 @@ internal class KotlinLanguageServer(
         // S1 : OUTLINE documentSymbol — miroir AST → DocumentSymbols
         // hiérarchiques (CLASSE / FONCTION / PROPRIETE / OBJET…).
         capacites.setDocumentSymbolProvider(true)
+        // S2 (v0.134.9) : PLIAGE foldingRange — corps à accolades,
+        // liste d'imports, commentaires multi-lignes (miroir XP11 XML).
+        capacites.setFoldingRangeProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -366,7 +371,11 @@ internal class KotlinLanguageServer(
             return CompletableFuture.completedFuture(Either.forRight(CompletionList(true, items)))
         }
 
-        /** Survol : contenu texte simple (même forme que le LSP Java). */
+        /**
+         * Survol : signature en PLAINTEXT, ou MARKDOWN quand le moteur
+         * a attaché la KDoc de la déclaration (S2 — bloc de code
+         * Kotlin + documentation, même patron que JDT.LS/fwcd).
+         */
         override fun hover(params: HoverParams): CompletableFuture<Hover?> {
             val uri = params.textDocument.uri
             val document = documents[uri] ?: return CompletableFuture.completedFuture(null)
@@ -380,7 +389,16 @@ internal class KotlinLanguageServer(
                 }
             val resultat =
                 contenu?.let {
-                    Hover(org.eclipse.lsp4j.MarkupContent(org.eclipse.lsp4j.MarkupKind.PLAINTEXT, it.valeur))
+                    if (it.documentation.isNullOrBlank()) {
+                        Hover(org.eclipse.lsp4j.MarkupContent(org.eclipse.lsp4j.MarkupKind.PLAINTEXT, it.valeur))
+                    } else {
+                        Hover(
+                            org.eclipse.lsp4j.MarkupContent(
+                                org.eclipse.lsp4j.MarkupKind.MARKDOWN,
+                                "```kotlin\n${it.valeur}\n```\n\n${it.documentation}",
+                            ),
+                        )
+                    }
                 }
             return CompletableFuture.completedFuture(resultat)
         }
@@ -431,6 +449,36 @@ internal class KotlinLanguageServer(
             val resultat =
                 symboles.map { symbole ->
                     Either.forRight<SymbolInformation, DocumentSymbol>(symboleLspDe(symbole, document.texte))
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Pliage (S2, miroir XP11 XML) : `textDocument/foldingRange` —
+         * la session rend les plages d'arbre neutres (décalages), l'hôte
+         * traduit en lignes LSP. Une plage mono-ligne (ouvrante et
+         * fermante sur la même ligne) N'EST PAS émise : un pli qui ne
+         * replie rien n'est que du bruit pour le client (choix
+         * documenté, testé). Document inconnu/fermé : liste VIDE.
+         */
+        override fun foldingRange(params: FoldingRangeRequestParams): CompletableFuture<List<FoldingRange>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val plages =
+                try {
+                    session.plagesPliables(uri)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "foldingRange Kotlin échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                plages.mapNotNull { plage ->
+                    val debut = document.convertisseur.positionDe(plage.debut)
+                    val fin = document.convertisseur.positionDe(plage.fin)
+                    if (fin.line <= debut.line) {
+                        return@mapNotNull null
+                    }
+                    FoldingRange(debut.line, fin.line)
                 }
             return CompletableFuture.completedFuture(resultat)
         }

@@ -356,6 +356,112 @@ class KotlinLanguageServerTest {
         espace.fermer()
     }
 
+    // ── S2 — foldingRange + survol riche (plan de stabilisation §3.2) ──
+
+    @Test
+    fun `capacités S2 - foldingRangeProvider déclaré (honnête)`() {
+        val espace = espaceAvecEspion()
+        val resultat = espace.serveur.initialize(InitializeParams()).join()
+        assertEquals(true, resultat.capabilities.foldingRangeProvider.left, "pliage déclaré (S2)")
+        espace.fermer()
+    }
+
+    @Test
+    fun `foldingRange - corps, imports et KDoc traduits en lignes LSP`() {
+        val espace = espaceAvecEspion()
+        val texte =
+            "import android.view.View\n" +
+                "import android.view.ViewGroup\n" +
+                "\n" +
+                "/** La vue. */\n" +
+                "class Rendu {\n" +
+                "    fun taille(): Int {\n" +
+                "        return 1\n" +
+                "    }\n" +
+                "}\n"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, texte)),
+        )
+        val plis =
+            espace.serveur.textDocumentService
+                .foldingRange(
+                    org.eclipse.lsp4j.FoldingRangeRequestParams(TextDocumentIdentifier("file:///a.kt")),
+                ).join()
+        // Imports 0→1, KDoc 3→3 (mono-ligne FILTRÉ), classe 4→8,
+        // fonction 5→7.
+        assertEquals(3, plis.size, "imports + classe + fonction (KDoc mono-ligne filtré)")
+        assertEquals(0, plis[0].startLine, "pli imports : ligne 0")
+        assertEquals(1, plis[0].endLine, "pli imports : dernière ligne d'import")
+        assertEquals(4, plis[1].startLine, "pli classe : ligne ouvrante")
+        assertEquals(8, plis[1].endLine, "pli classe : ligne fermante")
+        assertEquals(5, plis[2].startLine, "pli fonction : ligne ouvrante")
+        assertEquals(7, plis[2].endLine, "pli fonction : ligne fermante")
+        espace.fermer()
+    }
+
+    @Test
+    fun `foldingRange - pli mono-ligne non emis, document inconnu liste vide`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "fun f() {}\n")),
+        )
+        val plis =
+            espace.serveur.textDocumentService
+                .foldingRange(
+                    org.eclipse.lsp4j.FoldingRangeRequestParams(TextDocumentIdentifier("file:///a.kt")),
+                ).join()
+        assertTrue(plis.isEmpty(), "aucun pli mono-ligne (choix documenté)")
+        val inconnu =
+            espace.serveur.textDocumentService
+                .foldingRange(
+                    org.eclipse.lsp4j.FoldingRangeRequestParams(TextDocumentIdentifier("file:///inconnu.kt")),
+                ).join()
+        assertTrue(inconnu.isEmpty(), "document inconnu → plis vides")
+        espace.fermer()
+    }
+
+    @Test
+    fun `survol riche - KDoc attachée, markdown avec bloc de code`() {
+        val session =
+            SessionScriptee(
+                survols = ContenuSurvoleKotlin("class Rendu", "La vue de rendu.\n@param largeur — en pixels"),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "class Rendu(largeur: Int)\n")),
+        )
+        val survol =
+            serveur.textDocumentService
+                .hover(
+                    HoverParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 7)),
+                ).join()
+        assertEquals(org.eclipse.lsp4j.MarkupKind.MARKDOWN, survol?.contents?.right?.kind)
+        assertEquals(
+            "```kotlin\nclass Rendu\n```\n\nLa vue de rendu.\n@param largeur — en pixels",
+            survol?.contents?.right?.value,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `survol sans documentation - plaintext inchangé (S2, repli honnête)`() {
+        val session = SessionScriptee(survols = ContenuSurvoleKotlin("val titre: String"))
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val titre: String = \"a\"\n")),
+        )
+        val survol =
+            serveur.textDocumentService
+                .hover(
+                    HoverParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 5)),
+                ).join()
+        assertEquals(org.eclipse.lsp4j.MarkupKind.PLAINTEXT, survol?.contents?.right?.kind)
+        assertEquals("val titre: String", survol?.contents?.right?.value)
+        session.close()
+    }
+
     @Test
     fun `complétion auto-import - edition additionnelle apres le dernier import`() {
         val session =
