@@ -207,22 +207,12 @@ internal class XmlLanguageServer(
             )
         }
 
-    /** Position LSP (ligne, colonne UTF-16) d'un décalage du texte. */
+    /** Position LSP (ligne, colonne UTF-16) d'un décalage du texte.
+     *  v0.134.0 — XP15 : utilise ConvertisseurPositions (O(log n) au lieu de O(n)). */
     private fun positionDe(
         decalage: Int,
         texte: String,
-    ): Position {
-        val borne = decalage.coerceIn(0, texte.length)
-        var ligne = 0
-        var debutLigne = 0
-        for (index in 0 until borne) {
-            if (texte[index] == '\n') {
-                ligne += 1
-                debutLigne = index + 1
-            }
-        }
-        return Position(ligne, borne - debutLigne)
-    }
+    ): Position = ConvertisseurPositions.pour(texte).positionDe(decalage)
 
     /** Gravité LSP d'une gravité neutre. */
     private fun severiteLspDe(severite: SeveriteXml): DiagnosticSeverity =
@@ -543,19 +533,12 @@ internal class XmlLanguageServer(
             return StringBuilder(texte).replace(debut, fin.coerceAtLeast(debut), remplacement).toString()
         }
 
-        /** Décalage d'une position LSP dans le texte (best effort borné). */
+        /** Décalage d'une position LSP dans le texte (best effort borné).
+         *  v0.134.0 — XP15 : utilise ConvertisseurPositions (O(1) au lieu de O(n)). */
         private fun decalageDe(
             position: Position,
             texte: String,
-        ): Int {
-            var decalage = 0
-            var ligne = 0
-            while (ligne < position.line && decalage < texte.length) {
-                if (texte[decalage] == '\n') ligne += 1
-                decalage += 1
-            }
-            return (decalage + position.character).coerceIn(0, texte.length)
-        }
+        ): Int = ConvertisseurPositions.pour(texte).decalageDe(position)
     }
 
     /** Service d'espace : notifications acceptées, sans effet à XE1. */
