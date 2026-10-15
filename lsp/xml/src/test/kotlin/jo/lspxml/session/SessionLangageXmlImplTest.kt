@@ -3,6 +3,7 @@ package jo.lspxml.session
 import jo.lspxml.api.ClasspathXml
 import jo.lspxml.api.CodesDiagnosticsXml
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -305,14 +306,17 @@ class SessionLangageXmlImplTest {
     }
 
     @Test
-    fun `manifest — package et composants nommes diagnostiques`() {
+    fun `manifest moderne sans package — silence (AGP 8+, v01344)`() {
         val uri = "file:///p/app/src/main/AndroidManifest.xml"
         session.ouvrirDocument(
             uri,
             "<manifest><application><activity/></application></manifest>",
         )
         val codes = session.diagnostics(uri).map { it.code }
-        assertTrue(codes.contains("xml.manifestSansPackage"))
+        // v0.134.4 : manifestSansPackage retiré (faux positif AGP 8+ —
+        // le namespace vit dans le build Gradle) ; seul composantSansNom
+        // reste émis.
+        assertFalse(codes.contains("xml.manifestSansPackage"))
         assertTrue(codes.contains("xml.composantSansNom"))
     }
 

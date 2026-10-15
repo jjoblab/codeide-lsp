@@ -19,14 +19,16 @@ class ReglesXe4Test {
     // ── Manifest ───────────────────────────────────────────────────
 
     @Test
-    fun `manifest sans package — erreur`() {
+    fun `manifest moderne sans package — silence (v01344, AGP 8+)`() {
         val diagnostics =
             ReglesManifeste.diagnostiquer(manifeste("<manifest><application/></manifest>"))
-        assertEquals(listOf("xml.manifestSansPackage"), diagnostics.map { it.code })
+        // v0.134.4 : manifestSansPackage retiré (faux positif AGP 8+ —
+        // l'attribut package est INTERDIT dans un manifest moderne).
+        assertTrue(diagnostics.isEmpty())
     }
 
     @Test
-    fun `manifest avec package — silence`() {
+    fun `manifest avec package — silence aussi (attribut toléré)`() {
         val diagnostics =
             ReglesManifeste.diagnostiquer(
                 manifeste("<manifest package=\"com.exemple\"><application/></manifest>"),

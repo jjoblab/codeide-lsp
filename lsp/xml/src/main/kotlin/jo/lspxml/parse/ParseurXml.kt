@@ -1,9 +1,9 @@
 package jo.lspxml.parse
 
 /**
- * Parseur XML TOLÉRANT écrit main (XE1, décision X1 — leçon projet de référence
- * §2 du cadrage : un parseur strict, XmlPullParser compris, est
- * inutilisable pour l'ÉDITION ; il faut du tolérant).
+ * Parseur XML TOLÉRANT écrit main (XE1, décision X1 : un parseur
+ * strict, XmlPullParser compris, est inutilisable pour l'ÉDITION ;
+ * un parseur d'éditeur doit reprendre sur un buffer à moitié tapé).
  *
  * **Ne lève JAMAIS** sur un buffer à moitié tapé : les balises non
  * fermées se rétablissent par une PILE DE NOMS OUVERTS avec diagnostics
@@ -270,7 +270,7 @@ public class ParseurXml {
                 fermer(sommet)
                 return
             }
-            // Recherche du nom dans la pile (reprise projet de référence) :
+            // Recherche du nom dans la pile (reprise tolérante) :
             val profondeur = ouverts.indexOfLast { it.nom == nom }
             if (profondeur < 0) {
                 diagnostics.add(

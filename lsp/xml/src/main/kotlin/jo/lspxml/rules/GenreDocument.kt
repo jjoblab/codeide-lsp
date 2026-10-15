@@ -33,6 +33,11 @@ public enum class GenreDocument {
          * Genre d'une URI de document — le CHEMIN décide (sensible à la
          * casse par convention de dépôt, `res/Layout` n'existe pas).
          *
+         * v0.134.4 — XP13 : un manifest à la RACINE d'un conteneur
+         * composite (`…/quelque.aar!/AndroidManifest.xml` — sans slash
+         * de tête après `!/`) est aussi un MANIFEST (la portion après
+         * `!/` peut être « AndroidManifest.xml » seul).
+         *
          * @param uri URI LSP (`file:///…/res/layout-land/main.xml`) ou
          *        chemin — seule la portion après le dernier `!/` est
          *        regardée (conteneurs composites).
@@ -45,7 +50,8 @@ public enum class GenreDocument {
 
                 normalise.contains("/res/values") -> VALEURS
 
-                normalise.endsWith("/AndroidManifest.xml") -> MANIFEST
+                normalise.endsWith("/AndroidManifest.xml") ||
+                    normalise == "AndroidManifest.xml" -> MANIFEST
 
                 normalise.contains("/res/drawable") -> DRAWABLE
 

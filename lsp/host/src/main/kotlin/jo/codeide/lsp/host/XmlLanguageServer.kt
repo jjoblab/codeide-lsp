@@ -108,34 +108,35 @@ internal class XmlLanguageServer(
     override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> {
         val dossiers = params.workspaceFolders?.size ?: 0
         LOGGER.info { "initialize: workspaceFolders=$dossiers (XE1, mono-espace)" }
-        // v0.134.1 — XP9 : négociation capabilities. Lire les capacités
-        // client pour ne déclarer QUE ce que le client consomme. Le client
-        // cel-lsp maison consomme tout, mais un client externe pourrait
-        // ne pas supporter hover/codeAction/documentSymbol — on s'adapte.
-        val capsClient = params.capabilities
-        val texteDoc = capsClient?.textDocument
+        // v0.134.4 — XP9 CORRIGÉ : les fournisseurs (hover, définition,
+        // quick-fixes, outline) sont déclarés INCONDITIONNELLEMENT.
+        // La négociation par capacités clientes (v0.134.1) sous-déclarait :
+        // le client cel-lsp n'envoie PAS textDocument.definition dans ses
+        // ClientCapabilities alors qu'il CONSOMME la définition (gate
+        // LspLanguage sur capabilities) — la définition XML était perdue.
+        // Sémantique LSP correcte : le serveur annonce ce qu'il SAIT faire ;
+        // un client qui ne consomme pas une capacité ne l'appelle simplement
+        // pas. Les capacités clientes restent lues pour le FORMAT du survol
+        // (KP14 : MarkupContent si supporté).
         val capacites = ServerCapabilities()
         capacites.setTextDocumentSync(TextDocumentSyncKind.Full)
-        // XE2 : complétion (déclencheurs `<`, `=`, `:`).
+        // XE2 : complétion (déclencheurs `<` (nouvelle balise), `=`
+        // (valeur), `:` (espace de noms) et `"` (v0.134.4 : ouverture
+        // d'une valeur d'attribut — le client cel-ui n'ouvre le popup
+        // à préfixe VIDE qu'après un char déclencheur ; sans `"`, la
+        // complétion de valeur juste après la quote ouvrante
+        // n'était jamais demandée).
         val completion = CompletionOptions()
-        completion.triggerCharacters = listOf("<", "=", ":")
+        completion.triggerCharacters = listOf("<", "=", ":", "\"")
         completion.resolveProvider = false
         capacites.setCompletionProvider(completion)
-        // XE3 : SURVOL et DÉFINITION — seulement si le client les consomme.
-        if (texteDoc?.hover != null) {
-            capacites.setHoverProvider(true)
-        }
-        if (texteDoc?.definition != null) {
-            capacites.setDefinitionProvider(true)
-        }
+        // XE3 : SURVOL et DÉFINITION (déclarés — voir note XP9 ci-dessus).
+        capacites.setHoverProvider(true)
+        capacites.setDefinitionProvider(true)
         // XE4 : QUICK-FIXES (codeAction).
-        if (texteDoc?.codeAction != null) {
-            capacites.setCodeActionProvider(true)
-        }
+        capacites.setCodeActionProvider(true)
         // S1 : OUTLINE documentSymbol.
-        if (texteDoc?.documentSymbol != null) {
-            capacites.setDocumentSymbolProvider(true)
-        }
+        capacites.setDocumentSymbolProvider(true)
         // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
         // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
         // Le client cel-lsp supporte MarkupContent → on l'utilise.
@@ -178,12 +179,16 @@ internal class XmlLanguageServer(
      * positions LSP (UTF-16), plages VIDES élargies d'un caractère quand
      * le texte le permet (un marqueur en fin de texte doit se VOIR), puis
      * push LSP au client.
+     *
+     * v0.134.4 — XP15 CORRIGÉ : le convertisseur vit dans le [DocumentLsp]
+     * (construit UNE fois par version du document) au lieu d'être
+     * reconstruit à CHAQUE traduction (scan O(n) par diagnostic).
      */
     private fun publier(uri: String) {
         val clientCourant = client ?: return
         val document = documents[uri]
         val diagnostics =
-            document?.let { traduire(session.diagnostics(uri), it.texte) } ?: emptyList()
+            document?.let { traduire(session.diagnostics(uri), it.convertisseur) } ?: emptyList()
         val params = PublishDiagnosticsParams(uri, diagnostics)
         document?.version?.let { params.version = it }
         try {
@@ -196,14 +201,14 @@ internal class XmlLanguageServer(
     /** Traduit les diagnostics neutres en diagnostics LSP. */
     private fun traduire(
         diagnostics: List<DiagnosticXml>,
-        texte: String,
+        convertisseur: ConvertisseurPositions,
     ): List<Diagnostic> =
         diagnostics.map { diagnostic ->
-            val debut = positionDe(diagnostic.debut, texte)
-            val fin = positionDe(diagnostic.fin, texte)
+            val debut = convertisseur.positionDe(diagnostic.debut)
+            val fin = convertisseur.positionDe(diagnostic.fin)
             val plage =
-                if (fin == debut && diagnostic.fin < texte.length) {
-                    Range(debut, positionDe(diagnostic.fin + 1, texte))
+                if (fin == debut && diagnostic.fin < convertisseur.longueur) {
+                    Range(debut, convertisseur.positionDe(diagnostic.fin + 1))
                 } else {
                     Range(debut, fin)
                 }
@@ -217,11 +222,12 @@ internal class XmlLanguageServer(
         }
 
     /** Position LSP (ligne, colonne UTF-16) d'un décalage du texte.
-     *  v0.134.0 — XP15 : utilise ConvertisseurPositions (O(log n) au lieu de O(n)). */
+     *  v0.134.4 — XP15 : le convertisseur vient du [DocumentLsp] (partagé
+     *  pour tout le document, jamais reconstruit par appel). */
     private fun positionDe(
         decalage: Int,
-        texte: String,
-    ): Position = ConvertisseurPositions.pour(texte).positionDe(decalage)
+        convertisseur: ConvertisseurPositions,
+    ): Position = convertisseur.positionDe(decalage)
 
     /** Gravité LSP d'une gravité neutre. */
     private fun severiteLspDe(severite: SeveriteXml): DiagnosticSeverity =
@@ -232,11 +238,17 @@ internal class XmlLanguageServer(
 
     // ── Services ────────────────────────────────────────────────────────
 
-    /** Document LSP courant : texte (pour les positions) + version. */
+    /** Document LSP courant : texte (pour les positions) + version.
+     *  v0.134.4 — XP15 : le convertisseur offset↔position est construit
+     *  UNE fois à la création (le texte d'un DocumentLsp est IMMUTABLE —
+     *  chaque didChange en crée un nouveau). */
     private class DocumentLsp(
         public val texte: String,
         public val version: Int?,
-    )
+    ) {
+        /** Convertisseur partagé de CE texte (scan O(n) une seule fois). */
+        public val convertisseur: ConvertisseurPositions = ConvertisseurPositions.pour(texte)
+    }
 
     /**
      * Service de documents : didOpen/didChange/didClose branchés sur la
@@ -304,8 +316,7 @@ internal class XmlLanguageServer(
         ): CompletableFuture<Either<List<CompletionItem>, CompletionList>> {
             val uri = params.textDocument.uri
             val document = documents[uri]
-            val texte = document?.texte ?: ""
-            val decalage = decalageDe(params.position, texte)
+            val decalage = document?.convertisseur?.decalageDe(params.position) ?: 0
             val propositions =
                 try {
                     if (document != null) session.completion(uri, decalage) else emptyList()
@@ -341,11 +352,11 @@ internal class XmlLanguageServer(
             for (diagnostic in params.context.diagnostics) {
                 val code = diagnostic.code?.left ?: continue
                 if (!code.startsWith(PREFIXE_CODE)) continue
-                val texte = document?.texte ?: ""
-                val decalage = decalageDe(diagnostic.range.start, texte)
+                val convertisseur = document?.convertisseur ?: continue
+                val decalage = convertisseur.decalageDe(diagnostic.range.start)
                 val correctifs =
                     try {
-                        if (document != null) session.correctifs(uri, decalage) else emptyList()
+                        session.correctifs(uri, decalage)
                     } catch (t: Throwable) {
                         LOGGER.log(Level.WARNING, "quick-fixes XML échoués ($uri)", t)
                         emptyList()
@@ -355,8 +366,8 @@ internal class XmlLanguageServer(
                         correctif.editions.map { edition ->
                             TextEdit(
                                 Range(
-                                    positionDe(edition.debut, texte),
-                                    positionDe(edition.fin, texte),
+                                    positionDe(edition.debut, convertisseur),
+                                    positionDe(edition.fin, convertisseur),
                                 ),
                                 edition.texte,
                             )
@@ -377,7 +388,7 @@ internal class XmlLanguageServer(
         override fun hover(params: HoverParams): CompletableFuture<Hover?> {
             val uri = params.textDocument.uri
             val document = documents[uri] ?: return CompletableFuture.completedFuture(null)
-            val decalage = decalageDe(params.position, document.texte)
+            val decalage = document.convertisseur.decalageDe(params.position)
             val contenu =
                 try {
                     session.survol(uri, decalage)
@@ -401,7 +412,7 @@ internal class XmlLanguageServer(
         ): CompletableFuture<Either<List<Location>, List<org.eclipse.lsp4j.LocationLink>>> {
             val uri = params.textDocument.uri
             val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyLeft())
-            val decalage = decalageDe(params.position, document.texte)
+            val decalage = document.convertisseur.decalageDe(params.position)
             val emplacements =
                 try {
                     session.definitions(uri, decalage)
@@ -436,7 +447,7 @@ internal class XmlLanguageServer(
                 }
             val resultat =
                 symboles.map { symbole ->
-                    Either.forRight<SymbolInformation, DocumentSymbol>(symboleLspDe(symbole, document.texte))
+                    Either.forRight<SymbolInformation, DocumentSymbol>(symboleLspDe(symbole, document.convertisseur))
                 }
             return CompletableFuture.completedFuture(resultat)
         }
@@ -462,9 +473,13 @@ internal class XmlLanguageServer(
                     null
                 }
             val texte = texteCible ?: return null
+            // v0.134.4 — XP15 : convertisseur local au texte cible (une
+            // lecture = une construction, le fichier cible n'a pas de
+            // DocumentLsp côté hôte).
+            val convertisseur = ConvertisseurPositions.pour(texte)
             return Location(
                 emplacement.uri,
-                Range(positionDe(emplacement.debut, texte), positionDe(emplacement.fin, texte)),
+                Range(convertisseur.positionDe(emplacement.debut), convertisseur.positionDe(emplacement.fin)),
             )
         }
 
@@ -503,11 +518,13 @@ internal class XmlLanguageServer(
          */
         private fun symboleLspDe(
             symbole: SymboleDocumentXml,
-            texte: String,
+            convertisseur: ConvertisseurPositions,
         ): DocumentSymbol {
-            val plage = Range(positionDe(symbole.debutSelection, texte), positionDe(symbole.finSelection, texte))
-            val selection = Range(positionDe(symbole.debutPlage, texte), positionDe(symbole.finPlage, texte))
-            val enfants = symbole.enfants.map { enfant -> symboleLspDe(enfant, texte) }
+            val plage =
+                Range(convertisseur.positionDe(symbole.debutSelection), convertisseur.positionDe(symbole.finSelection))
+            val selection =
+                Range(convertisseur.positionDe(symbole.debutPlage), convertisseur.positionDe(symbole.finPlage))
+            val enfants = symbole.enfants.map { enfant -> symboleLspDe(enfant, convertisseur) }
             val sym =
                 DocumentSymbol(
                     // name =
@@ -543,17 +560,11 @@ internal class XmlLanguageServer(
             plage: Range,
             remplacement: String,
         ): String {
-            val debut = decalageDe(plage.start, texte)
-            val fin = decalageDe(plage.end, texte)
+            val convertisseur = ConvertisseurPositions.pour(texte)
+            val debut = convertisseur.decalageDe(plage.start)
+            val fin = convertisseur.decalageDe(plage.end)
             return StringBuilder(texte).replace(debut, fin.coerceAtLeast(debut), remplacement).toString()
         }
-
-        /** Décalage d'une position LSP dans le texte (best effort borné).
-         *  v0.134.0 — XP15 : utilise ConvertisseurPositions (O(1) au lieu de O(n)). */
-        private fun decalageDe(
-            position: Position,
-            texte: String,
-        ): Int = ConvertisseurPositions.pour(texte).decalageDe(position)
     }
 
     /** Service d'espace : notifications acceptées, sans effet à XE1. */

@@ -179,7 +179,7 @@ internal class KotlinLanguageServer(
         val clientCourant = client ?: return
         val document = documents[uri]
         val diagnostics =
-            document?.let { traduire(session.diagnostics(uri), it.texte) } ?: emptyList()
+            document?.let { traduire(session.diagnostics(uri), it.convertisseur) } ?: emptyList()
         val params = PublishDiagnosticsParams(uri, diagnostics)
         document?.version?.let { params.version = it }
         try {
@@ -189,17 +189,19 @@ internal class KotlinLanguageServer(
         }
     }
 
-    /** Traduit les diagnostics neutres en diagnostics LSP. */
+    /** Traduit les diagnostics neutres en diagnostics LSP.
+     *  v0.134.4 — KP13 CORRIGÉ : convertisseur partagé du [DocumentLsp]
+     *  (une construction par version, plus un scan O(n) par diagnostic). */
     private fun traduire(
         diagnostics: List<DiagnosticKotlin>,
-        texte: String,
+        convertisseur: ConvertisseurPositions,
     ): List<Diagnostic> =
         diagnostics.map { diagnostic ->
-            val debut = positionDe(diagnostic.debut, texte)
-            val fin = positionDe(diagnostic.fin, texte)
+            val debut = convertisseur.positionDe(diagnostic.debut)
+            val fin = convertisseur.positionDe(diagnostic.fin)
             val plage =
-                if (fin == debut && diagnostic.fin < texte.length) {
-                    Range(debut, positionDe(diagnostic.fin + 1, texte))
+                if (fin == debut && diagnostic.fin < convertisseur.longueur) {
+                    Range(debut, convertisseur.positionDe(diagnostic.fin + 1))
                 } else {
                     Range(debut, fin)
                 }
@@ -213,7 +215,7 @@ internal class KotlinLanguageServer(
         }
 
     /** Position LSP (ligne, colonne UTF-16) d'un décalage du texte.
-     *  v0.134.0 — KP13 : utilise ConvertisseurPositions (O(log n) au lieu de O(n)). */
+     *  v0.134.0 — KP13 : ConvertisseurPositions (O(log n) au lieu de O(n)). */
     private fun positionDe(
         decalage: Int,
         texte: String,
@@ -228,11 +230,16 @@ internal class KotlinLanguageServer(
 
     // ── Services ────────────────────────────────────────────────────────
 
-    /** Document LSP courant : texte (pour les positions) + version. */
+    /** Document LSP courant : texte (pour les positions) + version.
+     *  v0.134.4 — KP13 : convertisseur offset↔position construit UNE fois
+     *  par version (le texte d'un DocumentLsp est IMMUTABLE). */
     private class DocumentLsp(
         public val texte: String,
         public val version: Int?,
-    )
+    ) {
+        /** Convertisseur partagé de CE texte (scan O(n) une seule fois). */
+        public val convertisseur: ConvertisseurPositions = ConvertisseurPositions.pour(texte)
+    }
 
     /** État du cycle LSP du serveur. */
     private enum class EtatCycle {

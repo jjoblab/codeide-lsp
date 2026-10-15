@@ -24,6 +24,9 @@ internal class ConvertisseurPositions private constructor(
     private val texte: CharSequence,
     private val lignesDebut: IntArray,
 ) {
+    /** Longueur du texte couvert (bornage des décalages). */
+    public val longueur: Int get() = texte.length
+
     /**
      * Convertit un décalage en position LSP (ligne, colonne).
      *

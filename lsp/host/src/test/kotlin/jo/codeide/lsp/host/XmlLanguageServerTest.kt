@@ -58,29 +58,23 @@ class XmlLanguageServerTest {
     @Test
     fun `initialize - capacites honnetes et serverInfo`() {
         val espace = espaceAvecEspion()
-        // v0.134.1 — XP9 : passer des ClientCapabilities pour que la
-        // négociation déclare hover/definition/codeAction/documentSymbol.
-        val params = InitializeParams()
-        val clientCaps = org.eclipse.lsp4j.ClientCapabilities()
-        val textDocCaps = org.eclipse.lsp4j.TextDocumentClientCapabilities()
-        textDocCaps.hover = org.eclipse.lsp4j.HoverCapabilities()
-        textDocCaps.definition = org.eclipse.lsp4j.DefinitionCapabilities()
-        textDocCaps.codeAction = org.eclipse.lsp4j.CodeActionCapabilities()
-        textDocCaps.documentSymbol = org.eclipse.lsp4j.DocumentSymbolCapabilities()
-        clientCaps.textDocument = textDocCaps
-        params.capabilities = clientCaps
-        val resultat = espace.serveur.initialize(params).join()
+        // v0.134.4 — XP9 corrigé : SANS capacités clientes (client
+        // minimal), le serveur déclare TOUT ce qu'il sait faire — un
+        // client qui n'envoie pas textDocument.definition (cas réel de
+        // cel-lsp) mais qui CONSOMME la définition ne doit pas la perdre.
+        val resultat = espace.serveur.initialize(InitializeParams()).join()
         val capacites = resultat.capabilities
         // XE2 : complétion déclarée (balises/attributs) ; XE3 : survol et
         // définition ; XE4 : quick-fixes — RIEN d'autre.
         assertEquals(org.eclipse.lsp4j.TextDocumentSyncKind.Full, capacites.textDocumentSync.left)
         assertTrue(capacites.completionProvider != null, "complétion déclarée à XE2")
-        assertEquals(listOf("<", "=", ":"), capacites.completionProvider?.triggerCharacters)
-        // v0.134.1 — XP9 : hover/definition/codeAction déclarés seulement
-        // si le client les consomme (négociation capabilities).
+        assertEquals(listOf("<", "=", ":", "\""), capacites.completionProvider?.triggerCharacters)
+        // v0.134.4 — déclarés INCONDITIONNELLEMENT (XP9 v0.134.1
+        // sous-déclarait pour cel-lsp qui n'envoie pas ces caps).
         assertEquals(true, capacites.hoverProvider.left, "survol déclaré à XE3")
         assertEquals(true, capacites.definitionProvider.left, "définition déclarée à XE3")
         assertEquals(true, capacites.codeActionProvider.left, "quick-fixes déclarés à XE4")
+        assertEquals(true, capacites.documentSymbolProvider.left, "outline déclaré (S1)")
         assertEquals("codeide-xml", resultat.serverInfo.name)
         assertTrue(resultat.serverInfo.version != "inconnue")
         espace.fermer()

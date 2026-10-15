@@ -7,10 +7,16 @@ import jo.lspxml.parse.DocumentXml
 import jo.lspxml.parse.XmlElement
 
 /**
- * Règles de MANIFEST (XE4, LSP_XML.md §5 — `xml.manifestSansPackage`,
- * `xml.composantSansNom`) — le genre MANIFEST est déduit de l'URI
- * (finissant par `AndroidManifest.xml`) ; conservatoire X4 : un
- * manifest non reconnu comme tel ne passe jamais ici.
+ * Règles de MANIFEST (XE4, LSP_XML.md §5 — `xml.composantSansNom`)
+ * — le genre MANIFEST est déduit de l'URI (finissant par
+ * `AndroidManifest.xml`) ; conservatoire X4 : un manifest non reconnu
+ * comme tel ne passe jamais ici.
+ *
+ * v0.134.4 — `xml.manifestSansPackage` RETIRÉ : faux positif AGP 8+.
+ * Depuis AGP 8, l'attribut `package` du manifest est INTERDIT (le
+ * namespace vit dans `build.gradle` — `namespace "…"`) : le signaler
+ * comme ERREUR sur tout projet moderne était l'inverse de la vérité
+ * (le diagnostic s'appliquerait à 100 % des manifests corrects).
  */
 internal object ReglesManifeste {
     /** Composants d'`<application>` exigeant `android:name`. */
@@ -25,31 +31,8 @@ internal object ReglesManifeste {
         val diagnostics = mutableListOf<DiagnosticXml>()
         val manifest =
             document.racines.firstOrNull { it.nom == "manifest" } ?: return diagnostics
-        regleSansPackage(manifest, diagnostics)
         regleComposantSansNom(manifest, diagnostics)
         return diagnostics
-    }
-
-    /**
-     * `xml.manifestSansPackage` : la racine `<manifest>` sans attribut
-     * `package` (sans préfixe — AGP tolère le déplacement en Gradle
-     * mais un manifest SANS package reste inutilisable seul).
-     */
-    private fun regleSansPackage(
-        manifest: XmlElement,
-        diagnostics: MutableList<DiagnosticXml>,
-    ) {
-        if (manifest.attribut("package") == null) {
-            diagnostics.add(
-                DiagnosticXml(
-                    code = CodesDiagnosticsXml.MANIFEST_SANS_PACKAGE,
-                    severite = SeveriteXml.ERREUR,
-                    message = "<manifest> sans attribut package",
-                    debut = manifest.plageNom.debut,
-                    fin = manifest.plageNom.fin,
-                ),
-            )
-        }
     }
 
     /**

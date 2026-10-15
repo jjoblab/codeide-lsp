@@ -100,7 +100,13 @@ public object CodesDiagnosticsXml {
     /** Référence `@type/nom` non résolue (XE3, projet + framework). */
     public const val REFERENCE_NON_RESOLUE: String = "xml.referenceNonResolue"
 
-    /** Manifest : attribut `package` absent de la racine `<manifest>`. */
+    /** Manifest : attribut `package` absent de la racine `<manifest>`.
+     *
+     * v0.134.4 — code RETIRÉ de l'émission (faux positif AGP 8+ : le
+     * namespace vit dans le build Gradle, l'attribut `package` est
+     * interdit dans un manifest moderne). La constante reste pour la
+     * compatibilité binaire du pack langue ; plus AUCUNE règle ne
+     * l'émet. */
     public const val MANIFEST_SANS_PACKAGE: String = "xml.manifestSansPackage"
 
     /** Composant du manifest sans `android:name` (XE4, conservatoire). */

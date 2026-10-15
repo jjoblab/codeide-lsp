@@ -27,6 +27,16 @@ class SessionXe5Test {
     }
 
     @Test
+    fun `genre — manifest a la racine d un conteneur composite (XP13, v01344)`() {
+        // Un manifest AAR à la racine du conteneur (sans slash de tête
+        // après !/) : avant v0.134.4 il retombait AUTRE (règles
+        // génériques seules).
+        assertEquals(GenreDocument.MANIFEST, GenreDocument.depuisUri("jar:file:///b/x.aar!/AndroidManifest.xml"))
+        // Le manifest complet d'un projet reste MANIFEST.
+        assertEquals(GenreDocument.MANIFEST, GenreDocument.depuisUri("file:///a/app/src/main/AndroidManifest.xml"))
+    }
+
+    @Test
     fun `completion drawable — racine au prefixe, enfants selon le parent`() {
         val session = session()
         session.ouvrirDocument(uriDrawable, "<shape><")

@@ -12,9 +12,9 @@ import jo.lspxml.resources.IndexRessources
 /**
  * Règle `xml.referenceNonResolue` (XE3, LSP_XML.md §4.4 — « référence
  * `@color/…`/`@string/…` non résolue (projet + framework), jamais
- * pendant que l'index est froid — même garde dumb mode que
- * projet de référence ») : une COUTURE (elle interroge l'index projet et le
- * catalogue plateforme), pas une règle pure du DOM.
+ * pendant que l'index est froid — garde dumb mode ») : une COUTURE
+ * (elle interroge l'index projet et le catalogue plateforme), pas une
+ * règle pure du DOM.
  *
  * Garde X4 : `@+id/…` DÉCLARE (jamais signalé) ; `@android:…` n'est
  * signalé que si le catalogue PROUVE l'absence (public-final.xml) ;
