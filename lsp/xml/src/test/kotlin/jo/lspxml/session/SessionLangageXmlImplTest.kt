@@ -129,6 +129,53 @@ class SessionLangageXmlImplTest {
         assertTrue(session.diagnostics("file:///p/res/layout/main.xml").isEmpty())
     }
 
+    // ── XP11 — plages pliables (plan de stabilisation LSP §3.3 S2) ──
+
+    @Test
+    fun `plages pliables — chaque balise fermee, ouvrante vers fermante`() {
+        val uri = "file:///p/res/layout/main.xml"
+        val texte =
+            "<LinearLayout>\n" +
+                "    <TextView android:text=\"x\"/>\n" +
+                "    <Button>\n" +
+                "        <item/>\n" +
+                "    </Button>\n" +
+                "</LinearLayout>\n"
+        session.ouvrirDocument(uri, texte)
+        val plages = session.plagesPliables(uri)
+        // DEUX plages : la racine et Button — les auto-fermantes
+        // (TextView, item) ne produisent RIEN.
+        assertEquals(2, plages.size)
+        val racine = plages.first()
+        assertEquals(0, racine.debut)
+        assertEquals(texte.indexOf("</LinearLayout>") + "</LinearLayout>".length, racine.fin)
+        val bouton = plages.last()
+        assertEquals(texte.indexOf("<Button>"), bouton.debut)
+        assertEquals(texte.indexOf("</Button>") + "</Button>".length, bouton.fin)
+    }
+
+    @Test
+    fun `plages pliables — fermante implicite de reprise incluse (XP14)`() {
+        val uri = "file:///p/res/layout/main.xml"
+        // `</b>` referme IMPLICITEMENT <c> (reprise X1) : c est pliable,
+        // sa plage s'arrête à la FIN de la fermante qui l'a refermé.
+        val texte = "<a><b><c></b></a>"
+        session.ouvrirDocument(uri, texte)
+        val plages = session.plagesPliables(uri)
+        assertEquals(3, plages.size)
+        val implicite = plages.first { it.debut == texte.indexOf("<c>") }
+        assertEquals(texte.indexOf("</b>") + "</b>".length, implicite.fin)
+    }
+
+    @Test
+    fun `plages pliables — document inconnu, ferme ou vide, jamais d exception`() {
+        assertTrue(session.plagesPliables("file:///inconnu.xml").isEmpty())
+        session.ouvrirDocument("file:///p/res/layout/main.xml", "")
+        assertTrue(session.plagesPliables("file:///p/res/layout/main.xml").isEmpty())
+        session.close()
+        assertTrue(session.plagesPliables("file:///p/res/layout/main.xml").isEmpty())
+    }
+
     // ── Complétion de VALEURS, survol, définitions (XE3) ─────────
 
     /** Racine source avec res/ + plateforme + classpath complets. */

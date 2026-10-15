@@ -75,6 +75,7 @@ class XmlLanguageServerTest {
         assertEquals(true, capacites.definitionProvider.left, "définition déclarée à XE3")
         assertEquals(true, capacites.codeActionProvider.left, "quick-fixes déclarés à XE4")
         assertEquals(true, capacites.documentSymbolProvider.left, "outline déclaré (S1)")
+        assertEquals(true, capacites.foldingRangeProvider.left, "pliage déclaré (XP11)")
         assertEquals("codeide-xml", resultat.serverInfo.name)
         assertTrue(resultat.serverInfo.version != "inconnue")
         espace.fermer()
@@ -436,6 +437,76 @@ class XmlLanguageServerTest {
                     ),
                 ).join()
         assertTrue(symboles.isEmpty(), "document inconnu → outline vide")
+        espace.fermer()
+    }
+
+    // ── XP11 — foldingRange (plan de stabilisation LSP §3.3 S2) ─────────
+
+    @Test
+    fun `foldingRange - layout multiligne rendu en FoldingRange LSP`() {
+        val espace = espaceAvecEspion()
+        val texte =
+            "<LinearLayout>\n" +
+                "    <TextView android:text=\"x\"/>\n" +
+                "    <Button>\n" +
+                "        <TextView android:text=\"y\"/>\n" +
+                "    </Button>\n" +
+                "</LinearLayout>\n"
+        espace.serveur.initialize(InitializeParams()).join()
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///res/layout/main.xml", "xml", 1, texte)),
+        )
+        val plis =
+            espace.serveur.textDocumentService
+                .foldingRange(
+                    org.eclipse.lsp4j.FoldingRangeRequestParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/layout/main.xml"),
+                    ),
+                ).join()
+        // Deux plis : LinearLayout (lignes 0 → 5) et Button (2 → 4) —
+        // les deux TextView AUTO-FERMANTES ne produisent RIEN.
+        assertEquals(2, plis.size, "deux plis (racine + Button)")
+        val racine = plis.first()
+        assertEquals(0, racine.startLine, "pli racine : ligne 0")
+        assertEquals(5, racine.endLine, "pli racine : ligne fermante")
+        val bouton = plis.last()
+        assertEquals(2, bouton.startLine, "pli Button : ligne ouvrante")
+        assertEquals(4, bouton.endLine, "pli Button : ligne fermante")
+        espace.fermer()
+    }
+
+    @Test
+    fun `foldingRange - pli mono-ligne non emis, document inconnu liste vide`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        // Tout sur UNE ligne : le pli racine (mono-ligne) n'est pas émis.
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(
+                TextDocumentItem(
+                    "file:///res/values/strings.xml",
+                    "xml",
+                    1,
+                    "<resources><string name=\"a\">x</string></resources>",
+                ),
+            ),
+        )
+        val plis =
+            espace.serveur.textDocumentService
+                .foldingRange(
+                    org.eclipse.lsp4j.FoldingRangeRequestParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///res/values/strings.xml"),
+                    ),
+                ).join()
+        assertTrue(plis.isEmpty(), "aucun pli mono-ligne (choix documenté)")
+        // Document inconnu : liste vide, jamais d'exception.
+        val inconnu =
+            espace.serveur.textDocumentService
+                .foldingRange(
+                    org.eclipse.lsp4j.FoldingRangeRequestParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier("file:///inconnu.xml"),
+                    ),
+                ).join()
+        assertTrue(inconnu.isEmpty(), "document inconnu → plis vides")
         espace.fermer()
     }
 

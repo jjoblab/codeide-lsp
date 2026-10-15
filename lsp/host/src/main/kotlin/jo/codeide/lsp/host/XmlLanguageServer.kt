@@ -137,6 +137,10 @@ internal class XmlLanguageServer(
         capacites.setCodeActionProvider(true)
         // S1 : OUTLINE documentSymbol.
         capacites.setDocumentSymbolProvider(true)
+        // XP11 (v0.134.8) : PLIAGE foldingRange — chaque balise fermée
+        // est pliable (le DOM porte les plages), l'hôte traduit en
+        // lignes LSP.
+        capacites.setFoldingRangeProvider(true)
         // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
         // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
         // Le client cel-lsp supporte MarkupContent → on l'utilise.
@@ -455,6 +459,38 @@ internal class XmlLanguageServer(
         /** Version vide typée de la réponse définition. */
         private fun emptyLeft(): Either<List<Location>, List<org.eclipse.lsp4j.LocationLink>> =
             Either.forLeft(emptyList())
+
+        /**
+         * Pliage (XP11) : `textDocument/foldingRange` — la session rend
+         * les plages DOM neutres (décalages), l'hôte traduit en lignes
+         * LSP. Une plage mono-ligne (ouvrante et fermante sur la même
+         * ligne) N'EST PAS émise : un pli qui ne replie rien n'est que
+         * du bruit pour le client (choix documenté, testé). Document
+         * inconnu/fermé : liste VIDE (jamais d'exception).
+         */
+        override fun foldingRange(
+            params: org.eclipse.lsp4j.FoldingRangeRequestParams,
+        ): CompletableFuture<List<org.eclipse.lsp4j.FoldingRange>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val plages =
+                try {
+                    session.plagesPliables(uri)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "foldingRange XML échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                plages.mapNotNull { plage ->
+                    val debut = document.convertisseur.positionDe(plage.debut)
+                    val fin = document.convertisseur.positionDe(plage.fin)
+                    if (fin.line <= debut.line) {
+                        return@mapNotNull null
+                    }
+                    org.eclipse.lsp4j.FoldingRange(debut.line, fin.line)
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
 
         /**
          * Emplacement neutre → Location LSP : la cible se relit sur

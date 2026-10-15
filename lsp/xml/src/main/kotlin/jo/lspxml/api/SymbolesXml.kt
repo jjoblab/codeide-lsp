@@ -172,3 +172,18 @@ public enum class GenreSymboleXml {
     /** Balise inconnue / sans genre reconnu. */
     AUTRE,
 }
+
+/**
+ * Plage pliable (`textDocument/foldingRange`, XP11 — plan de
+ * stabilisation LSP §3.3 S2) : un couple de DÉCALAGES du document
+ * courant, du DÉBUT de la balise ouvrante à la FIN de la fermante.
+ * La traduction en lignes LSP (`FoldingRange` startLine/endLine)
+ * appartient à l'hôte (il possède le convertisseur du document).
+ *
+ * @property debut décalage de début de la balise ouvrante (inclus).
+ * @property fin décalage de fin de la fermante (exclusif).
+ */
+public data class PlagePliableXml(
+    public val debut: Int,
+    public val fin: Int,
+)

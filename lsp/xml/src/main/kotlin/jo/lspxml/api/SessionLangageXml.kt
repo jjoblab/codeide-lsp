@@ -137,6 +137,21 @@ public interface SessionLangageXml : AutoCloseable {
     public fun symbolesDocument(uri: String): List<SymboleDocumentXml> = emptyList()
 
     /**
+     * Plages pliables (`textDocument/foldingRange`, XP11 — plan de
+     * stabilisation LSP §3.3 S2) : chaque balise fermée (fermante
+     * explicite OU implicite de reprise — le DOM porte la plage depuis
+     * XP14) est pliable, du début de l'ouvrante à la fin de la
+     * fermante ; les AUTO-FERMANTES (`<…/>`) et les éléments en édition
+     * ne le sont JAMAIS (rien à replier).
+     *
+     * Document inconnu/fermé : liste VIDE (jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @return les plages en ordre du document (profondeur d'abord).
+     */
+    public fun plagesPliables(uri: String): List<PlagePliableXml> = emptyList()
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document, vide l'index projet. Idempotente.
      */

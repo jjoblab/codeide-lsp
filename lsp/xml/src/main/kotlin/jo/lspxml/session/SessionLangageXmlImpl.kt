@@ -6,6 +6,7 @@ import jo.lspxml.api.CorrectifXml
 import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
+import jo.lspxml.api.PlagePliableXml
 import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SeveriteXml
 import jo.lspxml.api.SymboleDocumentXml
@@ -20,6 +21,7 @@ import jo.lspxml.context.Contexte
 import jo.lspxml.context.ContexteCurseur
 import jo.lspxml.parse.ParseurXml
 import jo.lspxml.parse.XmlElement
+import jo.lspxml.plis.PlisDocumentXml
 import jo.lspxml.resolution.ReferencesXml
 import jo.lspxml.resources.IndexRessources
 import jo.lspxml.rules.GenreDocument
@@ -479,6 +481,19 @@ internal class SessionLangageXmlImpl(
             emptyList()
         } else {
             documents[uri]?.let { SymbolesDocumentXml.depuis(it.document) } ?: emptyList()
+        }
+
+    /**
+     * Plages pliables (XP11) — miroir DOM → foldingRange LSP. Le travail
+     * de collecte vit dans [jo.lspxml.plis.PlisDocumentXml] ; la session
+     * ne fait que piocher le document courant. Document inconnu/fermé :
+     * liste VIDE.
+     */
+    override fun plagesPliables(uri: String): List<PlagePliableXml> =
+        if (fermee) {
+            emptyList()
+        } else {
+            documents[uri]?.let { PlisDocumentXml.depuis(it.document) } ?: emptyList()
         }
 
     override fun close() {
