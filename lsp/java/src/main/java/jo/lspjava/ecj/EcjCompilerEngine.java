@@ -1239,6 +1239,33 @@ public final class EcjCompilerEngine {
         return index;
     }
 
+    // ── workspace/symbol (S1-c — plan de stabilisation §3.1) ────────────
+
+    /**
+     * FQN des types portant la REQUÊTE en préfixe de nom simple
+     * (workspace/symbol S1-c) — le substrat gradué de la complétion de
+     * types (index disque jars + sources projet + jrt), même matcher,
+     * plafond imposé par l'appelant. Le verrou de l'index est pris ici
+     * (typeIndex est synchronized) — l'appelant n'a RIEN à serialiser.
+     *
+     * @param requête texte de recherche (peut être vide — tout, borné).
+     * @param limite  nombre maximum de FQCN rendus.
+     * @return les FQCN triés (plus courts d'abord, dédupliqués).
+     */
+    public java.util.List<String> symbolesEspace(String requete, int limite) {
+        return typeIndex().symbolesEspace(requete, limite);
+    }
+
+    /**
+     * Fichier SOURCE porteur d'un FQCN (workspace/symbol : la
+     * localisation réelle d'un type du projet) — {@code null} pour un
+     * type binaire (jars/jrt : pas de source ouvrable, jamais d'URI
+     * factice).
+     */
+    public java.nio.file.Path fichierSourceDe(String fqcn) {
+        return typeIndex().fichierSourceDe(fqcn);
+    }
+
     /**
      * Tous les FQN dont le nom simple est EXACTEMENT
      * {@code simpleName} (jars du classpath + image jrt + sources du

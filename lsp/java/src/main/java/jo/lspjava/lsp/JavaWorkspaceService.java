@@ -2,6 +2,7 @@ package jo.lspjava.lsp;
 
 import jo.lspjava.engine.CompilationEnvironment;
 import org.eclipse.lsp4j.*;
+import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
 import java.util.List;
@@ -82,6 +83,134 @@ public final class JavaWorkspaceService implements WorkspaceService {
                 }
             }
         }
+    }
+
+    /**
+     * Recherche de symboles dans l'espace de travail
+     * ({@code workspace/symbol} — S1-c du plan de stabilisation §3.1,
+     * audit §8.2 « Gap vs JDT.LS : type search ») : les TYPES (classes,
+     * interfaces, enums, records) portant la requête en préfixe de nom
+     * simple, du SUBSTRAT gradué existant (index disque des jars +
+     * types des sources projet en cache TTL + image jrt).
+     *
+     * <p>Convention null/vide (I9) : capacité DISPONIBLE → liste vide
+     * (jamais null). Localisations honnêtes (D3) : un type de SOURCE
+     * pointe son fichier (plage du nom déclarant, heuristique textuelle
+     * bornée) ; un type binaire (jar/jrt) sans source ouvrable est
+     * ÉCARTÉ — S3 « mode profond » (sources-jars/décompilé) le servira ;
+     * jamais d'URI factice.</p>
+     */
+    @Override
+    public CompletableFuture<org.eclipse.lsp4j.jsonrpc.messages.Either<
+            java.util.List<? extends SymbolInformation>,
+            java.util.List<? extends WorkspaceSymbol>>> symbol(WorkspaceSymbolParams params) {
+        verifierLifecycle("workspace/symbol");
+        String requete = params != null && params.getQuery() != null
+                ? params.getQuery().trim() : "";
+        if (environment == null || requete.isEmpty()) {
+            return CompletableFuture.completedFuture(Either.forLeft(java.util.List.of()));
+        }
+        try {
+            if (!environment.isEcjInitialized()) {
+                return CompletableFuture.completedFuture(Either.forLeft(java.util.List.of()));
+            }
+            java.util.List<String> fqns = environment.jdt().symbolesEspace(requete, PLAFOND_SYMBOLES);
+            java.util.List<SymbolInformation> sortie = new java.util.ArrayList<>(fqns.size());
+            for (String fqn : fqns) {
+                SymbolInformation symbole = symboleDe(fqn);
+                if (symbole != null) {
+                    sortie.add(symbole);
+                }
+            }
+            return CompletableFuture.completedFuture(Either.forLeft(sortie));
+        } catch (Throwable t) {
+            if (server != null) server.logWarning("workspace/symbol failed", t);
+            return CompletableFuture.completedFuture(Either.forLeft(java.util.List.of()));
+        }
+    }
+
+    /** Plafond de la recherche d'espace (palette bornée, miroir JDT.LS). */
+    private static final int PLAFOND_SYMBOLES = 64;
+
+    /**
+     * Symbole LSP d'un FQCN : nom simple, kind Class (le substrat
+     * nomsParPrefixe ne distingue pas classe/interface/enum — under-
+     * rapport honnête), conteneur = paquet, localisation SOURCE seule.
+     * {@code null} pour un type binaire sans source (écarté — D3).
+     */
+    private SymbolInformation symboleDe(String fqn) {
+        int dot = fqn.lastIndexOf('.');
+        String simple = dot < 0 ? fqn : fqn.substring(dot + 1);
+        String paquet = dot < 0 ? "" : fqn.substring(0, dot);
+        java.nio.file.Path source = environment.jdt().fichierSourceDe(fqn);
+        if (source == null) return null;
+        Location location =
+                new Location(source.toUri().toString(), plageDeclaration(source, simple));
+        SymbolInformation symbole = new SymbolInformation(simple, SymbolKind.Class, location);
+        if (!paquet.isEmpty()) symbole.setContainerName(paquet);
+        return symbole;
+    }
+
+    /**
+     * Plage du NOM déclarant dans son fichier — heuristique textuelle
+     * bornée (le mot-clé {@code class|interface|enum|record|@interface}
+     * suivi du nom), repli plage 0 (le client ouvre le fichier en tête
+     * : sous-rapport volontaire, jamais une plage fausse).
+     */
+    private static Range plageDeclaration(java.nio.file.Path fichier, String nom) {
+        try {
+            String texte = new String(java.nio.file.Files.readAllBytes(fichier),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            int nomIndex = -1;
+            for (String motCle : new String[] {
+                    "class ", "interface ", "enum ", "record ", "@interface "}) {
+                int depuis = 0;
+                while ((depuis = texte.indexOf(motCle, depuis)) >= 0) {
+                    int candidat = motCle.length() + depuis;
+                    candidat = sauterBlancs(texte, candidat);
+                    if (nomCommence(texte, candidat, nom)) {
+                        nomIndex = candidat;
+                        break;
+                    }
+                    depuis += motCle.length();
+                }
+                if (nomIndex >= 0) break;
+            }
+            if (nomIndex < 0) return new Range(new Position(0, 0), new Position(0, 0));
+            int ligne = 0;
+            int colonne = 0;
+            for (int i = 0; i < nomIndex; i++) {
+                if (texte.charAt(i) == '\n') {
+                    ligne++;
+                    colonne = 0;
+                } else {
+                    colonne++;
+                }
+            }
+            Position debut = new Position(ligne, colonne);
+            return new Range(debut, new Position(ligne, colonne + nom.length()));
+        } catch (Throwable t) {
+            return new Range(new Position(0, 0), new Position(0, 0));
+        }
+    }
+
+    /** Index du premier caractère non blanc à partir de [depuis]. */
+    private static int sauterBlancs(String texte, int depuis) {
+        int i = depuis;
+        while (i < texte.length()
+                && Character.isWhitespace(texte.charAt(i))) {
+            i++;
+        }
+        return i;
+    }
+
+    /** Vrai si le texte porte EXACTEMENT [nom] à [index] (borne identifiant). */
+    private static boolean nomCommence(String texte, int index, String nom) {
+        if (!texte.startsWith(nom, index)) return false;
+        int apres = index + nom.length();
+        if (apres >= texte.length()) return true;
+        char suivant = texte.charAt(apres);
+        return !Character.isJavaIdentifierPart(suivant);
     }
 
     @Override

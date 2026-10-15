@@ -92,10 +92,7 @@ public final class JavaLanguageServer implements NavLanguageServer {
     }
 
     public JavaLanguageServer() {
-        this.environment = new CompilationEnvironment();
-        this.textDocumentService = new JavaTextDocumentService(environment, this);
-        this.workspaceService = new JavaWorkspaceService(environment, this);
-        registerContextListener();
+        this(new CompilationEnvironment(), null);
     }
 
     /**
@@ -104,7 +101,25 @@ public final class JavaLanguageServer implements NavLanguageServer {
      * @param environment l'environnement de compilation (classpath + source dirs)
      */
     public JavaLanguageServer(CompilationEnvironment environment) {
+        this(environment, null);
+    }
+
+    /** Rappel de la façade hôte à l'arrêt (désinscription du registre). */
+    private final Runnable aLArret;
+
+    /**
+     * Constructeur complet (S1-d « watched files côté hôte ») : la façade
+     * hôte s'inscrit pour être PRÉVENUE à l'arrêt du serveur
+     * (shutdown/exit) — elle retire alors le serveur de son registre des
+     * vivants (aucun serveur mort ne reçoit d'événements de fichiers).
+     *
+     * @param environment l'environnement de compilation (classpath + source dirs)
+     * @param aLArret rappel de décompte à shutdown/exit (idempotent, peut
+     *        être null — même contrat que KotlinLanguageServer)
+     */
+    public JavaLanguageServer(CompilationEnvironment environment, Runnable aLArret) {
         this.environment = environment;
+        this.aLArret = aLArret != null ? aLArret : () -> { };
         this.textDocumentService = new JavaTextDocumentService(environment, this);
         this.workspaceService = new JavaWorkspaceService(environment, this);
         registerContextListener();
@@ -218,6 +233,13 @@ public final class JavaLanguageServer implements NavLanguageServer {
             LOG.warning("textDocumentService.shutdownExecutors échoué: " + t);
         }
 
+        // S1-d : la façade hôte retire ce serveur de ses vivants.
+        try {
+            aLArret.run();
+        } catch (Throwable t) {
+            LOG.warning("aLArret (shutdown) échoué: " + t);
+        }
+
         return CompletableFuture.completedFuture(null);
     }
 
@@ -248,6 +270,13 @@ public final class JavaLanguageServer implements NavLanguageServer {
         }
         // En mode in-process, on retourne simplement — l'hôte peut détecter
         // lifecycleState() == EXITED pour décider de la suite.
+        // S1-d : désinscription côté façade (ceinture et bretelles — le
+        // rappel est idempotent, un serveur déjà retiré ne l'est plus).
+        try {
+            aLArret.run();
+        } catch (Throwable t) {
+            LOG.warning("aLArret (exit) échoué: " + t);
+        }
     }
 
     /** Type de retour covariant ({@link NavTextDocumentService}). */

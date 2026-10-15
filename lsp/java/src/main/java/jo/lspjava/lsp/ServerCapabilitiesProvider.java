@@ -112,6 +112,9 @@ public final class ServerCapabilitiesProvider {
         renameOpts.setPrepareProvider(true);
         caps.setRenameProvider(renameOpts);
         caps.setDocumentFormattingProvider(true);   // format code
+        // workspace/symbol (S1-c) : recherche de types à l'échelle de
+        // l'espace (index jars + sources + jrt — substrat de complétion).
+        caps.setWorkspaceSymbolProvider(true);
 
         // Signature help — déclenché par "(" et ","
         org.eclipse.lsp4j.SignatureHelpOptions sigOptions = new org.eclipse.lsp4j.SignatureHelpOptions();

@@ -1484,6 +1484,53 @@ final class EcjCompilerEnvironment {
         }
     }
 
+    // ── workspace/symbol (S1-c — plan de stabilisation §3.1) ────────────
+
+    /**
+     * FQN des types portant la REQUÊTE en préfixe de nom simple
+     * (workspace/symbol S1-c) — le même substrat gradué que la
+     * complétion de types (index disque jars + sources projet + jrt),
+     * matcher préfixe/camel-hump, plafond imposé par l'appelant.
+     *
+     * @param requête texte de recherche (peut être vide — tout, borné).
+     * @param limite  nombre maximum de FQCN rendus.
+     * @return les FQCN triés (plus courts d'abord, dédupliqués).
+     */
+    public java.util.List<String> symbolesEspace(String requete, int limite) {
+        return findTypesByPrefix(new EcjPrefixMatcher(requete), limite);
+    }
+
+    /**
+     * Fichier SOURCE porteur d'un FQCN (workspace/symbol S1-c : la
+     * localisation réelle d'un type du projet) — résolution
+     * paquet/chemin sur les racines sources, {@code null} pour un type
+     * binaire (jars/jrt : pas de source ouvrable — S3 « mode profond »,
+     * jamais d'URI factice).
+     */
+    public Path fichierSourceDe(String fqcn) {
+        String rel = fqcn.replace('.', '/') + ".java";
+        for (Path root : sourceRoots) {
+            Path candidat = root.resolve(rel);
+            if (Files.isRegularFile(candidat)) return candidat;
+        }
+        return null;
+    }
+
+    /**
+     * Le jar porteur d'un FQCN (accès public à {@code indexNoms.jarDe}
+     * pour workspace/symbol) — {@code null} si non résolu (fenêtre de
+     * construction, AAR composite, type de sources : appelant prudent).
+     */
+    public Path jarPorteurDe(String fqcn) {
+        if (indexNoms == null) return null;
+        try {
+            return indexNoms.jarDe(fqcn);
+        } catch (Throwable t) {
+            LOG.log(Level.FINE, "jarPorteurDe échoué pour " + fqcn, t);
+            return null;
+        }
+    }
+
     /** Ajoute chaque préfixe pointé du nom interne ({@code a/b/C.class}
      *  ajoute {@code a} et {@code a.b}). */
     static void addPackagePrefixes(String internalName, Set<String> out) {

@@ -1862,3 +1862,50 @@ lifecycle réel. lsp:java 330 verts, lsp:host 86.
 Emplacement du PV de mesure appareil prévu par le lot S0-c (décision D3
 du propriétaire — lot G maintenant / plus tard / jamais publier, cf.
 audit §11.2). La séance dédiée n'a pas encore eu lieu.
+
+## 19. Journal de stabilisation — lot S1 « parité utile JDT.LS »
+
+### 19.1 v0.134.16 — S1-b « diagnostics riches » + S1-c « workspace/symbol » + S1-d « watched files côté hôte »
+
+Contenu (audit §11 S1-b/S1-c/S1-d, I4) :
+
+- **S1-b — tags de diagnostics** : `toLspDiagnostic` dérive les TAGS LSP
+  de l'ID ecj transporté par le code (`ecj:<id>`) —
+  `DiagnosticTag.Unnecessary` pour la famille des « never used »
+  (`UnusedImport`, `UnusedPrivate{Type,Field,Method,Constructor}`,
+  `UnusedLabel`, `UnusedTypeParameter`) — l'éditeur cel peint la plage
+  estompée (consommation VIVANTE, `LspDiagnosticsManager`) ;
+  `DiagnosticTag.Deprecated` pour les usages d'un membre déprécié
+  (`UsingDeprecated{Type,Field,Method,Constructor}`). Aucun tag inventé
+  hors familles connues. `relatedInformation` reportée (le client cel ne
+  la consomme pas — la voie deviendra vivante avec l'onglet Problèmes).
+- **S1-c — workspace/symbol** : capacité
+  `workspaceSymbolProvider` déclarée ; handler dans
+  `JavaWorkspaceService` — recherche de types par préfixe sur le
+  substrat gradué de la complétion (index disque des jars + sources
+  projet en cache TTL + image jrt), verrou de l'index pris par le moteur
+  (`EcjCompilerEngine.symbolesEspace`), plafond 64. Localisations
+  honnêtes : type de SOURCE → fichier réel + plage du nom déclarant
+  (heuristique textuelle bornée, repli 0) ; type binaire sans source
+  ouvrable → ÉCARTÉ (S3 « mode profond » le servira — jamais d'URI
+  factice). Requête vide / moteur non prêt → liste vide (I9).
+- **S1-d — watched files côté hôte** (I4, remède (a)) : le handler
+  serveur `didChangeWatchedFiles` n'est plus une voie muette —
+  `SessionLsp` démarre un surveillant de fichiers (`SurveillantFichiersHote` :
+  balayage PÉRIODIQUE borné du répertoire projet — `.java` seul,
+  plafond 2000, exclusions build/.git/.gradle, diff par mtime en ordre
+  déterministe) qui pousse les `FileEvent` à CHAQUE serveur Java vivant
+  (registre `serveursJava`, inscription à `serveur()`, désinscription par
+  le rappel `aLArret` de shutdown/exit — même contrat que
+  KotlinLanguageServer). Paramètre `surveillanceFichiersMs` (défaut 5 s,
+  ≤ 0 = neutre — tests). Tolérance : tour fautif n'arrête jamais la
+  boucle ; événements d'un tour fautif perdus (baseline avancée), le
+  changement suivant repousse.
+- **Tests** : `JavaS1RicheTest` (8 — tag Unnecessary sur import inutilisé
+  via VRAI flux diagnostics, absence de tag hors famille, capacité,
+  requête vide I9, recherche sur source réelle + plage du nom, moteur non
+  prêt, rappel aLArret, événements tolérés) ;
+  `SurveillantFichiersHoteTest` (5 — baseline, diff créé/modifié/supprimé
+  en ordre du chemin, périmètre .java+exclusions, borne, boucle fautive).
+- Parité : digeste régénéré (973 fichiers), contre-vérification SANS
+  flag verte (--rerun-tasks).

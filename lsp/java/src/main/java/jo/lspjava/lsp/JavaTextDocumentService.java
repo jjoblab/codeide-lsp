@@ -1098,6 +1098,13 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         Range range = toLspRange(source, d.range());
         org.eclipse.lsp4j.Diagnostic lspDiag = new org.eclipse.lsp4j.Diagnostic(range, d.message(), sev, d.source());
         if (d.code() != null) lspDiag.setCode(d.code());
+        // S1-b « diagnostics riches » : TAGS LSP dérivés de l'ID ecj
+        // (Unnecessary → code estompé côté éditeur cel ; Deprecated →
+        // signalé barré si le client le rend). Le code transporte
+        // l'identifiant du problème ecj (« ecj:<id> ») — le mapping est
+        // PUR (aucune devinette sur le message localisé).
+        java.util.List<org.eclipse.lsp4j.DiagnosticTag> tags = tagsDe(d.code());
+        if (tags != null) lspDiag.setTags(tags);
         // Transporte les arguments structurés du problème ecj dans le
         // champ data du diagnostic LSP. L'éditeur les renvoie tels quels
         // dans la requête codeAction suivante — ce qui permet au
@@ -1107,6 +1114,47 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             lspDiag.setData(new ArrayList<>(d.arguments()));
         }
         return lspDiag;
+    }
+
+    /**
+     * Familles de problèmes ecj porteurs d'un TAG LSP (S1-b) — les
+     * constantes {@code IProblem} de la grammaire compilateur vendoree.
+     */
+    private static final java.util.Set<Integer> IDS_INUTILISE = java.util.Set.of(
+            org.eclipse.jdt.core.compiler.IProblem.UnusedImport,
+            org.eclipse.jdt.core.compiler.IProblem.UnusedPrivateType,
+            org.eclipse.jdt.core.compiler.IProblem.UnusedPrivateField,
+            org.eclipse.jdt.core.compiler.IProblem.UnusedPrivateMethod,
+            org.eclipse.jdt.core.compiler.IProblem.UnusedPrivateConstructor,
+            org.eclipse.jdt.core.compiler.IProblem.UnusedLabel,
+            org.eclipse.jdt.core.compiler.IProblem.UnusedTypeParameter);
+
+    private static final java.util.Set<Integer> IDS_DEPRECE = java.util.Set.of(
+            org.eclipse.jdt.core.compiler.IProblem.UsingDeprecatedType,
+            org.eclipse.jdt.core.compiler.IProblem.UsingDeprecatedField,
+            org.eclipse.jdt.core.compiler.IProblem.UsingDeprecatedMethod,
+            org.eclipse.jdt.core.compiler.IProblem.UsingDeprecatedConstructor);
+
+    /**
+     * TAGS LSP d'un diagnostic à partir de son code « ecj:&lt;id&gt; » :
+     * {@link org.eclipse.lsp4j.DiagnosticTag#Unnecessary} pour la famille
+     * des « never used » (le client cel peint la plage estompée),
+     * {@link org.eclipse.lsp4j.DiagnosticTag#Deprecated} pour les usages
+     * d'un membre déprécié. {@code null} (forme LSP : tag absent) quand
+     * le code n'est pas un problème ecj connu — aucun tag inventé.
+     */
+    private static java.util.List<org.eclipse.lsp4j.DiagnosticTag> tagsDe(String code) {
+        if (code == null || !code.startsWith("ecj:")) return null;
+        int id;
+        try {
+            id = Integer.parseInt(code.substring(4));
+        } catch (NumberFormatException badCode) {
+            return null;
+        }
+        java.util.List<org.eclipse.lsp4j.DiagnosticTag> tags = new ArrayList<>(2);
+        if (IDS_INUTILISE.contains(id)) tags.add(org.eclipse.lsp4j.DiagnosticTag.Unnecessary);
+        if (IDS_DEPRECE.contains(id)) tags.add(org.eclipse.lsp4j.DiagnosticTag.Deprecated);
+        return tags.isEmpty() ? null : tags;
     }
 
     // ─────────────────────────────────────────────────────────────────────

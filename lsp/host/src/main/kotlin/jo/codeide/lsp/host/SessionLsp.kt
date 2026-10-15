@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.services.LanguageServer
 import java.io.Closeable
 import java.io.File
@@ -91,6 +92,13 @@ public class SessionLsp(
     jdkHome: Path? = null,
     androidJar: File? = null,
     parentJob: Job? = null,
+    /**
+     * Période du surveillant de fichiers S1-d (I4) en millisecondes —
+     * ≤ 0 = surveillant NEUTRE (jamais lancé ; les tests pilotent le
+     * diff à la main). Défaut 5 s : un git pull / édition externe
+     * atteint le cache de parse sans réouverture.
+     */
+    private val surveillanceFichiersMs: Long = 5_000L,
 ) : Closeable {
     /** Racine du projet ouvert (identité de la session). */
     public val racine: File = racineProjet
@@ -131,6 +139,16 @@ public class SessionLsp(
     /** Collecte courante de l'état de la vue fusion. */
     private var collecteEtat: Job? = null
 
+    /**
+     * Serveurs Java VIVANTS (S1-d) : chaque serveur créé par [serveur]
+     * s'inscrit ici et se retire lui-même à son shutdown/exit (rappel
+     * aLArret — aucun serveur mort ne reçoit d'événements de fichiers).
+     */
+    private val serveursJava = java.util.concurrent.CopyOnWriteArrayList<jo.lspjava.lsp.JavaLanguageServer>()
+
+    /** Surveillant de fichiers S1-d (balayage périodique borné .java). */
+    private val surveillantFichiers = SurveillantFichiersHote(racineProjet, surveillanceFichiersMs)
+
     private var fermee = false
 
     init {
@@ -147,6 +165,31 @@ public class SessionLsp(
             LOGGER.info("[h4] android.jar de la plateforme branche au moteur par defaut")
         }
         orchestrateur.purgerTemporaires()
+        // S1-d « watched files côté hôte » (I4) : le balayage périodique
+        // pousse les événements .java externes aux serveurs vivants — la
+        // voie protocole n'est plus muette. Borné (plafond du scan),
+        // testable (periodeMs <= 0 = neutre), annulé par le scope.
+        if (surveillanceFichiersMs > 0) {
+            surveillantFichiers.boucle(scope, dispatcheurIo, ::pousserEvenementsFichiers)
+        }
+    }
+
+    /**
+     * Destination S1-d : les événements de fichiers externes rejoignent
+     * CHAQUE serveur Java vivant (sa notification didChangeWatchedFiles
+     * invalide le cache de parse — le serveur reparse au prochain tour).
+     * Un serveur fautif (en arrêt) n'empêche pas les autres : chaque
+     * poussée est gardée, la désinscription aLArret reste le chemin
+     * principal.
+     */
+    private fun pousserEvenementsFichiers(params: DidChangeWatchedFilesParams) {
+        for (serveur in serveursJava) {
+            try {
+                serveur.workspaceService.didChangeWatchedFiles(params)
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "événements de fichiers à un serveur échoués (ignorés)", t)
+            }
+        }
     }
 
     /** Modèle courant (null avant le premier sync réussi). */
@@ -234,7 +277,16 @@ public class SessionLsp(
      */
     public fun serveur(): LanguageServer {
         verifierOuverte()
-        return JavaLanguageServer(environnement)
+        // Le rappel aLArret (Runnable, SANS paramètre) capture le serveur
+        // par variable locale — affectée une fois le serveur construit.
+        var inscrit: jo.lspjava.lsp.JavaLanguageServer? = null
+        val serveur =
+            jo.lspjava.lsp.JavaLanguageServer(environnement) {
+                inscrit?.let { vivant -> serveursJava.remove(vivant) }
+            }
+        inscrit = serveur
+        serveursJava.add(serveur)
+        return serveur
     }
 
     /**
