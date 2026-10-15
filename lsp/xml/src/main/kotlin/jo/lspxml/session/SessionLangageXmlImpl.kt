@@ -12,10 +12,17 @@ import jo.lspxml.api.SeveriteXml
 import jo.lspxml.api.SymboleDocumentXml
 import jo.lspxml.catalog.CataloguesPartages
 import jo.lspxml.completion.ClassementXml
+import jo.lspxml.completion.CompletionAnimateursXml
+import jo.lspxml.completion.CompletionAnimationsXml
+import jo.lspxml.completion.CompletionCouleursXml
 import jo.lspxml.completion.CompletionDrawablesXml
 import jo.lspxml.completion.CompletionEntreesXml
 import jo.lspxml.completion.CompletionMenusXml
+import jo.lspxml.completion.CompletionNavigationXml
+import jo.lspxml.completion.CompletionPolicesXml
+import jo.lspxml.completion.CompletionTransitionsXml
 import jo.lspxml.completion.CompletionValeursXml
+import jo.lspxml.completion.CompletionXmlApp
 import jo.lspxml.completion.CompletionXml
 import jo.lspxml.context.Contexte
 import jo.lspxml.context.ContexteCurseur
@@ -186,7 +193,19 @@ internal class SessionLangageXmlImpl(
         val genre = GenreDocument.depuisUri(uri)
         if (genre !in GENRES_COMPLETABLES) return emptyList()
         val contexte = ContexteCurseur.analyser(document.texte, decalage, document.document)
-        return when (genre) {
+        return completionParGenre(genre, contexte)
+    }
+
+    /**
+     * Dispatch PAR GENRE de complétion (le manifest : règles seules,
+     * jamais complété) — scindé en DEUX générations pour garder le
+     * couplage lisible : XE2-XE5 (v0.118-0.121) puis XP12 (v0.134.10).
+     */
+    private fun completionParGenre(
+        genre: GenreDocument,
+        contexte: Contexte,
+    ): List<PropositionCompletionXml> =
+        when (genre) {
             GenreDocument.VALEURS -> completionValeurs(contexte)
 
             GenreDocument.LAYOUT -> completionLayout(contexte)
@@ -195,9 +214,31 @@ internal class SessionLangageXmlImpl(
 
             GenreDocument.MENU -> completionMenu(contexte)
 
+            else -> completionGenreEtendu(genre, contexte)
+        }
+
+    /** Dispatch des genres ÉTENDUS (XP12) vers leur contributeur. */
+    private fun completionGenreEtendu(
+        genre: GenreDocument,
+        contexte: Contexte,
+    ): List<PropositionCompletionXml> =
+        when (genre) {
+            GenreDocument.COULEUR -> completionCouleur(contexte)
+
+            GenreDocument.ANIMATION -> completionAnimation(contexte)
+
+            GenreDocument.ANIMATEUR -> completionAnimateur(contexte)
+
+            GenreDocument.XML_APP -> completionXmlApp(contexte)
+
+            GenreDocument.NAVIGATION -> completionNavigation(contexte)
+
+            GenreDocument.TRANSITION -> completionTransition(contexte)
+
+            GenreDocument.POLICE -> completionPolice(contexte)
+
             else -> emptyList()
         }
-    }
 
     /** Genres dont la complétion est branchée (le manifest : règles seules). */
     private companion object {
@@ -210,6 +251,13 @@ internal class SessionLangageXmlImpl(
                 GenreDocument.VALEURS,
                 GenreDocument.DRAWABLE,
                 GenreDocument.MENU,
+                GenreDocument.COULEUR,
+                GenreDocument.ANIMATION,
+                GenreDocument.ANIMATEUR,
+                GenreDocument.XML_APP,
+                GenreDocument.NAVIGATION,
+                GenreDocument.TRANSITION,
+                GenreDocument.POLICE,
             )
     }
 
@@ -298,6 +346,122 @@ internal class SessionLangageXmlImpl(
                 fusionValeurs(
                     CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
                     CompletionMenusXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /**
+     * Complétion COULEUR (XP12) — contributeur couleurs (réutilisation
+     * du contributeur drawables), valeurs FUSIONNÉES avec le
+     * contributeur général (références `@color/…` du projet).
+     */
+    private fun completionCouleur(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionCouleursXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionCouleursXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionCouleursXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion ANIMATION (XP12) — tween, valeurs fusionnées (timing + références `@anim/…`). */
+    private fun completionAnimation(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionAnimationsXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionAnimationsXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionAnimationsXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion ANIMATEUR (XP12) — propriété, valeurs fusionnées (timing + références `@animator/…`). */
+    private fun completionAnimateur(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionAnimateursXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionAnimateursXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionAnimateursXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion XML_APP (XP12) — fichiers de configuration d'application. */
+    private fun completionXmlApp(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionXmlApp.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionXmlApp.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionXmlApp.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion NAVIGATION (XP12) — graphes de navigation, valeurs fusionnées. */
+    private fun completionNavigation(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionNavigationXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionNavigationXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionNavigationXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion TRANSITION (XP12) — transitions du framework, valeurs fusionnées. */
+    private fun completionTransition(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionTransitionsXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionTransitionsXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionTransitionsXml.valeurs(contexte),
+                )
+
+            Contexte.Muet -> emptyList()
+        }
+
+    /** Complétion POLICE (XP12) — familles de polices, valeurs fusionnées. */
+    private fun completionPolice(contexte: Contexte): List<PropositionCompletionXml> =
+        when (contexte) {
+            is Contexte.NomDeBalise -> CompletionPolicesXml.balises(contexte)
+
+            is Contexte.NomAttribut -> CompletionPolicesXml.attributs(contexte)
+
+            is Contexte.Valeur ->
+                fusionValeurs(
+                    CompletionValeursXml.valeurs(contexte, catalogueCourant(), indexRessources),
+                    CompletionPolicesXml.valeurs(contexte),
                 )
 
             Contexte.Muet -> emptyList()

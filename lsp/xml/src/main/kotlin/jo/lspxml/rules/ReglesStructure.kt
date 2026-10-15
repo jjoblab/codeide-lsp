@@ -19,6 +19,27 @@ import jo.lspxml.parse.XmlElement
  */
 public object ReglesStructure {
     /**
+     * Genres soumis à la règle xmlns:android (XE5 + XP12) — tous les
+     * genres dont les catalogues portent des attributs android: ; la
+     * règle ne sonne que si un attribut android: est UTILISÉ (les
+     * fichiers sans namespace — FileProvider, sécurité réseau — ne
+     * déclenchent rien).
+     */
+    private val GENRES_XMLNS_ANDROID: Set<GenreDocument> =
+        setOf(
+            GenreDocument.LAYOUT,
+            GenreDocument.DRAWABLE,
+            GenreDocument.MENU,
+            GenreDocument.COULEUR,
+            GenreDocument.ANIMATION,
+            GenreDocument.ANIMATEUR,
+            GenreDocument.XML_APP,
+            GenreDocument.NAVIGATION,
+            GenreDocument.TRANSITION,
+            GenreDocument.POLICE,
+        )
+
+    /**
      * Diagnostique un document pour son [genre] — parcours de l'arbre,
      * ordre du document ; la SESSION trie par position avant publication.
      */
@@ -32,14 +53,13 @@ public object ReglesStructure {
             visiter(document.racines[indice], genre, diagnostics, contextes, estPremiereRacine = indice == 0)
         }
         ReglesGeneriques.regleEntitesTexte(document, diagnostics)
-        // XE5 : l'exigence xmlns:android s'étend aux drawables/menus
-        // (un `android:shape=` sans déclaration est la même ERREUR de
-        // gonfleur) ; les ids @+id/ dupliqués gardent le layout et le
-        // MENU (les ids d'items de menu sont des vrais ids).
-        if (genre == GenreDocument.LAYOUT ||
-            genre == GenreDocument.DRAWABLE ||
-            genre == GenreDocument.MENU
-        ) {
+        // XE5 + XP12 : l'exigence xmlns:android s'étend à tous les
+        // genres qui consomment des attributs android: (un
+        // `android:shape=` sans déclaration est la même ERREUR de
+        // gonfleur — idem `android:duration`, `android:fontWeight`…)
+        // ; les ids @+id/ dupliqués gardent le layout et le MENU (les
+        // ids d'items de menu sont des vrais ids).
+        if (genre in GENRES_XMLNS_ANDROID) {
             ReglesLayout.regleXmlnsAndroid(document, diagnostics)
         }
         if (genre == GenreDocument.LAYOUT || genre == GenreDocument.MENU) {
@@ -74,6 +94,13 @@ public object ReglesStructure {
             GenreDocument.MANIFEST,
             GenreDocument.DRAWABLE,
             GenreDocument.MENU,
+            GenreDocument.COULEUR,
+            GenreDocument.ANIMATION,
+            GenreDocument.ANIMATEUR,
+            GenreDocument.XML_APP,
+            GenreDocument.NAVIGATION,
+            GenreDocument.TRANSITION,
+            GenreDocument.POLICE,
             GenreDocument.AUTRE -> Unit
         }
         element.enfants.forEach { enfant ->

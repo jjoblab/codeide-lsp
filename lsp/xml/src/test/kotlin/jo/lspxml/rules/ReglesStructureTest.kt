@@ -41,7 +41,9 @@ class ReglesStructureTest {
         assertEquals(GenreDocument.DRAWABLE, GenreDocument.depuisUri("file:///p/res/drawable/ic.xml"))
         assertEquals(GenreDocument.DRAWABLE, GenreDocument.depuisUri("file:///p/res/drawable-v24/ic.xml"))
         assertEquals(GenreDocument.MENU, GenreDocument.depuisUri("file:///p/res/menu/main.xml"))
-        assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///p/res/xml/inconnu.xml"))
+        // XP12 : res/xml est un genre PROPRE désormais (configurations d'application).
+        assertEquals(GenreDocument.XML_APP, GenreDocument.depuisUri("file:///p/res/xml/inconnu.xml"))
+        assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///p/res/truc/inconnu.xml"))
         assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///p/note.txt"))
     }
 

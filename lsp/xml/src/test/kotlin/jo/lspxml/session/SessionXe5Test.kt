@@ -22,7 +22,9 @@ class SessionXe5Test {
         assertEquals(GenreDocument.DRAWABLE, GenreDocument.depuisUri("file:///a/res/drawable/f.xml"))
         assertEquals(GenreDocument.DRAWABLE, GenreDocument.depuisUri("file:///a/res/drawable-v24/f.xml"))
         assertEquals(GenreDocument.MENU, GenreDocument.depuisUri("file:///a/res/menu/main.xml"))
-        assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///a/res/xml/inconnu.xml"))
+        // XP12 : res/xml est un genre PROPRE désormais — le silence
+        // AUTRE se vérifie sur un dir toujours inconnu.
+        assertEquals(GenreDocument.AUTRE, GenreDocument.depuisUri("file:///a/res/truc/inconnu.xml"))
         assertEquals(GenreDocument.LAYOUT, GenreDocument.depuisUri("file:///a/res/layout-land/main.xml"))
     }
 
@@ -82,7 +84,7 @@ class SessionXe5Test {
     @Test
     fun `completion — uri hors genres previewables, silence`() {
         val session = session()
-        val uri = "file:///a/res/xml/inconnu.xml"
+        val uri = "file:///a/res/truc/inconnu.xml"
         session.ouvrirDocument(uri, "<inconnu attri")
         assertTrue(session.completion(uri, 14).isEmpty())
     }

@@ -37,6 +37,7 @@ internal object CompletionDrawablesXml {
             "level-list" to "liste de niveaux (minLevel, maxLevel)",
             "transition" to "drawable de transition (deux calques)",
             "animated-vector" to "vector animé (target)",
+            "adaptive-icon" to "icône adaptative (background, foreground, monochrome)",
         )
 
     /** Balises usuelles d'abord (le candidat probable en tête). */
@@ -56,6 +57,9 @@ internal object CompletionDrawablesXml {
             "level-list" to listOf("item"),
             "transition" to listOf("item"),
             "animated-vector" to listOf("target"),
+            // XP12 : icône adaptative — calques nommés portant un
+            // drawable (attribut ou enfant imbriqué).
+            "adaptive-icon" to listOf("background", "foreground", "monochrome"),
             // Enveloppes et calques : le drawable enfant vit
             // DIRECTEMENT (pas de <item> intermédiaire).
             "inset" to BALISES_RACINES.keys.toList(),
@@ -80,6 +84,9 @@ internal object CompletionDrawablesXml {
             "path" to "tracé vectoriel (pathData)",
             "clip-path" to "tracé de découpe",
             "target" to "cible d'animation (name, animation)",
+            "background" to "calque d'arrière-plan de l'icône adaptative",
+            "foreground" to "calque de premier plan de l'icône adaptative",
+            "monochrome" to "calque monochrome (icônes thématisées, API 33)",
         )
 
     /** Attributs PAR BALISE (nom complet → détail court). */
@@ -228,6 +235,9 @@ internal object CompletionDrawablesXml {
                 "android:animation" to "animation (animator)",
                 "android:name" to "nom du path/group visé",
             ),
+            "background" to listOf("android:drawable" to "drawable du calque"),
+            "foreground" to listOf("android:drawable" to "drawable du calque"),
+            "monochrome" to listOf("android:drawable" to "drawable du calque"),
         )
 
     /** Attributs d'un `item` SELON son parent (états, calques, frames). */
@@ -271,6 +281,13 @@ internal object CompletionDrawablesXml {
 
             else -> listOf("android:drawable" to "drawable enfant")
         }
+
+    /**
+     * États d'un `item` de SELECTOR (partagé avec les listes d'états
+     * de COULEUR — XP12 : le contributeur couleurs le réutilise, la
+     * donnée ne vit qu'ici).
+     */
+    internal fun attributsItemSelector(): List<Pair<String, String>> = attributsItem("selector")
 
     /** Énumérations des attributs CONNUS (nom local → valeurs). */
     private val ENUMERATIONS: Map<String, List<String>> =
