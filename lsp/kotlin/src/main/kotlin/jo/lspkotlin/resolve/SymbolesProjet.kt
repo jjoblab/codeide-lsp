@@ -249,17 +249,26 @@ public object SymbolesProjet {
 
     /**
      * Paramètres du constructeur PRIMAIRE d'une classe (K4) : la liste
-     * de paramètres ENFANT DIRECTE du nœud CLASS (celles des
-     * constructeurs secondaires vivent dans SECONDARY_CONSTRUCTOR).
+     * de paramètres vit SOUS le nœud PRIMARY_CONSTRUCTOR (enfant du
+     * nœud CLASS — sondé v0.134.14 : la lecture « enfant directe du
+     * nœud CLASS » ne rendait RIEN, tout appel de constructeur à
+     * N arguments devenait un faux `kt.argumentCount` ; le chemin
+     * direct reste sondé en repli, celles des constructeurs
+     * secondaires vivent dans SECONDARY_CONSTRUCTOR).
      */
-    private fun parametresPrimaires(classe: KtClass): List<Pair<String?, String?>> =
-        classe.noeud.sousNoeuds
-            .firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
-            ?.sousNoeuds
-            ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
-            ?.map { KtParameter(it) }
-            ?.map { parametre -> parametreExtraire(parametre) }
-            ?: emptyList()
+    private fun parametresPrimaires(classe: KtClass): List<Pair<String?, String?>> {
+        val liste =
+            classe.noeud.sousNoeuds
+                .firstOrNull { it.type == KtNodeTypes.PRIMARY_CONSTRUCTOR }
+                ?.sousNoeuds
+                ?.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+                ?: classe.noeud.sousNoeuds.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+                ?: return emptyList()
+        return liste.sousNoeuds
+            .filter { it.type == KtNodeTypes.VALUE_PARAMETER }
+            .map { KtParameter(it) }
+            .map { parametre -> parametreExtraire(parametre) }
+    }
 
     /** Déclaration de PARAMÈTRE (portée du corps de fonction). */
     private fun parametreDeclaration(

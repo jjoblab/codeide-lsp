@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
@@ -7,6 +8,7 @@ import jo.lspkotlin.api.GenreCompletionKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import jo.lspkotlin.api.SignatureKotlin
 import org.eclipse.lsp4j.CodeActionContext
 import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionParams
@@ -29,6 +31,7 @@ import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ShowMessageRequestParams
+import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -364,6 +367,81 @@ class KotlinLanguageServerTest {
         val resultat = espace.serveur.initialize(InitializeParams()).join()
         assertEquals(true, resultat.capabilities.foldingRangeProvider.left, "pliage déclaré (S2)")
         espace.fermer()
+    }
+
+    @Test
+    fun `capacités S1 - signatureHelpProvider déclaré avec déclencheurs`() {
+        val espace = espaceAvecEspion()
+        val resultat = espace.serveur.initialize(InitializeParams()).join()
+        val options = resultat.capabilities.signatureHelpProvider
+        assertEquals(listOf("(", ","), options.triggerCharacters, "déclencheurs ( , — miroir Java")
+        espace.fermer()
+    }
+
+    @Test
+    fun `signatureHelp - aide neutre traduite (étiquettes STRING, indices actifs)`() {
+        val session =
+            SessionScriptee(
+                signatures =
+                    AideSignatureKotlin(
+                        signatures =
+                            listOf(
+                                SignatureKotlin("creer(nom: String): Int", null, listOf("nom: String")),
+                                SignatureKotlin(
+                                    "creer(nom: String, taille: Int): Int",
+                                    null,
+                                    listOf("nom: String", "taille: Int"),
+                                ),
+                            ),
+                        signatureActive = 1,
+                        parametreActif = 1,
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "fun demo() { creer(\"a\", ) }\n")),
+        )
+        val aide =
+            serveur.textDocumentService
+                .signatureHelp(
+                    SignatureHelpParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 28)),
+                ).join()
+        assertEquals(2, aide.signatures.size)
+        assertEquals("creer(nom: String, taille: Int): Int", aide.signatures[aide.activeSignature].label)
+        assertEquals(1, aide.activeParameter)
+        // Le client ne lit que la forme STRING des libellés — forme plage INTERDITE.
+        assertTrue(aide.signatures.all { info -> info.parameters.all { it.label.left != null } })
+        assertEquals(listOf("nom: String", "taille: Int"), aide.signatures[1].parameters.map { it.label.left })
+        session.close()
+    }
+
+    @Test
+    fun `signatureHelp - session en échec, SignatureHelp vide sans exception`() {
+        val session = SessionScriptee(leverSurSignature = true)
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "fun demo() {}\n")),
+        )
+        val aide =
+            serveur.textDocumentService
+                .signatureHelp(
+                    SignatureHelpParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 5)),
+                ).join()
+        assertTrue(aide.signatures.isEmpty(), "panne de session → aide VIDE (repli honnête)")
+        session.close()
+    }
+
+    @Test
+    fun `signatureHelp - document inconnu, SignatureHelp vide sans exception`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        val aide =
+            serveur.textDocumentService
+                .signatureHelp(
+                    SignatureHelpParams(TextDocumentIdentifier("file:///jamais-ouvert.kt"), Position(0, 0)),
+                ).join()
+        assertTrue(aide.signatures.isEmpty())
+        session.close()
     }
 
     @Test
@@ -853,6 +931,8 @@ class KotlinLanguageServerTest {
         private val leverSurCompletion: Boolean = false,
         private val leverSurSurvol: Boolean = false,
         private val leverSurDefinitions: Boolean = false,
+        private val signatures: AideSignatureKotlin? = null,
+        private val leverSurSignature: Boolean = false,
     ) : SessionLangageKotlin {
         public var fermee: Boolean = false
             private set
@@ -924,6 +1004,14 @@ class KotlinLanguageServerTest {
         ): List<EmplacementKotlin> {
             check(!leverSurDefinitions) { "définitions scriptées en échec" }
             return emplacements
+        }
+
+        override fun signature(
+            uri: String,
+            decalage: Int,
+        ): AideSignatureKotlin? {
+            check(!leverSurSignature) { "signature scriptée en échec" }
+            return signatures
         }
 
         override fun close() {

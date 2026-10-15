@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.GenreCompletionKotlin
@@ -38,11 +39,16 @@ import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
 import org.eclipse.lsp4j.Location
+import org.eclipse.lsp4j.ParameterInformation
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
+import org.eclipse.lsp4j.SignatureHelp
+import org.eclipse.lsp4j.SignatureHelpOptions
+import org.eclipse.lsp4j.SignatureHelpParams
+import org.eclipse.lsp4j.SignatureInformation
 import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.SymbolKind
 import org.eclipse.lsp4j.TextDocumentSyncKind
@@ -141,6 +147,11 @@ internal class KotlinLanguageServer(
         // S2 (v0.134.9) : PLIAGE foldingRange — corps à accolades,
         // liste d'imports, commentaires multi-lignes (miroir XP11 XML).
         capacites.setFoldingRangeProvider(true)
+        // S1 (v0.134.14) : AIDE À LA SIGNATURE — appel englobant le
+        // curseur, paramètre actif (déclencheurs « ( » et « , » —
+        // même convention que le LSP Java).
+        val signature = SignatureHelpOptions(listOf("(", ","))
+        capacites.setSignatureHelpProvider(signature)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -401,6 +412,28 @@ internal class KotlinLanguageServer(
                     }
                 }
             return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Aide à la signature (S1, miroir Java `signatureHelp`) : la
+         * session rend les candidates neutres (étiquettes prêtes à
+         * afficher — le client ne lit que la forme STRING des
+         * libellés), l'hôte traduit en `SignatureHelp` LSP. Aide
+         * absente ou document inconnu : `SignatureHelp` VIDE (jamais
+         * d'exception — l'éditeur retombe sur son silence).
+         */
+        override fun signatureHelp(params: SignatureHelpParams): CompletableFuture<SignatureHelp> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(SignatureHelp())
+            val decalage = decalageDe(params.position, document.texte)
+            val aide =
+                try {
+                    session.signature(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "signatureHelp échoué ($uri)", t)
+                    null
+                }
+            return CompletableFuture.completedFuture(aide?.let(::aideSignatureLspDe) ?: SignatureHelp())
         }
 
         /**
@@ -701,6 +734,31 @@ internal class KotlinLanguageServer(
             position: Position,
             texte: String,
         ): Int = ConvertisseurPositions.pour(texte).decalageDe(position)
+
+        /**
+         * Traduction de l'aide neutre (S1) : étiquette →
+         * `SignatureInformation`, libellés de paramètres en forme
+         * STRING (le client éditeur ignore la forme plage), doc en
+         * plaintext quand présente. Indices bornés : signatureActive
+         * tombe sur 0 hors bornes, parametreActif reste >= 0 — un
+         * index hors bornes chez le client n'aurait AUCUN surlignage.
+         */
+        private fun aideSignatureLspDe(aide: AideSignatureKotlin): SignatureHelp {
+            val signatures =
+                aide.signatures.map { candidate ->
+                    val info = SignatureInformation(candidate.etiquette)
+                    candidate.documentation
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { info.setDocumentation(Either.forLeft(it)) }
+                    info.setParameters(candidate.parametres.map { ParameterInformation(it) })
+                    info
+                }
+            return SignatureHelp(
+                signatures,
+                if (aide.signatureActive in signatures.indices) aide.signatureActive else 0,
+                aide.parametreActif.coerceAtLeast(0),
+            )
+        }
     }
 
     /** Service d'espace : notifications acceptées, sans effet à K2. */

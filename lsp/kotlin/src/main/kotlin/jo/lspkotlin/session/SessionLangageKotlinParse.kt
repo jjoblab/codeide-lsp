@@ -1,5 +1,6 @@
 package jo.lspkotlin.session
 
+import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
@@ -21,6 +22,7 @@ import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.InterrogationsSymboles
 import jo.lspkotlin.resolve.ResolutionKotlin
+import jo.lspkotlin.resolve.SignaturesAppels
 import jo.lspkotlin.resolve.SymbolesProjet
 import jo.lspkotlin.symboles.SymbolesDocumentKotlin
 import jo.lspkotlin.synthetics.ClassesSynthetiques
@@ -243,6 +245,32 @@ internal class SessionLangageKotlinParse(
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             PlisDocumentKotlin.depuis(document.arbre.racine)
+        }
+
+    /**
+     * Aide à la signature (S1) — le travail de résolution vit dans
+     * [SignaturesAppels] ; la session ne fait que piocher le document
+     * courant et filer son contexte. Document inconnu/fermé : `null`.
+     */
+    override fun signature(
+        uri: String,
+        decalage: Int,
+    ): AideSignatureKotlin? =
+        synchronized(verrou) {
+            if (fermee) return null
+            val document = documents[uri] ?: return null
+            val contexteNom = contexteNomDe(document, uri)
+            SignaturesAppels.aide(
+                document.arbre.racine,
+                decalage,
+                SignaturesAppels.Contexte(
+                    contexteNom = contexteNom,
+                    resolution = resolution,
+                    declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
+                    index = indexAppelables,
+                    vue = classpath?.vue,
+                ),
+            )
         }
 
     override fun close() {

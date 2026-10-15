@@ -197,6 +197,30 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun plagesPliables(uri: String): List<PlagePliableKotlin> = emptyList()
 
     /**
+     * Aide à la signature (`textDocument/signatureHelp`, S1 — plan de
+     * stabilisation LSP §3.2) : les candidates de l'appel ENGLOBANT
+     * [decalage] — fonctions et constructeurs du projet (arité du
+     * contrôle `kt.argumentCount`), membre englobant homonyme (arbre
+     * vif), appelable de premier niveau du classpath (index Kotlin),
+     * méthode du récepteur résolu pour un appel qualifié (vue JVM) ;
+     * le paramètre sous le curseur et la première candidate d'arité
+     * compatible sont préselectionnés.
+     *
+     * Conservateur (D3) : ce que la résolution ne prouve pas
+     * n'apparaît pas — jamais de candidate inventée. Curseur hors
+     * appel, appel sans candidate prouvée : `null`.
+     *
+     * Tolérance de version : défaut `null` — un pack K3 face à un hôte
+     * S1 dégrade honnêtement (pas d'aide, jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur dans le texte.
+     * @return l'aide, `null` si rien n'est prouvé (sous-rapport D3) ou
+     *         document inconnu/fermé.
+     */
+    public fun signature(uri: String, decalage: Int): AideSignatureKotlin? = null
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document. Idempotente — un appel après close est
      * sans effet, pas une erreur.
