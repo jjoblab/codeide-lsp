@@ -5,6 +5,7 @@ import jo.lspjava.api.DecompiledSourceResult;
 import jo.lspjava.api.NavigationTarget;
 import jo.lspjava.api.Severity;
 import jo.lspjava.api.TextRange;
+import jo.lspjava.ecj.EcjCompilerEngine;
 import jo.lspjava.engine.CompilationEnvironment;
 import jo.lspjava.services.*;
 import org.eclipse.lsp4j.*;
@@ -482,10 +483,23 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // diagnostic long tient le verrou EcjCompilerEngine.
         return submitToScheduler(filePath, () -> {
             try {
-                // Chemin JDT-first (bindings ecj).
-                String content = hoverService.hoverAt(filePath, source, offset);
-                if (content != null) {
-                    return new Hover(List.of(Either.forLeft(content)));
+                // Chemin JDT-first (bindings ecj). Survol RICHE (S2-a) :
+                // signature seule → PLAINTEXT (l'ancienne forme
+                // MarkedString-string est dépréciée — KP14, miroir Kotlin
+                // v0.134.9) ; signature + javadoc de la déclaration →
+                // MARKDOWN (bloc de code + documentation, même patron que
+                // JDT.LS).
+                EcjCompilerEngine.SurvolRiche riche =
+                        hoverService.survolRicheAt(filePath, source, offset);
+                if (riche != null) {
+                    if (riche.documentation() == null || riche.documentation().isBlank()) {
+                        return new Hover(new MarkupContent(
+                                MarkupKind.PLAINTEXT, riche.signature()));
+                    }
+                    return new Hover(new MarkupContent(
+                            MarkupKind.MARKDOWN,
+                            "```java\n" + riche.signature() + "\n```\n\n"
+                                    + riche.documentation()));
                 }
             } catch (Throwable t) {
                 if (server != null) server.logWarning("hover handler failed for " + filePath, t);
@@ -1825,6 +1839,55 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                 return result;
             } catch (Throwable t) {
                 if (server != null) server.logWarning("formatting handler failed for " + filePath, t);
+                return new ArrayList<org.eclipse.lsp4j.TextEdit>();
+            }
+        }, new ArrayList<org.eclipse.lsp4j.TextEdit>());
+    }
+
+    /**
+     * {@code textDocument/rangeFormatting} : formater la SÉLECTION (S2-a).
+     *
+     * <p>Le formateur Eclipse parse l'unité entière pour le contexte mais
+     * ne produit d'éditions QUE dans la plage demandée — les éditions sont
+     * converties en {@code TextEdit} LSP (offsets → positions UTF-16) et
+     * retournées telles quelles : le client applique seulement la sélection
+     * touchée, le reste du buffer n'est jamais déplacé. Contrat de sûreté
+     * hérité du formatage document : source imparsable ou plage vide →
+     * aucune édition (no-op).</p>
+     */
+    @Override
+    public CompletableFuture<List<? extends org.eclipse.lsp4j.TextEdit>> rangeFormatting(
+            org.eclipse.lsp4j.DocumentRangeFormattingParams params) {
+        verifierLifecycle("rangeFormatting");
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        String filePath = uriToPath(uri);
+        Range plage = params.getRange();
+
+        // Wrapper scheduler + timeout 3 s.
+        return submitToScheduler(filePath, () -> {
+            try {
+                int debut = toOffset(source, plage.getStart());
+                int fin = toOffset(source, plage.getEnd());
+                var fmt = new jo.lspjava.ecj.EcjFormatter(environment.complianceLevel());
+                List<jo.lspjava.ecj.EcjFormatter.Edition> editions =
+                        fmt.editionsRange(source, debut, fin - debut);
+                if (editions == null || editions.isEmpty()) {
+                    return new ArrayList<org.eclipse.lsp4j.TextEdit>();
+                }
+                List<org.eclipse.lsp4j.TextEdit> result = new ArrayList<>();
+                for (jo.lspjava.ecj.EcjFormatter.Edition e : editions) {
+                    result.add(new org.eclipse.lsp4j.TextEdit(
+                            new Range(toPosition(source, e.offset()),
+                                    toPosition(source, e.offset() + e.length())),
+                            e.texte()));
+                }
+                return result;
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning(
+                            "rangeFormatting handler failed for " + filePath, t);
+                }
                 return new ArrayList<org.eclipse.lsp4j.TextEdit>();
             }
         }, new ArrayList<org.eclipse.lsp4j.TextEdit>());

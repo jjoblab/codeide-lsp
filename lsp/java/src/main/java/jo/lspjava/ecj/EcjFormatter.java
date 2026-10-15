@@ -70,6 +70,58 @@ public final class EcjFormatter {
     }
 
     /**
+     * Une édition de formatage aplatie : remplacer la plage
+     * {@code [offset, offset+length)} par {@code texte} — offsets absolus
+     * dans la source d'origine (lot S2-a, {@code textDocument/
+     * rangeFormatting}).
+     */
+    public record Edition(int offset, int length, String texte) {
+    }
+
+    /**
+     * Retourne les éditions de formatage d'une PLAGE de la source (le
+     * formateur parse l'unité entière pour le contexte, mais les éditions
+     * produites ne touchent QUE la plage demandée — c'est la sémantique de
+     * {@code rangeFormatting}).
+     *
+     * @param source le texte complet
+     * @param offset début de la plage (inclusif)
+     * @param length longueur de la plage
+     * @return les éditions en ordre CROISSANT d'offset, disjointes ; liste
+     *         vide si la plage est vide ; null si la source est imparsable
+     *         (le formateur ne propose rien — l'appelant dégrade en no-op)
+     */
+    public List<Edition> editionsRange(String source, int offset, int length) {
+        if (source == null || source.isEmpty()) return List.of();
+        int start = Math.max(0, Math.min(offset, source.length()));
+        int len = Math.max(0, Math.min(length, source.length() - start));
+        if (len == 0) return List.of();
+
+        CodeFormatter formatter = getFormatter();
+        // K_COMPILATION_UNIT parse toute la source pour le contexte ;
+        // F_INCLUDE_COMMENTS reformate aussi javadoc/commentaires.
+        int kind = CodeFormatter.K_COMPILATION_UNIT | CodeFormatter.F_INCLUDE_COMMENTS;
+        TextEdit edit;
+        try {
+            edit = formatter.format(kind, source, start, len,
+                    /* indentationLevel */ 0, /* lineDelimiter */ "\n");
+        } catch (Throwable t) {
+            return null; // dégrade — ne jamais massacrer la source
+        }
+        if (edit == null) return null;
+
+        List<FlatEdit> flat = new ArrayList<>();
+        collect(edit, flat);
+        // Ordre CROISSANT d'offset — convention des éditions LSP.
+        flat.sort(Comparator.comparingInt(FlatEdit::offset));
+        List<Edition> out = new ArrayList<>(flat.size());
+        for (FlatEdit e : flat) {
+            out.add(new Edition(e.offset(), e.length(), e.text()));
+        }
+        return out;
+    }
+
+    /**
      * Retourne le CodeFormatter caché (lazy init, double-checked locking).
      */
     private CodeFormatter getFormatter() {
@@ -106,25 +158,9 @@ public final class EcjFormatter {
      * @return le texte complet avec la plage formatée, ou null si imparsable
      */
     public String formatRange(String source, int offset, int length) {
-        if (source == null || source.isEmpty()) return source;
-        int start = Math.max(0, Math.min(offset, source.length()));
-        int len = Math.max(0, Math.min(length, source.length() - start));
-        if (len == 0) return source;
-
-        CodeFormatter formatter = getFormatter();
-        // K_COMPILATION_UNIT parse toute la source pour le contexte ;
-        // F_INCLUDE_COMMENTS reformate aussi javadoc/commentaires.
-        int kind = CodeFormatter.K_COMPILATION_UNIT | CodeFormatter.F_INCLUDE_COMMENTS;
-        TextEdit edit;
-        try {
-            edit = formatter.format(kind, source, start, len,
-                    /* indentationLevel */ 0, /* lineDelimiter */ "\n");
-        } catch (Throwable t) {
-            return null; // dégrade en no-op — ne jamais massacrer la source
-        }
-        if (edit == null) return null;
-
-        return applyEdits(source, flatten(edit));
+        List<Edition> editions = editionsRange(source, offset, length);
+        if (editions == null) return null;
+        return applyEdits(source, editions);
     }
 
     // ─── Options ───────────────────────────────────────────────────────
@@ -186,16 +222,22 @@ public final class EcjFormatter {
 
     // ─── Application des éditions ──────────────────────────────────────
 
-    /** Une édition aplatie : remplacer [offset, offset+length) par text. */
+    /** Une édition aplatie interne (texte en char[] de l'arbre). */
     private record FlatEdit(int offset, int length, String text) {}
 
-    /** Aplatit l'arbre {@link TextEdit} (MultiTextEdit de feuilles). */
-    private static List<FlatEdit> flatten(TextEdit edit) {
-        List<FlatEdit> out = new ArrayList<>();
-        collect(edit, out);
-        // Ordre décroissant d'offset — les offsets amont restent valides.
-        out.sort(Comparator.comparingInt(FlatEdit::offset).reversed());
-        return out;
+    /** Applique les éditions (triées en DÉCROISSANT au vol — les offsets
+     *  amont restent valides pendant l'application). */
+    private static String applyEdits(String source, List<Edition> editions) {
+        if (editions.isEmpty()) return source;
+        List<Edition> edits = new ArrayList<>(editions);
+        edits.sort(Comparator.comparingInt(Edition::offset).reversed());
+        String result = source;
+        for (Edition e : edits) {
+            int start = Math.max(0, Math.min(e.offset(), result.length()));
+            int end = Math.max(start, Math.min(e.offset() + e.length(), result.length()));
+            result = result.substring(0, start) + e.texte() + result.substring(end);
+        }
+        return result;
     }
 
     private static void collect(TextEdit edit, List<FlatEdit> out) {
@@ -213,17 +255,5 @@ public final class EcjFormatter {
         }
         // Feuille d'un autre type — ignorée (CopySourceEdit etc. ne
         // surviennent pas en formatage).
-    }
-
-    /** Applique les éditions aplaties (déjà triées en décroissant). */
-    private static String applyEdits(String source, List<FlatEdit> edits) {
-        if (edits.isEmpty()) return source;
-        String result = source;
-        for (FlatEdit e : edits) {
-            int start = Math.max(0, Math.min(e.offset(), result.length()));
-            int end = Math.max(start, Math.min(e.offset() + e.length(), result.length()));
-            result = result.substring(0, start) + e.text() + result.substring(end);
-        }
-        return result;
     }
 }

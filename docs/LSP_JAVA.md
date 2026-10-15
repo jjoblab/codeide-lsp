@@ -1990,3 +1990,68 @@ en v0.134.11, S1-b/c/d en v0.134.16) :
   sync redondant no-op conservé).
 - **Parité** : digeste régénéré (fichiers .kt du dépôt décalés par les
   champs v10), contre-vérification SANS flag.
+
+### 19.3 v0.134.18 — S2-a « confort structurel » : rangeFormatting + survol riche (javadoc)
+
+Premier sous-lot du **S2 — Confort structurel** (plan de stabilisation
+§3.1, audit §6/§9 : « Hover javadoc markdown — écart net », « rangeFormatting
+— le formateur Eclipse sait le faire »). Miroir Java du survol riche
+Kotlin (v0.134.9).
+
+- **`textDocument/rangeFormatting`** : la capacité
+  `documentRangeFormattingProvider` est déclarée et le handler câblé sur
+  `EcjFormatter` — nouveau `editionsRange(source, offset, length)` qui
+  retourne les éditions APLATIES de la plage (ordres croissants,
+  disjointes ; `null` si la source est imparsable — le contrat
+  historique « null ou inchangé, jamais mutilé » est conservé via le
+  refactoring de `formatRange`, qui réutilise la voie commune).
+  Le formateur Eclipse parse l'unité entière mais ne produit d'éditions
+  QUE dans la plage : le client n'applique que la sélection touchée, le
+  reste du buffer n'est jamais déplacé. Éditions converties en
+  `TextEdit` LSP (offsets → positions UTF-16 par `toPosition`).
+- **Survol riche (javadoc)** : `EcjCompilerEngine.hoverRicheAt` retourne
+  un `SurvolRiche(signature, documentation)` — la signature du symbole
+  au caret (désormais SANS clôtures ; `hoverAt` les pose, contrat
+  inchangé) PLUS la javadoc nettoyée de sa déclaration quand elle vit
+  dans la MÊME unité. Résolution de la déclaration APRÈS la traversée
+  complète (registre des `Declaration` + `sameBinding` — une référence
+  vue avant sa déclaration dans le fichier retrouve sa doc).
+- **Extraction textuelle du javadoc** (`EcjJavadocMarkdown.plageAvant`) :
+  le parseur ecj ne monte le nœud `Javadoc` que si
+  `docCommentSupport` est activé (ce qui n'est pas le cas du moteur) —
+  l'extraction est donc textuelle, en DEUX cas selon la position reçue :
+  (1) le range de déclaration OUVRE sur `/**` (comportement observé du
+  parseur : `declarationSourceStart` inclut le commentaire — sonde
+  empirique) → trancher avant ; (2) sinon remontée BORNÉE de l'en-tête
+  (modifieurs, annotations avec littéraux, génériques) jusqu'au `*/`
+  fermant, toute trace de code (`; { } =` hors parenthèses) ou tout
+  commentaire ordinaire rompant l'attachement. Points d'entrée ecj :
+  `declarationSourceStart` (couvre annotations+modifieurs, en repli
+  `sourceStart` qui pointe le TYPE DE RETOUR — piège). Le nettoyage
+  (`EcjJavadocMarkdown.nettoyer`) est borné et honnête : délimiteurs et
+  astérisques de marge retirés, `{@code}`/`{@link}`/`{@linkplain}` →
+  spans de code (dièse membre → point DANS les spans seulement),
+  `{@literal}` → texte, `<p>` → paragraphe, `<br>` → saut de ligne ;
+  le reste passe VERBATIM.
+- **Format LSP (KP14-Java)** : le handler hover abandonne la forme
+  dépréciée `MarkedString`-string — signature seule →
+  `MarkupContent` PLAINTEXT (sans clôtures) ; signature + javadoc →
+  MARKDOWN (` ```java ` + `\n\n` + documentation), même patron que le
+  serveur Kotlin et JDT.LS. Périmètre honnête : les symboles binaires
+  (classpath, android.jar, jrt) et les déclarations d'AUTRES fichiers
+  n'ont pas de javadoc ici — signature seule.
+- **Tests** : `EcjHoverJavadocTest` (9 — méthode/champ/type via référence
+  OU déclaration, symbole binaire sans doc, `hoverAt` inchangé sous
+  clôtures, nettoyeur : cas limites, astérisques, balises inline) ;
+  `EcjFormatterRangeTest` (6 — éditions confinées à la plage, tri
+  croissant disjoint, plage vide → liste vide, source imparsable
+  jamais mutilée, pleine page ≡ format document, cohérence
+  `formatRange`/`editionsRange`) ; `JavaS2ConfortTest` (5 — capacité
+  déclarée (forme `Either`), sélection formatée bornée à la plage avec
+  reconstruction client, rejet lifecycle I2, hover PLAINTEXT /
+  hover MARKDOWN). Chaîne : `:lsp:java` 360 verts, `:lsp:host`
+  test/lintDebug/koverVerify + spotless/detekt des modules Kotlin +
+  `checkModuleDependencies` verts.
+- **Parité** : aucun fichier `.kt` touché — digeste INCHANGÉ
+  (contre-vérification sans flag inutile ; le digeste ne couvre que les
+  sources Kotlin du dépôt).

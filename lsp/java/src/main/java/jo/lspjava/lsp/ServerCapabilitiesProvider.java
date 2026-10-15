@@ -112,6 +112,10 @@ public final class ServerCapabilitiesProvider {
         renameOpts.setPrepareProvider(true);
         caps.setRenameProvider(renameOpts);
         caps.setDocumentFormattingProvider(true);   // format code
+        // rangeFormatting (S2-a) : formater la SÉLECTION — le formateur
+        // Eclipse parse l'unité entière mais ne produit d'éditions que
+        // dans la plage demandée (le reste du buffer n'est jamais déplacé).
+        caps.setDocumentRangeFormattingProvider(true);
         // workspace/symbol (S1-c) : recherche de types à l'échelle de
         // l'espace (index jars + sources + jrt — substrat de complétion).
         caps.setWorkspaceSymbolProvider(true);

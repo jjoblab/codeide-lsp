@@ -844,18 +844,59 @@ public final class EcjCompilerEngine {
     }
 
     /**
+     * Survol RICHE : la signature brute du symbole au offset + la javadoc
+     * nettoyée de sa déclaration (S2-a, miroir Java du survol riche Kotlin
+     * v0.134.9).
+     *
+     * @param signature    la signature du symbole (code Java brut, SANS
+     *                     clôtures markdown — l'appelant les pose)
+     * @param documentation le javadoc nettoyé (markdown léger), ou null si
+     *                      la déclaration n'en porte pas — ou n'est pas de
+     *                      cette unité (référence binaire ou hors fichier)
+     */
+    public record SurvolRiche(String signature, String documentation) {
+    }
+
+    /**
      * Information de survol (hover) au offset — signature du symbole résolu
-     * par les bindings ecj (méthode, champ, variable locale, type, paquet).
+     * par les bindings ecj (méthode, champ, variable locale, type, paquet),
+     * sous clôtures markdown.
      *
      * @return le markdown du hover, ou null (l'appelant retombe sur JavaParser).
      */
     public synchronized String hoverAt(String filePath, String source, int offset) {
         if (DISABLED) return null;
-        // ── v1.6.0, chaîne à 3 niveaux (du moins cher au plus cher) :
-        // chaque niveau ne fait rien perdre — un résultat nul ou une
-        // exception retombe sur le niveau suivant, le pire cas reste le
-        // chemin v1.5 (réduction + resolveUnit).
-        //
+        UnitScan scan = scannerPour(filePath, source, offset);
+        if (scan == null || scan.hover == null) return null;
+        return "```java\n" + scan.hover + "\n```";
+    }
+
+    /**
+     * Information de survol RICHE au offset — signature brute + javadoc
+     * nettoyée de la déclaration résolue (S2-a).
+     *
+     * <p>La javadoc vient de la déclaration de la MÊME unité de compilation
+     * (même fichier) : les références vers des symboles binaires (classpath,
+     * android.jar) ou vers des déclarations d'AUTRES fichiers sources n'ont
+     * pas de javadoc ici — documentation nulle, signature seule (périmètre
+     * honnête).</p>
+     *
+     * @return la signature et la documentation, ou null (rien à afficher)
+     */
+    public synchronized SurvolRiche hoverRicheAt(String filePath, String source, int offset) {
+        if (DISABLED) return null;
+        UnitScan scan = scannerPour(filePath, source, offset);
+        if (scan == null || scan.hover == null) return null;
+        return new SurvolRiche(scan.hover, scan.documentation);
+    }
+
+    /**
+     * Chaîne à 3 niveaux (du moins cher au plus cher) pour scanner l'unité
+     * au offset : chaque niveau ne fait rien perdre — un résultat nul ou une
+     * exception retombe sur le niveau suivant, le pire cas reste le chemin
+     * v1.5 (réduction + resolveUnit). À appeler SOUS LE VERROU du moteur.
+     */
+    private UnitScan scannerPour(String filePath, String source, int offset) {
         // 1. Arbre focalisé du dernier diagnose RAPIDE (P6 étendu) :
         //    déjà résolu pour CE contenu, offsets réels directement
         //    utilisables (source isomorphe — aucun mapBack).
@@ -864,7 +905,7 @@ public final class EcjCompilerEngine {
                     resolveUnitFast(filePath, source, offset);
             if (fast != null) {
                 UnitScan scan = scanUnit(fast, source, offset);
-                if (scan != null && scan.hover != null) return scan.hover;
+                if (scan != null && scan.hover != null) return scan;
             }
         } catch (Throwable t) {
             // Best-effort — repli sur le niveau suivant.
@@ -875,7 +916,7 @@ public final class EcjCompilerEngine {
             CompilationUnitDeclaration real = cachedUnit(filePath, source);
             if (real != null) {
                 UnitScan scan = scanUnit(real, source, offset);
-                if (scan != null && scan.hover != null) return scan.hover;
+                if (scan != null && scan.hover != null) return scan;
             }
         } catch (Throwable t) {
             // Best-effort — repli sur le niveau suivant.
@@ -893,8 +934,7 @@ public final class EcjCompilerEngine {
 
             CompilationUnitDeclaration cud = resolveUnit(filePath, workSource, false);
             if (cud == null || cud.scope == null) return null;
-            UnitScan scan = scanUnit(cud, workSource, workOffset);
-            return scan != null ? scan.hover : null;
+            return scanUnit(cud, workSource, workOffset);
         } catch (Throwable t) {
             return null;
         }
@@ -1944,25 +1984,36 @@ public final class EcjCompilerEngine {
 
     // ─── Scan d'unité : hover + déclarations en UNE traversée ──────────
 
-    /** Une déclaration collectée (binding + plage + nom). */
+    /** Une déclaration collectée (binding + plage + nom [+ javadoc]). */
     private static final class Declaration {
         final Binding binding;
         final int start;
         final int end;
         final char[] name;
+        // Plage (sourceStart, sourceEnd inclusifs) du javadoc attaché —
+        // -1/-1 quand la déclaration n'en porte pas. Les positions sont
+        // relatives à la source PASSÉE AU SCAN (réduite au niveau 3 de la
+        // chaîne — cohérente avec l'arbre).
+        final int javadocStart;
+        final int javadocEnd;
 
-        Declaration(Binding binding, int start, int end, char[] name) {
+        Declaration(Binding binding, int start, int end, char[] name,
+                int javadocStart, int javadocEnd) {
             this.binding = binding;
             this.start = start;
             this.end = end;
             this.name = name;
+            this.javadocStart = javadocStart;
+            this.javadocEnd = javadocEnd;
         }
     }
 
     /** Résultat du scan : hover du nœud au caret + binding de référence +
-     *  toutes les déclarations de l'unité. */
+     *  toutes les déclarations de l'unité + javadoc de la déclaration
+     *  résolue (survol riche S2-a). */
     private static final class UnitScan {
         String hover;
+        String documentation;
         Binding referenceBinding;
         final List<Declaration> declarations = new ArrayList<>();
     }
@@ -1992,8 +2043,18 @@ public final class EcjCompilerEngine {
 
             void declare(ASTNode node, Binding binding, char[] name) {
                 if (binding != null && name != null && name.length > 0) {
+                    // Javadoc IMMÉDIATEMENT avant la déclaration — extraction
+                    // textuelle (S2-a) : le parseur ecj ne monte le nœud
+                    // Javadoc que si docCommentSupport est activé (ce qui
+                    // n'est pas le cas dans le moteur) ; l'approche textuelle
+                    // est indépendante des options et des niveaux de la
+                    // chaîne (positions cohérentes avec la source scannée).
+                    int[] jd = EcjJavadocMarkdown.plageAvant(
+                            source, debutDeclarationDe(node));
                     scan.declarations.add(new Declaration(
-                            binding, node.sourceStart, node.sourceEnd, name));
+                            binding, node.sourceStart, node.sourceEnd, name,
+                            jd != null ? jd[0] : -1,
+                            jd != null ? jd[1] : -1));
                 }
             }
 
@@ -2113,12 +2174,61 @@ public final class EcjCompilerEngine {
             // (tracée en debug).
             LOG.log(Level.FINE, "Traversée de l'AST interrompue — résultats partiels", t);
         }
+        // Après la traversée COMPLÈTE : la javadoc se résout sur les
+        // déclarations collectées (ordre indépendant — une référence vue
+        // AVANT sa déclaration dans le fichier retrouve quand même son
+        // javadoc, impossible pendant le consider()).
+        if (scan.hover != null && scan.referenceBinding != null) {
+            for (Declaration d : scan.declarations) {
+                if (sameBinding(scan.referenceBinding, d.binding)) {
+                    scan.documentation = documentationDe(d, source);
+                    break;
+                }
+            }
+        }
         return scan;
     }
 
-    /** Formate le hover markdown d'un binding (pattern InternalMembers.display). */
+    /**
+     * Début de déclaration COUVRANT les modifieurs/annotations — ecj
+     * {@code sourceStart} pointe sur le type de retour (après les
+     * modifieurs) : l'extraction du javadoc IMMÉDIATEMENT avant doit partir
+     * du début RÉEL de la déclaration (champ
+     * {@code declarationSourceStart}, présent sur type/méthode/champ).
+     */
+    private static int debutDeclarationDe(ASTNode node) {
+        if (node instanceof org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration amd
+                && amd.declarationSourceStart > 0) {
+            return amd.declarationSourceStart;
+        }
+        if (node instanceof FieldDeclaration fd && fd.declarationSourceStart > 0) {
+            return fd.declarationSourceStart;
+        }
+        if (node instanceof TypeDeclaration td && td.declarationSourceStart > 0) {
+            return td.declarationSourceStart;
+        }
+        return node.sourceStart;
+    }
+
+    /**
+     * Tranche le javadoc brut de la déclaration dans la source et le
+     * nettoie (markdown léger) — null sans javadoc ou si le nettoyage ne
+     * laisse rien.
+     */
+    private static String documentationDe(Declaration d, String source) {
+        if (d.javadocStart < 0 || d.javadocEnd < d.javadocStart) return null;
+        try {
+            int fin = Math.min(d.javadocEnd + 1, source.length());
+            return EcjJavadocMarkdown.nettoyer(source.substring(d.javadocStart, fin));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Formate la signature BRUTE du hover (sans clôtures — {@link #hoverAt}
+     *  les pose ; pattern InternalMembers.display). */
     private static String hoverOf(Binding binding, TypeBinding resolvedType) {
-        StringBuilder sb = new StringBuilder("```java\n");
+        StringBuilder sb = new StringBuilder();
         try {
             if (binding instanceof MethodBinding m && m.isValidBinding()) {
                 if (m.isConstructor()) {
@@ -2154,7 +2264,6 @@ public final class EcjCompilerEngine {
         } catch (Throwable t) {
             return null;
         }
-        sb.append("\n```");
         return sb.toString();
     }
 
