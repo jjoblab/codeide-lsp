@@ -1803,3 +1803,61 @@ générées présentes ; paquet homonyme non déclassé.
   même famille — le downgrade R + databinding couvre les DEUX
   remontées réelles ; étendre la reconnaissance aux autres packages
   générés se fera sur constat (pas de speculative generality).
+
+## 18. Journal de stabilisation — reprise (I15) et protocole appareil
+
+> Reprise du journal (audit §6.3 I15 : « un serveur stabilisé dont le
+> journal s'arrête deux mois plus tôt n'est pas auditable »). Une entrée
+> brève par lot LSP Java à partir du plan de stabilisation
+> (`docs/PLAN_STABILISATION_LSP.md` §3.1, audit
+> `docs/audit/rapport-analyse-lsp-java-codeide.md`).
+
+### 18.1 v0.134.11 — lot S0-a « hygiène protocolaire » + S0-b « rename honnête »
+
+Contenu (audit §6.3 I2, I3, I5, I7, I8, I9 + quick-win I1) :
+
+- **I2 — garde lifecycle centralisée** : `verifierLifecycle()` au sommet
+  de chaque REQUÊTE (`JavaTextDocumentService` ×19, `executeCommand`) —
+  `ServerNotInitialized` (-32002) avant `initialized`, `InvalidRequest`
+  (-32600) après `shutdown` ; les NOTIFICATIONS sont ignorées hors fenêtre
+  (la spec demande d'ignorer, pas de rejeter — une notification n'a pas de
+  réponse d'erreur). Façades de test (`server == null`) court-circuitent
+  la garde — le contrat s'exerce via le serveur.
+- **I3 — initialize réentrant** : second appel → `InvalidRequest`
+  (l'ancien warning re-transitionnait l'état).
+- **I5 — didSave** : republication SYSTÉMATIQUE depuis le buffer vivant
+  (l'ancien code conditionnait à `includeText` — le commentaire promettait
+  plus que le code) ; document jamais ouvert → invalidation seule ; texte
+  sauvegardé divergent adopté.
+- **I7 — version injectée** : `serverInfo.version` lue de
+  `jo/lspjava/pack/version.properties` (convention packs
+  lsp:kotlin/lsp:xml, synchronisée à chaque lot) ; « 1.2.0 » fantôme
+  supprimé.
+- **I9 — convention null/vide** : règle écrite en tête de
+  `JavaTextDocumentService` ; application — `foldingRange` rend désormais
+  `null` sur moteur occupé/dépassement/échec (aligné sur le cas « moteur
+  absent » déjà null) ; hover null ; navigation/inlayHint/
+  semanticTokens/completion restent « vide » (pas de repli client).
+- **I8 — rename honnête** : `RequestFailed` (-32803) TYPOÉE sur moteur pas
+  prêt / aucune cible (message FR + `data` structuré `renommage.sansCible`)
+  / échec interne — plus jamais d'édition vide silencieuse ;
+  `prepareRename` plage EXACTE du jeton (caret milieu compris) + placeholder
+  exact ; `documentChanges` versionnés si le client négocie
+  `workspace.workspaceEdit.documentChanges`, forme `changes` sinon
+  (cel-lsp vérifié par décompile : n'annonce pas — reçoit la forme legacy).
+- **I1 — javadoc honnête** de `ServerCapabilitiesProvider` (le contrat
+  « négociation » promis mais jamais implémenté est réécrit ; les
+  capabilities sont stockées et exposées via `clientCapabilities()`).
+
+Tests : +15 (`LifecycleHygieneTest` 10, `RenameHonneteTest` 5 — les
+critères d'acceptation S0-a/S0-b : requête avant init / après shutdown
+rejetée, didSave sans includeText, `serverInfo.version` = version du
+dépôt, placeholder exact, erreur explicite, renommage nominal inchangé) ;
+`InlayHintTest`/`EcjChainedLambdaHintsTest` traversent désormais le
+lifecycle réel. lsp:java 330 verts, lsp:host 86.
+
+### 18.2 Réservé — protocole de mesure appareil (S0-c)
+
+Emplacement du PV de mesure appareil prévu par le lot S0-c (décision D3
+du propriétaire — lot G maintenant / plus tard / jamais publier, cf.
+audit §11.2). La séance dédiée n'a pas encore eu lieu.

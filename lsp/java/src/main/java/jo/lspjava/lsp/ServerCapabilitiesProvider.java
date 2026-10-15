@@ -7,10 +7,15 @@ import java.util.List;
 /**
  * Fournisseur des capacités du serveur LSP Java.
  *
- * <p>Le provider peut recevoir les {@link ClientCapabilities} via
- * {@link #applyClientCapabilities(ClientCapabilities)} avant
- * {@link #createCapabilities()} pour négocier les capabilities selon
- * le client.</p>
+ * <p>Les {@link ClientCapabilities} transmises via
+ * {@link #applyClientCapabilities(ClientCapabilities)} sont STOCKÉES et
+ * exposées par {@link #clientCapabilities()} pour la négociation fine des
+ * services (aujourd'hui : la forme versionnée {@code documentChanges} du
+ * renommage — I8). Contrepartie honnête (I1, quick-win) : {@code
+ * createCapabilities()} ne consulte PAS les capabilities pour désactiver
+ * des providers — le client réel (cel-lsp in-process) consomme tout ce
+ * que le serveur annonce ; toute future négociation « provider à la
+ * demande » partira d'ici.</p>
  *
  * <p>{@code codeActionProvider} annonce explicitement les
  * {@code codeActionKinds} supportés ({@code quickfix}, {@code refactor},
@@ -25,11 +30,20 @@ public final class ServerCapabilitiesProvider {
 
     /**
      * Transmet les clientCapabilities avant {@link #createCapabilities()}.
-     * Permet la négociation : le provider peut désactiver les capabilities
-     * non supportées par le client.
+     * Les capabilities sont stockées telles quelles et exposées via
+     * {@link #clientCapabilities()} — cf. javadoc de classe pour la
+     * portée RÉELLE de la négociation (I1).
      */
     public void applyClientCapabilities(ClientCapabilities caps) {
         this.clientCapabilities = caps;
+    }
+
+    /**
+     * @return les clientCapabilities reçues (null avant initialize, ou si
+     *         le client n'en a pas transmis).
+     */
+    public ClientCapabilities clientCapabilities() {
+        return clientCapabilities;
     }
 
     public ServerCapabilities createCapabilities() {

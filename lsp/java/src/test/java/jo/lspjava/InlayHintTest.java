@@ -3,6 +3,7 @@ package jo.lspjava;
 import jo.lspjava.engine.CompilationEnvironment;
 import jo.lspjava.lsp.JavaLanguageServer;
 import jo.lspjava.lsp.JavaTextDocumentService;
+import org.eclipse.lsp4j.*;
 import org.eclipse.lsp4j.InlayHint;
 import org.eclipse.lsp4j.InlayHintKind;
 import org.eclipse.lsp4j.InlayHintParams;
@@ -39,6 +40,10 @@ class InlayHintTest {
         JavaLanguageServer server = new JavaLanguageServer(env);
         // JavaTextDocumentService a besoin d'une référence au serveur pour
         // les diagnostics, mais inlayHint() ne l'utilise pas. Construction directe.
+        // Garde lifecycle (I2, v0.134.11) : les requêtes sont rejetées hors
+        // fenêtre INITIALIZED — le serveur passe par initialize/initialized.
+        server.initialize(new InitializeParams()).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        server.initialized(new InitializedParams());
         service = new JavaTextDocumentService(server.environment(), server);
     }
 

@@ -3,6 +3,7 @@ package jo.lspjava;
 import jo.lspjava.engine.CompilationEnvironment;
 import jo.lspjava.lsp.JavaLanguageServer;
 import jo.lspjava.lsp.JavaTextDocumentService;
+import org.eclipse.lsp4j.*;
 import org.eclipse.lsp4j.InlayHint;
 import org.eclipse.lsp4j.InlayHintKind;
 import org.eclipse.lsp4j.InlayHintParams;
@@ -43,6 +44,10 @@ class JdtChainedLambdaHintsTest {
     void setUp() throws Exception {
         var env = new CompilationEnvironment();
         JavaLanguageServer server = new JavaLanguageServer(env);
+        // Garde lifecycle (I2, v0.134.11) : les requêtes sont rejetées hors
+        // fenêtre INITIALIZED — le serveur passe par initialize/initialized.
+        server.initialize(new InitializeParams()).get(10, TimeUnit.SECONDS);
+        server.initialized(new InitializedParams());
         service = new JavaTextDocumentService(server.environment(), server);
     }
 

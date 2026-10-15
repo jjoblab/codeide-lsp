@@ -36,9 +36,15 @@ public final class JavaLanguageServer implements NavLanguageServer {
     private final JavaTextDocumentService textDocumentService;
     private final JavaWorkspaceService workspaceService;
 
-    // Immutable après applyClientCapabilities : créé une seule fois et réutilisé
-    // (préserve les clientCapabilities si initialize est appelé deux fois).
+    // Immutable après applyClientCapabilities : créé une seule fois et
+    // réutilisé. NB (I3) : un SECOND initialize est désormais rejeté en
+    // InvalidRequest (spec LSP) — le provider n'est donc écrit qu'une fois.
     private final ServerCapabilitiesProvider capabilitiesProvider = new ServerCapabilitiesProvider();
+
+    // Version du moteur (I7) : lue depuis la ressource générée du build
+    // (jo/lspjava/pack/version.properties — même convention que les packs
+    // lsp:kotlin / lsp:xml). Jamais null : repli « inconnue » tracé.
+    private static final String VERSION_MOTEUR = lireVersionMoteur();
 
     /** Client LSP — capturé par le launcher pour pousser les diagnostics. */
     private volatile LanguageClient client;
@@ -121,10 +127,21 @@ public final class JavaLanguageServer implements NavLanguageServer {
 
     @Override
     public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
-        // Transition d'état UNINITIALIZED → INITIALIZING.
+        // I3 — initialize réentrant : la spec attend une ERREUR (le client
+        // ne doit initialiser qu'une fois). Un second appel est rejeté en
+        // InvalidRequest — LSP4J préserve le code ResponseErrorException
+        // (RemoteEndpoint.DEFAULT_EXCEPTION_HANDLER). L'ancien warning
+        // re-transitionnait l'état : un client buggé pouvais ré-initialiser
+        // un serveur en fin de vie sans le savoir.
         if (lifecycleState != LifecycleState.UNINITIALIZED) {
-            LOG.warning("initialize appelé dans l'état " + lifecycleState + " (devrait être UNINITIALIZED)");
+            return CompletableFuture.failedFuture(new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                    new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                            org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidRequest.getValue(),
+                            "initialize déjà appelé (état=" + lifecycleState
+                                    + ") — un serveur LSP est initialisé une seule fois.",
+                            null)));
         }
+        // Transition d'état UNINITIALIZED → INITIALIZING.
         lifecycleState = LifecycleState.INITIALIZING;
 
         // Lecture de InitializeParams : workspaceFolders, clientCapabilities,
@@ -144,10 +161,12 @@ public final class JavaLanguageServer implements NavLanguageServer {
 
         InitializeResult result = new InitializeResult(capabilitiesProvider.createCapabilities());
 
-        // serverInfo dans InitializeResult (recommandé LSP 3.17).
+        // serverInfo dans InitializeResult (recommandé LSP 3.17) — la
+        // version est celle du DÉPÔT (I7) : plusieurs builds coexistent sur
+        // un appareil, une version figée rend les journaux trompeurs.
         ServerInfo serverInfo = new ServerInfo();
         serverInfo.setName("lspjava");
-        serverInfo.setVersion("1.2.0");
+        serverInfo.setVersion(VERSION_MOTEUR);
         result.setServerInfo(serverInfo);
 
         // Pas encore INITIALIZED — il faut attendre la notification initialized.
@@ -283,6 +302,50 @@ public final class JavaLanguageServer implements NavLanguageServer {
 
     /** @return l'environnement de compilation */
     public CompilationEnvironment environment() { return environment; }
+
+    /**
+     * @return les clientCapabilities reçues à initialize (null avant).
+     *         Consultées par les services pour la négociation fine
+     *         (renommage {@code documentChanges} — I8).
+     */
+    public ClientCapabilities capabilitiesClient() {
+        return capabilitiesProvider.clientCapabilities();
+    }
+
+    /**
+     * @return la version du moteur lue depuis la ressource du build
+     *         (I7) — celle annoncée dans {@code serverInfo.version}.
+     */
+    public static String versionMoteur() {
+        return VERSION_MOTEUR;
+    }
+
+    /**
+     * Lit la version depuis {@code jo/lspjava/pack/version.properties}
+     * (classpath). Le repli « inconnue » est TRACÉ : le descripteur fait
+     * partie du build, son absence est un défaut de packaging (même
+     * discipline que les packs lsp:kotlin / lsp:xml).
+     */
+    private static String lireVersionMoteur() {
+        try (var flux = JavaLanguageServer.class.getClassLoader()
+                .getResourceAsStream("jo/lspjava/pack/version.properties")) {
+            if (flux == null) {
+                LOG.warning("jo/lspjava/pack/version.properties absente du classpath — version annoncée « inconnue »");
+                return "inconnue";
+            }
+            var proprietes = new java.util.Properties();
+            proprietes.load(flux);
+            String v = proprietes.getProperty("version");
+            if (v == null || v.isBlank()) {
+                LOG.warning("jo/lspjava/pack/version.properties sans clé version — version annoncée « inconnue »");
+                return "inconnue";
+            }
+            return v.trim();
+        } catch (Throwable t) {
+            LOG.warning("lecture de jo/lspjava/pack/version.properties échouée : " + t);
+            return "inconnue";
+        }
+    }
 
     // ── Helpers de logging (observabilité) ────────────────────────────
 

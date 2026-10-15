@@ -42,12 +42,17 @@ public final class JavaWorkspaceService implements WorkspaceService {
 
     @Override
     public void didChangeConfiguration(DidChangeConfigurationParams params) {
+        // Garde lifecycle (I2) : notification ignorée hors fenêtre INITIALIZED
+        // (spec 3.17 — les notifications ne sont pas rejetées en erreur).
+        if (!notificationsAcceptees("didChangeConfiguration")) return;
         // Rien de spécifique à faire — lspjava n'a pas de configuration
         // dynamique pour l'instant (formatting, imports, etc. sont hardcoded).
     }
 
     @Override
     public void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {
+        // Garde lifecycle (I2) : notification ignorée hors fenêtre INITIALIZED.
+        if (!notificationsAcceptees("didChangeWatchedFiles")) return;
         // Invalide le cache de parse pour les fichiers .java modifiés hors
         // de l'éditeur — sans cette invalidation, les modifications
         // externes ne seraient pas prises en compte jusqu'à un redémarrage.
@@ -81,6 +86,10 @@ public final class JavaWorkspaceService implements WorkspaceService {
 
     @Override
     public CompletableFuture<Object> executeCommand(ExecuteCommandParams params) {
+        // Garde lifecycle (I2) : requête rejetée ServerNotInitialized /
+        // InvalidRequest hors fenêtre INITIALIZED (LSP4J préserve le code
+        // de ResponseErrorException dans la réponse d'erreur).
+        verifierLifecycle("executeCommand");
         // Log si un executeCommand est reçu (pour diagnostic).
         // lspjava ne supporte aucune commande pour l'instant, mais au moins
         // on trace l'appel au lieu de retourner null silencieusement.
@@ -89,5 +98,37 @@ public final class JavaWorkspaceService implements WorkspaceService {
                     + " (not supported, returning null)");
         }
         return CompletableFuture.completedFuture(null);
+    }
+
+    // ── Garde lifecycle centralisée (I2) ─────────────────────────────
+    /**
+     * Miroir exact de la garde de {@link JavaTextDocumentService} — les
+     * deux services partagent le contrat lifecycle du serveur. Le
+     * constructeur historique sans serveur ({@code server == null})
+     * court-circuite la garde (façade de test).
+     */
+    private void verifierLifecycle(String methode) {
+        if (server == null) return;
+        JavaLanguageServer.LifecycleState etat = server.lifecycleState();
+        if (etat == JavaLanguageServer.LifecycleState.INITIALIZED) return;
+        boolean avantInitialisation = etat == JavaLanguageServer.LifecycleState.UNINITIALIZED
+                || etat == JavaLanguageServer.LifecycleState.INITIALIZING;
+        int code = avantInitialisation
+                ? org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.ServerNotInitialized.getValue()
+                : org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidRequest.getValue();
+        String message = avantInitialisation
+                ? "Requête " + methode + " reçue avant initialized (état=" + etat + ") — serveur non initialisé."
+                : "Requête " + methode + " reçue après shutdown (état=" + etat + ") — serveur arrêté.";
+        throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(code, message, null));
+    }
+
+    /** Miroir du filtre de notifications de {@link JavaTextDocumentService}. */
+    private boolean notificationsAcceptees(String methode) {
+        if (server == null) return true;
+        JavaLanguageServer.LifecycleState etat = server.lifecycleState();
+        if (etat == JavaLanguageServer.LifecycleState.INITIALIZED) return true;
+        LOG.fine("notification " + methode + " ignorée (état=" + etat + ")");
+        return false;
     }
 }

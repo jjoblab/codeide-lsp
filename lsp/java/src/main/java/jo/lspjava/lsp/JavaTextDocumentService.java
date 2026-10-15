@@ -35,6 +35,34 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link JavaLanguageServer#publishDiagnostics}. Les diagnostics sont calculés
  * par {@link DiagnosticService} et convertis au format LSP4J.</p>
  *
+ * <h2>Convention « null / vide » (I9 — plan de stabilisation §3.1 S0-a)</h2>
+ *
+ * <p>« Que rend le serveur quand il ne peut pas répondre honnêtement ? » —
+ * règle unique, appliquée à tous les handlers :</p>
+ * <ul>
+ *   <li><b>{@code null}</b> — « capacité indisponible ce tour-ci, le client
+ *       garde son repli » : réservé aux requêtes où le CLIENT a un
+ *       comportement de repli — {@code hover} (aucun survol rendu),
+ *       {@code foldingRange} (moteur absent, occupé ou en dépassement :
+ *       le client garde ses plis lexicaux).</li>
+ *   <li><b>liste/struct vide</b> — « capacité disponible, aucune donnée » :
+ *       {@code definition}/typeDefinition/implementation/references/
+ *       documentHighlight/documentSymbol (le client n'a AUCUN repli pour
+ *       ces requêtes — « rien à montrer » est le rendu honnête, un null
+ *       casserait le rendu), {@code inlayHint} (le repli textuel des var
+ *       reste toujours calculé), {@code semanticTokens/full} (le type
+ *       SemanticTokens n'a pas de forme null — vide = pas de couleurs),
+ *       {@code completion} (liste + {@code isIncomplete=true} sur
+ *       timeout/supersession — le client re-demande).</li>
+ * </ul>
+ *
+ * <p>Toute divergence future de ces conventions doit être justifiée en
+ * commentaire ET reflétée ici. Garde lifecycle (I2) : chaque requête passe
+ * par {@link #verifierLifecycle} (rejet {@code ServerNotInitialized} avant
+ * {@code initialized}, {@code InvalidRequest} après {@code shutdown}) ; les
+ * notifications passent par {@link #notificationsAcceptees} (ignorées hors
+ * fenêtre INITIALIZED, comme la spec l'exige).</p>
+ *
  * @author jo@Dev
  */
 public final class JavaTextDocumentService implements NavTextDocumentService {
@@ -110,8 +138,65 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         this.codeActionService = new CodeActionService(environment);
     }
 
+    // ── Garde lifecycle centralisée (I2) ──────────────────────────────
+    /**
+     * Rejette toute REQUÊTE LSP servie hors de la fenêtre INITIALIZED —
+     * la spec 3.17 attend {@code ServerNotInitialized} (-32002) avant
+     * {@code initialized} et {@code InvalidRequest} (-32600) après
+     * {@code shutdown}. Lève {@link ResponseErrorException} : LSP4J
+     * préserve le code et le message dans la réponse d'erreur
+     * (RemoteEndpoint.DEFAULT_EXCEPTION_HANDLER déroule même une
+     * CompletionException). Le javadoc de {@link JavaLanguageServer
+     * .LifecycleState} documentait ces obligations depuis longtemps —
+     * {@code lifecycleState()} n'était référencé par AUCUN service :
+     * un client tiers (ou un bug de séquence côté hôte) voyait ses
+     * requêtes servies sur des moteurs disposés.
+     *
+     * <p>Dérivation de test : les façades instanciées directement
+     * ({@code server == null} — FoldingRangeFacadeTest et consœurs)
+     * court-circuitent la garde — le contrat lifecycle s'exerce via le
+     * SERVEUR, pas via le service nu.</p>
+     *
+     * @param methode nom de la méthode LSP (traçage)
+     * @throws ResponseErrorException ServerNotInitialized / InvalidRequest
+     */
+    private void verifierLifecycle(String methode) {
+        if (server == null) return; // façade de test — hors contrat lifecycle
+        JavaLanguageServer.LifecycleState etat = server.lifecycleState();
+        if (etat == JavaLanguageServer.LifecycleState.INITIALIZED) return;
+        boolean avantInitialisation = etat == JavaLanguageServer.LifecycleState.UNINITIALIZED
+                || etat == JavaLanguageServer.LifecycleState.INITIALIZING;
+        int code = avantInitialisation
+                ? org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.ServerNotInitialized.getValue()
+                : org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.InvalidRequest.getValue();
+        String message = avantInitialisation
+                ? "Requête " + methode + " reçue avant initialized (état=" + etat + ") — serveur non initialisé."
+                : "Requête " + methode + " reçue après shutdown (état=" + etat + ") — serveur arrêté.";
+        throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(code, message, null));
+    }
+
+    /**
+     * Filtre les NOTIFICATIONS LSP hors de la fenêtre INITIALIZED — la spec
+     * 3.17 demande de les IGNORER (autre qu'exit) avant initialized et
+     * après shutdown (une notification n'a pas de réponse d'erreur : lever
+     * ne servirait qu'à noyer les logs côté LSP4J). Retourne
+     * {@code false} quand l'appelant doit retourner immédiatement.
+     *
+     * @param methode nom de la méthode LSP (traçage fin, pas warning)
+     */
+    private boolean notificationsAcceptees(String methode) {
+        if (server == null) return true; // façade de test — hors contrat lifecycle
+        JavaLanguageServer.LifecycleState etat = server.lifecycleState();
+        if (etat == JavaLanguageServer.LifecycleState.INITIALIZED) return true;
+        java.util.logging.Logger.getLogger("JavaTextDocumentService")
+                .fine("notification " + methode + " ignorée (état=" + etat + ")");
+        return false;
+    }
+
     @Override
     public void didOpen(DidOpenTextDocumentParams params) {
+        if (!notificationsAcceptees("didOpen")) return;
         String uri = params.getTextDocument().getUri();
         String text = params.getTextDocument().getText();
         openDocuments.put(uri, text);
@@ -152,6 +237,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public void didChange(DidChangeTextDocumentParams params) {
+        if (!notificationsAcceptees("didChange")) return;
         String uri = params.getTextDocument().getUri();
         Integer versionBoxed = params.getTextDocument().getVersion();
         int newVersion = versionBoxed != null ? versionBoxed : 0;
@@ -250,6 +336,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public void didClose(DidCloseTextDocumentParams params) {
+        if (!notificationsAcceptees("didClose")) return;
         String uri = params.getTextDocument().getUri();
         openDocuments.remove(uri);
         documentVersions.remove(uri);
@@ -259,10 +346,13 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public void didSave(DidSaveTextDocumentParams params) {
-        // didSave : le buffer vivant est déjà à jour via didChange — on
-        // invalide juste le cache de parse pour forcer un re-diagnostic
-        // propre. Si includeText=true, params.getText() contient le texte
-        // sauvegardé (divergent du buffer si édition externe).
+        if (!notificationsAcceptees("didSave")) return;
+        // didSave : le buffer vivant est la SOURCE DE VÉRITÉ du serveur —
+        // la republie systématiquement (I5). L'ancien code ne re-diagnostiquait
+        // que si le client envoyait includeText : sans includeText, le
+        // commentaire promettait « un re-diagnostic propre » que le code ne
+        // faisait pas — précisément le moment où l'utilisateur s'attend à
+        // voir les HINT « classe R non générée » disparaître après un build.
         if (params == null || params.getTextDocument() == null) return;
         String uri = params.getTextDocument().getUri();
         try {
@@ -271,18 +361,20 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             if (environment.isEcjInitialized()) {
                 environment.jdt().invalidateParseCache(filePath);
             }
-            // Re-publie les diagnostics avec le texte sauvegardé si fourni.
-            String text = params.getText();
-            if (text != null) {
-                String current = openDocuments.getOrDefault(uri, "");
-                // Si le texte sauvegardé diffère du buffer vivant, on met à jour.
-                if (!text.equals(current)) {
-                    openDocuments.put(uri, text);
-                }
-                AtomicInteger v = documentVersions.get(uri);
-                int version = v != null ? v.get() : 0;
-                publishDiagnostics(uri, version, text);
+            if (!openDocuments.containsKey(uri)) {
+                // Document jamais ouvert (pas de buffer) : l'invalidation
+                // du cache suffit — republier sur un buffer vide serait faux.
+                return;
             }
+            // includeText fourni et divergent du buffer (édition externe) :
+            // le buffer suit le texte sauvegardé.
+            String texteSauvegarde = params.getText();
+            if (texteSauvegarde != null && !texteSauvegarde.equals(openDocuments.get(uri))) {
+                openDocuments.put(uri, texteSauvegarde);
+            }
+            AtomicInteger v = documentVersions.get(uri);
+            int version = v != null ? v.get() : 0;
+            publishDiagnostics(uri, version, openDocuments.get(uri));
         } catch (Throwable t) {
             if (server != null) server.logWarning("didSave failed for " + uri, t);
         }
@@ -290,6 +382,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(CompletionParams params) {
+        verifierLifecycle("completion");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -372,11 +465,13 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public CompletableFuture<CompletionItem> resolveCompletionItem(CompletionItem item) {
+        verifierLifecycle("completionItem/resolve");
         return CompletableFuture.completedFuture(item);
     }
 
     @Override
     public CompletableFuture<Hover> hover(HoverParams params) {
+        verifierLifecycle("hover");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -401,6 +496,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(DefinitionParams params) {
+        verifierLifecycle("definition");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -444,6 +540,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
      */
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> typeDefinition(TypeDefinitionParams params) {
+        verifierLifecycle("typeDefinition");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -484,6 +581,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
      */
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> implementation(ImplementationParams params) {
+        verifierLifecycle("implementation");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -523,6 +621,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
      */
     @Override
     public CompletableFuture<List<NavigationTarget>> superDefinition(TextDocumentPositionParams params) {
+        verifierLifecycle("superDefinition");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -557,6 +656,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
      */
     @Override
     public CompletableFuture<DecompiledSourceResult> decompiledSource(DecompiledSourceParams params) {
+        verifierLifecycle("decompiledSource");
         if (params == null) {
             return CompletableFuture.completedFuture(new DecompiledSourceResult(null));
         }
@@ -632,6 +732,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
+        verifierLifecycle("codeAction");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         List<Either<Command, CodeAction>> actions = new ArrayList<>();
@@ -1105,6 +1206,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<org.eclipse.lsp4j.SemanticTokens> semanticTokensFull(
             org.eclipse.lsp4j.SemanticTokensParams params) {
+        verifierLifecycle("semanticTokens/full");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         List<Integer> data = new ArrayList<>();
@@ -1187,6 +1289,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     @Override
     public CompletableFuture<org.eclipse.lsp4j.SignatureHelp> signatureHelp(SignatureHelpParams params) {
+        verifierLifecycle("signatureHelp");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -1237,6 +1340,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<List<Either<org.eclipse.lsp4j.SymbolInformation, org.eclipse.lsp4j.DocumentSymbol>>>
             documentSymbol(org.eclipse.lsp4j.DocumentSymbolParams params) {
+        verifierLifecycle("documentSymbol");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         String filePath = uriToPath(uri);
@@ -1325,6 +1429,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<List<? extends org.eclipse.lsp4j.DocumentHighlight>> documentHighlight(
             org.eclipse.lsp4j.DocumentHighlightParams params) {
+        verifierLifecycle("documentHighlight");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -1359,6 +1464,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<List<? extends org.eclipse.lsp4j.Location>> references(
             org.eclipse.lsp4j.ReferenceParams params) {
+        verifierLifecycle("references");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -1433,6 +1539,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<org.eclipse.lsp4j.WorkspaceEdit> rename(
             org.eclipse.lsp4j.RenameParams params) {
+        verifierLifecycle("rename");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -1441,71 +1548,159 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // Renommage ecj par bindings — structurellement correct
         // (homonymes ignorés, usages qualifiés/imports attrapés) et
         // multi-fichiers (balayage des racines sources du projet).
+        //
+        // I8 — « rename honnête » : AUCUN échec silencieux. Les trois cas
+        // sans édition (moteur pas prêt, aucune cible au curseur, échec
+        // interne) sont des ERREURS TYPOÉES RequestFailed (-32803, LSP
+        // 3.17) avec message FR — l'éditeur ne peut plus confondre « rien
+        // ne se passe » avec un renommage vide légitime.
         try {
             var jdt = environment.jdt();
-            if (jdt.isLikelyUsable()) {
-                var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
-                String filePath = uriToPath(uri);
-                var target = renameEngine.targetAt(filePath, source, offset);
-                if (target != null) {
-                    org.eclipse.lsp4j.WorkspaceEdit workspaceEdit =
-                            new org.eclipse.lsp4j.WorkspaceEdit();
-                    java.util.Map<String, List<org.eclipse.lsp4j.TextEdit>> changes =
-                            new java.util.LinkedHashMap<>();
-                    // Overlay des tampons ouverts — le balayage projet
-                    // consulte les buffers vivants avant le disque, pour
-                    // qu'un frère ouvert (modifications non sauvegardées)
-                    // ne soit pas renommé sur une version périmée.
-                    java.util.Map<String, String> overlay = buildOpenBufferOverlay();
-                    // Le balayage projet retourne des CHEMINS réels —
-                    // reconvertis en URI file:// pour le WorkspaceEdit.
-                    java.util.Map<String, List<jo.lspjava.ecj.EcjRenameEngine.Occurrence>> byFile;
-                    // Annulation coopérative — 15 s sur rename (lane background).
-                    try (var cancel = jo.lspjava.engine.CancelToken.timeout(
-                            15, java.util.concurrent.TimeUnit.SECONDS)) {
-                        cancel.attachToCurrentThread();
-                        byFile = renameEngine.renameProject(filePath, source, target, overlay, cancel);
+            if (!jdt.isLikelyUsable()) {
+                throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                        new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                                org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.getValue(),
+                                "Le moteur Java n'est pas encore prêt (indexation en cours) — réessaie dans un instant.",
+                                null));
+            }
+            var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
+            String filePath = uriToPath(uri);
+            var target = renameEngine.targetAt(filePath, source, offset);
+            if (target == null) {
+                org.eclipse.lsp4j.jsonrpc.messages.ResponseError sansCible =
+                        new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                                org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.getValue(),
+                                "Aucun symbole renommable à la position du curseur.",
+                                java.util.Map.of(
+                                        "code", "renommage.sansCible",
+                                        "uri", uri,
+                                        "line", params.getPosition().getLine(),
+                                        "character", params.getPosition().getCharacter()));
+                throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(sansCible);
+            }
+            org.eclipse.lsp4j.WorkspaceEdit workspaceEdit =
+                    new org.eclipse.lsp4j.WorkspaceEdit();
+            java.util.Map<String, List<org.eclipse.lsp4j.TextEdit>> changes =
+                    new java.util.LinkedHashMap<>();
+            // Overlay des tampons ouverts — le balayage projet
+            // consulte les buffers vivants avant le disque, pour
+            // qu'un frère ouvert (modifications non sauvegardées)
+            // ne soit pas renommé sur une version périmée.
+            java.util.Map<String, String> overlay = buildOpenBufferOverlay();
+            // Le balayage projet retourne des CHEMINS réels —
+            // reconvertis en URI file:// pour le WorkspaceEdit.
+            java.util.Map<String, List<jo.lspjava.ecj.EcjRenameEngine.Occurrence>> byFile;
+            // Annulation coopérative — 15 s sur rename (lane background).
+            try (var cancel = jo.lspjava.engine.CancelToken.timeout(
+                    15, java.util.concurrent.TimeUnit.SECONDS)) {
+                cancel.attachToCurrentThread();
+                byFile = renameEngine.renameProject(filePath, source, target, overlay, cancel);
+            }
+            for (var entry : byFile.entrySet()) {
+                String fileUri = pathToUri(entry.getKey());
+                List<org.eclipse.lsp4j.TextEdit> edits = new ArrayList<>();
+                String text = openDocuments.containsKey(fileUri)
+                        ? openDocuments.get(fileUri) : null;
+                if (text == null) {
+                    try {
+                        text = new String(java.nio.file.Files.readAllBytes(
+                                java.nio.file.Paths.get(entry.getKey())),
+                                java.nio.charset.StandardCharsets.UTF_8);
+                    } catch (Exception e) {
+                        continue; // fichier illisible — ignoré
                     }
-                    for (var entry : byFile.entrySet()) {
-                        String fileUri = pathToUri(entry.getKey());
-                        List<org.eclipse.lsp4j.TextEdit> edits = new ArrayList<>();
-                        String text = openDocuments.containsKey(fileUri)
-                                ? openDocuments.get(fileUri) : null;
-                        if (text == null) {
-                            try {
-                                text = new String(java.nio.file.Files.readAllBytes(
-                                        java.nio.file.Paths.get(entry.getKey())),
-                                        java.nio.charset.StandardCharsets.UTF_8);
-                            } catch (Exception e) {
-                                continue; // fichier illisible — ignoré
-                            }
-                        }
-                        for (var occ : entry.getValue()) {
-                            edits.add(new org.eclipse.lsp4j.TextEdit(
-                                    new Range(toPosition(text, occ.start),
-                                            toPosition(text, occ.end)),
-                                    newName));
-                        }
-                        if (!edits.isEmpty()) {
-                            changes.put(fileUri, edits);
-                        }
-                    }
-                    workspaceEdit.setChanges(changes);
-                    return CompletableFuture.completedFuture(workspaceEdit);
+                }
+                for (var occ : entry.getValue()) {
+                    edits.add(new org.eclipse.lsp4j.TextEdit(
+                            new Range(toPosition(text, occ.start),
+                                    toPosition(text, occ.end)),
+                            newName));
+                }
+                if (!edits.isEmpty()) {
+                    changes.put(fileUri, edits);
                 }
             }
+            // I8 — forme versionnée documentChanges quand le client les
+            // accepte (négociation workspace.workspaceEdit.documentChanges) ;
+            // sinon la forme héritée changes (cel-lsp actuel : non déclaré,
+            // il consomme getChanges ET getDocumentChanges mais n'annonce
+            // PAS WorkspaceEditCapabilities — la spec impose la forme legacy
+            // pour un client qui ne la déclare pas).
+            if (documentChangesNegocies()) {
+                java.util.List<org.eclipse.lsp4j.jsonrpc.messages.Either<
+                        org.eclipse.lsp4j.TextDocumentEdit, org.eclipse.lsp4j.ResourceOperation>> docEdits =
+                        new java.util.ArrayList<>(changes.size());
+                for (var entry : changes.entrySet()) {
+                    var id = new org.eclipse.lsp4j.VersionedTextDocumentIdentifier();
+                    id.setUri(entry.getKey());
+                    id.setVersion(versionDe(entry.getKey()));
+                    docEdits.add(org.eclipse.lsp4j.jsonrpc.messages.Either.forLeft(
+                            new org.eclipse.lsp4j.TextDocumentEdit(id, entry.getValue())));
+                }
+                workspaceEdit.setDocumentChanges(docEdits);
+            } else {
+                workspaceEdit.setChanges(changes);
+            }
+            return CompletableFuture.completedFuture(workspaceEdit);
+        } catch (org.eclipse.lsp4j.jsonrpc.ResponseErrorException typée) {
+            // Erreur déjà typée (sans cible / moteur pas prêt) — la relayer
+            // telle quelle, ne JAMAIS la transformer en édition vide.
+            throw typée;
         } catch (Throwable t) {
-            // On trace plutôt que d'avaler silencieusement.
+            // On trace PUIS on signale honnêtement (I8) : l'ancien code
+            // avalait l'exception dans un WorkspaceEdit vide.
             if (server != null) server.logWarning("rename handler failed for " + uriToPath(uri), t);
+            throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                    new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                            org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.getValue(),
+                            "Renommage échoué : " + t,
+                            null));
         }
+    }
 
-        return CompletableFuture.completedFuture(new org.eclipse.lsp4j.WorkspaceEdit());
+    /**
+     * Version actuelle du document ouvert (pour {@code documentChanges}
+     * versionnés — I8), ou null pour un fichier disque jamais ouvert : la
+     * spec {@code OptionalVersionedTextDocumentIdentifier} accepte un
+     * numéro absent (le client ne fera pas de check de version sur ce
+     * fichier).
+     */
+    private Integer versionDe(String uri) {
+        AtomicInteger v = documentVersions.get(uri);
+        return v != null ? v.get() : null;
+    }
+
+    /**
+     * {@code true} si le client a déclaré accepter les
+     * {@code documentChanges} versionnés
+     * ({@code workspace.workspaceEdit.documentChanges}). Toute défaillance
+     * de lecture des capabilities retombe sur {@code false} (forme legacy
+     * {@code changes} — celle que cel-lsp consomme aujourd'hui).
+     */
+    private boolean documentChangesNegocies() {
+        try {
+            if (server == null) return false;
+            org.eclipse.lsp4j.ClientCapabilities caps = server.capabilitiesClient();
+            if (caps == null || caps.getWorkspace() == null) return false;
+            org.eclipse.lsp4j.WorkspaceEditCapabilities we = caps.getWorkspace().getWorkspaceEdit();
+            return we != null && Boolean.TRUE.equals(we.getDocumentChanges());
+        } catch (Throwable t) {
+            // Capacités illisibles → forme legacy (la plus compatible).
+            return false;
+        }
     }
 
     /**
      * prepareRename (LSP 3.17) : le client demande si le symbole à la
      * position est renommable AVANT d'ouvrir la boîte de dialogue.
      * Retourne la plage du nom + un placeholder, ou null si non renommable.
+     *
+     * <p>La plage vient de {@code target.declStart/declEnd} : le
+     * {@code RenameTarget} porte le jeton nom CONTENANT le curseur — un
+     * caret AU MILIEU du nom était couvert par l'ancienne heuristique
+     * {@code findWord} seulement s'il touchait le début du nom, sinon la
+     * plage partait du caret (décalée). Le placeholder est le nom courant
+     * exact — le critère « placeholder exact » du lot S0-b.</p>
      */
     @Override
     public CompletableFuture<org.eclipse.lsp4j.jsonrpc.messages.Either3<
@@ -1513,6 +1708,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             org.eclipse.lsp4j.PrepareRenameResult,
             org.eclipse.lsp4j.PrepareRenameDefaultBehavior>> prepareRename(
             org.eclipse.lsp4j.PrepareRenameParams params) {
+        verifierLifecycle("prepareRename");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         int offset = toOffset(source, params.getPosition());
@@ -1524,13 +1720,21 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                 String filePath = uriToPath(uri);
                 var target = renameEngine.targetAt(filePath, source, offset);
                 if (target != null) {
-                    // Retourner la plage du nom + le nom courant comme placeholder
-                    int nameStart = jo.lspjava.ecj.EcjRenameEngine.findWord(
-                            source, target.oldName, offset, offset + 1, false);
-                    if (nameStart < 0) nameStart = offset;
+                    // Plage EXACTE du jeton nom porté par la cible.
+                    int nameStart = target.declStart;
+                    if (nameStart < 0) {
+                        // Repli défensif (cible sans plage — ne devrait pas
+                        // arriver : TargetScan enregistre start/end) : ancien
+                        // comportement findWord autour du caret.
+                        nameStart = jo.lspjava.ecj.EcjRenameEngine.findWord(
+                                source, target.oldName, offset, offset + 1, false);
+                        if (nameStart < 0) nameStart = offset;
+                    }
+                    int nameEnd = nameStart + target.oldName.length();
+                    if (nameEnd > source.length()) nameEnd = source.length();
                     var range = new org.eclipse.lsp4j.Range(
                             toPosition(source, nameStart),
-                            toPosition(source, nameStart + target.oldName.length()));
+                            toPosition(source, nameEnd));
                     return CompletableFuture.completedFuture(
                         org.eclipse.lsp4j.jsonrpc.messages.Either3.forSecond(
                             new org.eclipse.lsp4j.PrepareRenameResult(range, target.oldName)
@@ -1549,6 +1753,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<List<? extends org.eclipse.lsp4j.TextEdit>> formatting(
             org.eclipse.lsp4j.DocumentFormattingParams params) {
+        verifierLifecycle("formatting");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         String filePath = uriToPath(uri);
@@ -1593,6 +1798,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<List<org.eclipse.lsp4j.FoldingRange>> foldingRange(
             org.eclipse.lsp4j.FoldingRangeRequestParams params) {
+        verifierLifecycle("foldingRange");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         List<org.eclipse.lsp4j.FoldingRange> out = new ArrayList<>();
@@ -1618,7 +1824,11 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                     | java.util.concurrent.TimeoutException
                     | InterruptedException
                     | java.util.concurrent.ExecutionException busy) {
-                return CompletableFuture.completedFuture(out);
+                // Convention I9 : indisponible CE TOUR-CI → null (le client
+                // garde ses plis lexicaux) — l'ancien code rendait une liste
+                // vide, indistinguable d'un fichier légitimement sans pli.
+                if (busy instanceof InterruptedException) Thread.currentThread().interrupt();
+                return CompletableFuture.completedFuture(null);
             }
             for (var f : folds) {
                 if (f.start < 0 || f.end <= f.start
@@ -1635,7 +1845,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                 out.add(r);
             }
         } catch (Throwable ignored) {
-            // Best-effort — aucune région cette fois.
+            // Convention I9 : échec imprévu = indisponible ce tour-ci → null
+            // (le client garde ses plis lexicaux), PAS une liste vide.
+            return CompletableFuture.completedFuture(null);
         }
         return CompletableFuture.completedFuture(out);
     }
@@ -1643,6 +1855,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     @Override
     public CompletableFuture<List<org.eclipse.lsp4j.InlayHint>> inlayHint(
             org.eclipse.lsp4j.InlayHintParams params) {
+        verifierLifecycle("inlayHint");
         String uri = params.getTextDocument().getUri();
         String source = openDocuments.getOrDefault(uri, "");
         List<org.eclipse.lsp4j.InlayHint> hints = new ArrayList<>();
