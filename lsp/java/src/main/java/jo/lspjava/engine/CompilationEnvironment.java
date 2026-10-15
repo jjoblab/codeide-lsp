@@ -63,16 +63,25 @@ public final class CompilationEnvironment {
     public static final String MODULE_DEFAUT = "";
 
     /**
-     * Contexte d'UN module — listes (filtrées, dédupliquées) + moteur
-     * dérivé. MUTÉ sous le verrou du contexte (ou sous {@code this} pour
-     * le contexte défaut — personne d'autre ne verrouille un contexte
-     * défaut par la voie qualifiée : la clé vide y est redirigée).
+     * Contexte d'UN module — listes (filtrées, dédupliquées) + niveau
+     * Java + moteur dérivé. MUTÉ sous le verrou du contexte (ou sous
+     * {@code this} pour le contexte défaut — personne d'autre ne
+     * verrouille un contexte défaut par la voie qualifiée : la clé vide
+     * y est redirigée).
      */
     private static final class ContexteModule {
         final List<File> sourceDirs = new ArrayList<>();
         final List<File> classpathEntries = new ArrayList<>();
 
-        /** Moteur dérivé — invalidé quand les listes changent. */
+        /**
+         * Niveau Java DU module (lot S1-a) — {@code null} = hériter du
+         * niveau de l'environnement (défaut constructeur). Changer ce
+         * niveau invalide le moteur (les diagnostics de niveau — var,
+         * records, switch — dépendent de lui).
+         */
+        String complianceLevel;
+
+        /** Moteur dérivé — invalidé quand les listes ou le niveau changent. */
         EcjCompilerEngine moteur;
 
         /**
@@ -96,6 +105,18 @@ public final class CompilationEnvironment {
                 classpathEntries.addAll(jars);
                 changed = true;
             }
+            return changed;
+        }
+
+        /**
+         * Pose le niveau Java du module ({@code null} = hériter du
+         * défaut).
+         *
+         * @return {@code true} si le niveau a effectivement changé
+         */
+        boolean remplacerCompliance(String compliance) {
+            boolean changed = !java.util.Objects.equals(compliance, complianceLevel);
+            complianceLevel = compliance;
             return changed;
         }
 
@@ -460,7 +481,57 @@ public final class CompilationEnvironment {
     public void remplacerContexteModule(String module,
                                         java.util.List<File> newSourceDirs,
                                         java.util.List<File> newClasspathEntries) {
+        // S1-a : sans niveau Java explicite, les SÉMANTIQUES listes restent
+        // celles-ci — le niveau DU module est conservé (pas de retour au
+        // défaut : un appelant qui ne connaît pas le niveau ne doit pas le
+        // réinitialiser par accident).
+        remplacerContexteModuleNiveau(module, newSourceDirs, newClasspathEntries, true, null);
+    }
+
+    /**
+     * Remplacement atomique du contexte d'UN module AVEC SON NIVEAU JAVA
+     * (lot S1-a « compliance par projet ») — sémantiques de
+     * {@link #remplacerContexteModule(String, List, List)} étendues :
+     *
+     * <ul>
+     *   <li>{@code complianceLevel} non-null : niveau Java du module
+     *       (notation libre « 1.8 »/« 8 »/« 17 »/« 21 » — le moteur
+     *       normalise, toute valeur hors 8/9/11/17/21 retombe sur 17) ;</li>
+     *   <li>{@code complianceLevel} {@code null} : RETOUR au niveau par
+     *       défaut de l'environnement (l'outil de build ne livre plus le
+     *       niveau) ; la surcharge à 3 arguments ne touche PAS au niveau
+     *       (il est conservé) ;</li>
+     *   <li>un changement de niveau SEUL invalide le moteur du module
+     *       (diagnostics de niveau à jour) et notifie les auditeurs ;</li>
+     *   <li>sync redondant (listes ET niveau identiques) : no-op système.</li>
+     * </ul>
+     *
+     * @param module      chemin Gradle du module («&nbsp;:app&nbsp;») —
+     *                    null/vide = défaut (le niveau du DÉFAUT reste un
+     *                    choix constructeur : redirection ignorante)
+     * @param complianceLevel niveau Java du module, ou {@code null} pour
+     *                    hériter du défaut
+     */
+    public void remplacerContexteModule(String module,
+                                        java.util.List<File> newSourceDirs,
+                                        java.util.List<File> newClasspathEntries,
+                                        String complianceLevel) {
+        remplacerContexteModuleNiveau(module, newSourceDirs, newClasspathEntries, false, complianceLevel);
+    }
+
+    /**
+     * Corps commun des deux surcharges — {@code niveauNonDemande} distingue
+     * « ne pas toucher au niveau » (surcharge à 3 arguments) de « poser ce
+     * niveau, null = retour au défaut » (surcharge à 4 arguments).
+     */
+    private void remplacerContexteModuleNiveau(String module,
+                                               java.util.List<File> newSourceDirs,
+                                               java.util.List<File> newClasspathEntries,
+                                               boolean niveauNonDemande,
+                                               String complianceLevel) {
         if (module == null || module.isBlank()) {
+            // Le niveau du DÉFAUT est un choix constructeur (une plateforme
+            // par projet) — la voie qualifiée vide ne le mute pas.
             replaceAll(newSourceDirs, newClasspathEntries);
             return;
         }
@@ -483,7 +554,10 @@ public final class CompilationEnvironment {
         ContexteModule c = contextes.computeIfAbsent(module.trim(), k -> new ContexteModule());
         boolean changed;
         synchronized (c) {
-            changed = c.remplacer(dirs, jars);
+            boolean listesChangees = c.remplacer(dirs, jars);
+            boolean complianceChangee =
+                    niveauNonDemande ? false : c.remplacerCompliance(complianceLevel);
+            changed = listesChangees || complianceChangee;
             if (changed) {
                 c.invaliderMoteur();
             }
@@ -492,6 +566,19 @@ public final class CompilationEnvironment {
         if (changed) {
             fireContextReplaced();
         }
+    }
+
+    /**
+     * Niveau Java POSÉ sur un module (lot S1-a — observabilité/tests) :
+     * {@code null} = hériter du défaut (aucun niveau propre ou jamais
+     * poussé). La clé null/vide désigne le niveau du DÉFAUT.
+     */
+    public String complianceModule(String module) {
+        if (module == null || module.isBlank()) {
+            return complianceLevel;
+        }
+        ContexteModule c = contextes.get(module.trim());
+        return c == null ? null : c.complianceLevel;
     }
 
     /**
@@ -539,9 +626,12 @@ public final class CompilationEnvironment {
         ContexteModule c = contextes.computeIfAbsent(module.trim(), k -> new ContexteModule());
         synchronized (c) {
             if (c.moteur == null) {
+                // S1-a : le niveau DU MODULE quand il en a un posé —
+                // hérité du défaut sinon (une plateforme par projet).
                 c.moteur = new EcjCompilerEngine(
                         c.sourceDirs, c.classpathEntries,
-                        complianceLevel, jdkHome, indexNoms);
+                        c.complianceLevel != null ? c.complianceLevel : complianceLevel,
+                        jdkHome, indexNoms);
                 c.moteur.setGradleUserHome(gradleUserHome);
             }
             return c.moteur;

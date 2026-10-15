@@ -106,6 +106,50 @@ class OrchestrateurLspTest {
     }
 
     @Test
+    fun `le niveau java du projet descend jusqu au moteur du module - S1-a`() {
+        val racine = Files.createDirectories(tmp.resolve("projet-niveaux"))
+        val fixture = ProjetFixture(racine)
+        val jar = fixture.construireJarFixture(tmp.resolve("fixture-niveaux"))
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = tmp.resolve("index-niveaux").toFile(),
+            )
+        try {
+            session.appliquerClasspath(
+                fixture.resultatClasspath(
+                    jar,
+                    compatibiliteSourceParNom = mapOf(":app" to "8", ":lib" to "21"),
+                ),
+            )
+            val environnement =
+                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+
+            // Le niveau POSÉ sur chaque contexte (brut, tel que le
+            // modèle l'a normalisé).
+            assertEquals("8", environnement.complianceModule(":app"))
+            assertEquals("21", environnement.complianceModule(":lib"))
+
+            // Chaque moteur est construit avec SON niveau.
+            assertEquals("8", environnement.jdt(":app").complianceDemandee())
+            assertEquals("21", environnement.jdt(":lib").complianceDemandee())
+
+            // Deuxième sync IDENTIQUE : pas de retrait du niveau (no-op
+            // système conservé — les moteurs ne sont pas reconstruits).
+            val moteurAvant = environnement.jdt(":app")
+            session.appliquerClasspath(
+                fixture.resultatClasspath(
+                    jar,
+                    compatibiliteSourceParNom = mapOf(":app" to "8", ":lib" to "21"),
+                ),
+            )
+            assertEquals(moteurAvant, environnement.jdt(":app"), "sync redondant : moteur conservé")
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
     fun `index fusion pret et completion par l'index`() =
         runBlocking {
             val (session, fixture, _, _) = sessionSurFixture()

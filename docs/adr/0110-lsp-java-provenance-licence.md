@@ -1,6 +1,8 @@
 # ADR 0110 — D3 : provenance du module lsp-java et licence (décision du propriétaire requise)
 
-- **Statut** : **PROPOSÉ — en attente de décision du propriétaire**
+- **Statut** : **ACCEPTÉ PARTIELLEMENT — décision ciblée du propriétaire
+  (16/10/2026)** — voir « Décision du propriétaire » plus bas ; le
+  protocole de mesure appareil (second volet du S0-c) reste en attente.
   (v0.91.0, étape 0 — prompt 2 §3 D3)
 - **Contexte** : le prompt 2 annonce un audit de provenance fourni
   (`audit-provenance-lsp-java.md`). **Ce fichier est ABSENT de
@@ -75,3 +77,34 @@
   privé, non publié, non extrait (voir étude d'extractibilité, §8).
 - Les trois shims du niveau A seront réécrits en priorité (petits,
   spécification publique du JDK suffit).
+
+## Décision du propriétaire (16/10/2026 — S0-c, communiqué direct)
+
+Sur la question posée (« réécriture de certains fichiers — laquelle ? »),
+le propriétaire tranche :
+
+> « Oui, je suis pour la réécriture de certaines classes (fichiers) mais
+> pas tous. La quasi-totalité sont mes fichiers ; c'est simplement lors
+> des tests j'ai eu des erreurs, alors dans mes recherches pour les
+> solutionner j'ai référencé projet de référence seulement pour me rappeler, parmi
+> les recherches de solutions dans divers autres projets, que c'était
+> leur approche que j'ai utilisé — pas au mot près, mais la compréhension
+> pour le faire à ma manière. »
+
+Décision actée (trace de ce PV : `docs/LSP_JAVA.md §18.2`) :
+
+1. **Option 1 (réécriture cloisonnée) retenue de façon CIBLÉE** : ne
+   s'applique qu'aux fichiers dont la dérivation est objectivement
+   établie par l'audit reconstitué — le **niveau A** (les trois shims
+   `compat/RuntimeVersion.java`, `compat/StackWalker.java`,
+   `compat/InputStreamCompat.java`, 40-69 % de lignes identiques
+   normalisées). La réécriture se fera depuis la spécification publique
+   du JDK (lot G réduit à ces trois fichiers, planifié).
+2. **Le niveau B reste en l'état** : ressemblance textuelle faible
+   (0,08-0,26 de lignes identiques, Jaccard 0,01-0,46) et assertion
+   d'auteur du propriétaire (« la quasi-totalité sont mes fichiers »,
+   référence consultée « pas au mot près ») — pas de réécriture, pas de
+   lot G complet.
+3. **Les conséquences de statut restent inchangées tant que la réécriture
+   niveau A n'est pas faite** : module vendored privé, aucune publication
+   en bibliothèque indépendante, aucun nouveau copiage du projet de référence.

@@ -1863,6 +1863,28 @@ Emplacement du PV de mesure appareil prévu par le lot S0-c (décision D3
 du propriétaire — lot G maintenant / plus tard / jamais publier, cf.
 audit §11.2). La séance dédiée n'a pas encore eu lieu.
 
+**Décision D3 du propriétaire — partiellement actée (16/10/2026, communiqué
+direct)** : sur la question de la réécriture (lot G), le propriétaire
+tranche **« réécriture de certaines classes (fichiers), mais pas tous »**
+et clarifie la provenance :
+
+- **La quasi-totalité des fichiers du module sont les SIENS** — écrits à
+  sa manière ;
+- la référence à projet de référence faite lors des recherches de solution d'erreurs
+  de test fut une **consultation d'approche parmi d'autres projets** —
+  « pas au mot près mais la compréhension pour le faire à ma manière » ;
+- conséquence opérationnelle : la réécriture cloisonnée (option 1 de
+  l'ADR 0110) s'applique **CIBLÉE** aux fichiers dont la dérivation reste
+  objectivement établie par l'audit (niveau A : les trois shims
+  `compat/RuntimeVersion.java`, `compat/StackWalker.java`,
+  `compat/InputStreamCompat.java` — 40-69 % de lignes identiques
+  normalisées) ; les fichiers niveau B (ressemblance textuelle faible,
+  0,08-0,26) **restent en l'état** sur l'assertion d'auteur du
+  propriétaire — pas de lot G complet.
+
+Le volet « protocole de mesure appareil » du S0-c reste réservé (séance
+dédiée à venir) ; l'ADR 0110 porte la trace formelle de la décision.
+
 ## 19. Journal de stabilisation — lot S1 « parité utile JDT.LS »
 
 ### 19.1 v0.134.16 — S1-b « diagnostics riches » + S1-c « workspace/symbol » + S1-d « watched files côté hôte »
@@ -1909,3 +1931,62 @@ Contenu (audit §11 S1-b/S1-c/S1-d, I4) :
   en ordre du chemin, périmètre .java+exclusions, borne, boucle fautive).
 - Parité : digeste régénéré (973 fichiers), contre-vérification SANS
   flag verte (--rerun-tasks).
+
+### 19.2 v0.134.17 — S1-a « compliance par projet » (protocole v10)
+
+Contenu (audit §11 S1-a ; ferme le lot S1 complet — S0-a/b déjà livrés
+en v0.134.11, S1-b/c/d en v0.134.16) :
+
+- **Protocole v10** : `ClasspathModule` gagne
+  `sourceCompatibility`/`targetCompatibility` (champs OPTIONNELS,
+  `null` = niveau indécidable par le tooling → le moteur garde son
+  défaut « 17 ») — le niveau Java du projet
+  (`sourceCompatibility`/`targetCompatibility` des scripts Gradle)
+  voyage enfin avec le classpath. Sources de la lecture : modèle v2
+  d'AGP (`AndroidProject.getJavaCompileOptions()`, javap vérifié sur
+  builder-model 9.4.1) pour les modules Android ;
+  `IdeaModule.getJavaLanguageSettings()` (`languageLevel`,
+  `targetBytecodeVersion`) pour les modules JVM purs. Deux résolutions
+  protégées (AGP ancien/Gradle ancien → null — jamais d'échec du
+  classpath, règle 14). `GradleProtocol.PROTOCOL_VERSION` 9 → 10
+  (handshake égalité exacte — les deux bouts vivant dans le même APK ;
+  goldens des 38 messages régénérés, échantillon porteur des niveaux
+  « 17 »).
+- **Descente au modèle** : `ModuleLsp.compatibiliteSource/Cible` — la
+  normalisation se fait à la frontière du modèle
+  (`normaliserNiveau` : « 1.8 » → « 8 », blanc/VERSION_x → `null`),
+  rendant l'empreinte du module indépendante de la notation du tooling ;
+  le niveau ENTRÉ dans l'empreinte du module — changer le niveau d'un
+  script Gradle invalide SON moteur (diagnostics de niveau à jour),
+  sans toucher les autres modules.
+- **Descente au moteur** : `CompilationEnvironment` porte désormais un
+  niveau PAR contexte module (champ `complianceLevel` de
+  `ContexteModule`) — nouvelle surcharge
+  `remplacerContexteModule(module, sources, classpath, compliance)` ;
+  la surcharge historique à 3 arguments CONSERVE le niveau posé (un
+  appelant qui ignore le niveau ne le réinitialise pas par accident) ;
+  `null` explicite (surcharge à 4) = retour honnête au défaut
+  (l'outil de build ne livre plus le niveau). Un changement de niveau
+  SEUL invalide le moteur du module et notifie les auditeurs — le sync
+  redondant (listes ET niveau identiques) reste un no-op système.
+  `jdt(module)` construit le moteur avec le niveau du module (hérité du
+  défaut sinon) ; observabilité : `complianceModule(module)` côté
+  environnement, `complianceDemandee()` côté moteur.
+- **Hôte** : `OrchestrateurLsp.pousserMoteurs` descend
+  `ModuleLsp.compatibiliteSource` avec les listes du module — un module
+  Java 8 reçoit les diagnostics de SON niveau (`var` refusé), un module
+  21 les siens (records/switch à motifs conformes).
+- **Tests** : `MoteurParModuleTest` +2 — critère d'acceptation de
+  l'audit (le MÊME source `var`+record REFUSÉ sous « 8 »
+  (`erreurs >= 1`) et le switch à motifs CONFORME sous « 21 »
+  (`erreurs == 0`), deux contextes du même environnement) + sémantiques
+  du niveau (conservation par la voie à 3 arguments, retour au défaut
+  par `null`, invalidation + notification d'un changement de niveau
+  seul, no-op redondant) ; `ModelesAndroidV2Test` +1 (JavaCompileOptions
+  du faux, niveaux bruts « 1.8 » transportés tels quels) ;
+  `ConvertisseurModeleLspTest` +3 (normalisation, transport, empreinte
+  — muet ≠ 8 ≠ 21) ; `OrchestrateurLspTest` +1 (la descente
+  bout-en-bout ClasspathResult v10 → moteur du module, niveau posé,
+  sync redondant no-op conservé).
+- **Parité** : digeste régénéré (fichiers .kt du dépôt décalés par les
+  champs v10), contre-vérification SANS flag.

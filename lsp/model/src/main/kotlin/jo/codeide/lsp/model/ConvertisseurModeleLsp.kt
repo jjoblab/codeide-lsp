@@ -125,6 +125,11 @@ public object ConvertisseurModeleLsp {
                     sourcesCanoniques().forEach { racine -> append("|racine:").append(racine) }
                     androidJar?.let { append("|androidjar:").append(it) }
                     varianteAndroid?.let { append("|variante:").append(it) }
+                    // v10 (S1-a) : le niveau Java entre dans l'identité du
+                    // module — le changer (scripts Gradle) invalide SON
+                    // moteur (diagnostics de niveau à jour).
+                    compatibiliteSource().let { append("|source:").append(it) }
+                    compatibiliteCible().let { append("|cible:").append(it) }
                 },
             )
 
@@ -144,8 +149,30 @@ public object ConvertisseurModeleLsp {
             ignore = ignore,
             raisonIgnore = raisonIgnore,
             avertissements = avertissements,
+            compatibiliteSource = compatibiliteSource(),
+            compatibiliteCible = compatibiliteCible(),
             empreinte = empreinteModule,
         )
+    }
+
+    /**
+     * Niveau Java source CANONIQUE du module (S1-a) : notation simple
+     * (« 8 », « 11 », « 17 », « 21 » — la notation « 1.x » historique est
+     * normalisée), blanc/indécidable = `null` (le moteur garde son défaut
+     * « 17 »). La normalisation au bord du modèle rend l'empreinte
+     * indépendante de la notation du tooling (Gradle livrant « 1.8 » ou
+     * « 8 » selon l'AGP, le MÊME projet garde la MÊME empreinte).
+     */
+    private fun ClasspathModule.compatibiliteSource(): String? = normaliserNiveau(sourceCompatibility)
+
+    /** Niveau Java cible canonique (voir [compatibiliteSource]). */
+    private fun ClasspathModule.compatibiliteCible(): String? = normaliserNiveau(targetCompatibility)
+
+    /** Normalisation « 1.x » → « x » (bornée) ; hors numérique simple → null. */
+    internal fun normaliserNiveau(niveau: String?): String? {
+        if (niveau.isNullOrBlank()) return null
+        val s = niveau.trim().let { if (it.startsWith("1.")) it.substring(2) else it }
+        return if (s.isNotEmpty() && s.all { it.isDigit() }) s else null
     }
 
     /** Racines de sources du module, tous rôles, ordre canonique. */

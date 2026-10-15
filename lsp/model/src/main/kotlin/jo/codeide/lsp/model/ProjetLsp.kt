@@ -53,9 +53,14 @@ public enum class TypeModuleLsp {
  * @property raisonIgnore raison de l'écart, `null` sinon.
  * @property avertissements avertissements du serveur + de la conversion
  *           (doublons résolus, dépendances non résolues…).
+ * @property compatibiliteSource niveau Java SOURCE du module (v10, lot
+ *           S1-a — `sourceCompatibility` Gradle, ex. « 1.8 »/« 17 »/« 21 »),
+ *           `null` = indécidable (le moteur garde son défaut « 17 »).
+ * @property compatibiliteCible niveau Java de BYTECODE du module
+ *           (`targetCompatibility`), `null` = indécidable.
  * @property empreinte empreinte du module — classpath, sources, générés,
- *           androidJar et variante ; changer UNE dépendance change
- *           l'empreinte du SEUL module concerné.
+ *           androidJar, variante ET niveaux Java ; changer UNE dépendance
+ *           change l'empreinte du SEUL module concerné.
  */
 @Serializable
 public data class ModuleLsp(
@@ -69,6 +74,8 @@ public data class ModuleLsp(
     public val ignore: Boolean,
     public val raisonIgnore: String?,
     public val avertissements: List<String>,
+    public val compatibiliteSource: String? = null,
+    public val compatibiliteCible: String? = null,
     public val empreinte: String,
 )
 

@@ -217,7 +217,16 @@ internal class OrchestrateurLsp(
         }
     }
 
-    /** Pousse UN contexte PAR module actif — rend (actifs, ignorés). */
+    /**
+     * Pousse UN contexte PAR module actif — rend (actifs, ignorés).
+     *
+     * S1-a : le niveau Java DU module ([ModuleLsp.compatibiliteSource],
+     * normalisé « 8 »/« 11 »/« 17 »/« 21 » ou `null` par le convertisseur)
+     * accompagne ses listes — un module Java 8 reçoit les diagnostics de
+     * SON niveau (var refusé), un module 21 les siens (records/switch).
+     * `null` = retour explicite au niveau par défaut du moteur (l'outil
+     * de build n'a pas su lire le niveau de CE module).
+     */
     private fun pousserMoteurs(projet: jo.codeide.lsp.model.ProjetLsp): Pair<Int, Int> {
         val modulesParNom = projet.modules.associateBy { it.nom }
         var actifs = 0
@@ -232,6 +241,7 @@ internal class OrchestrateurLsp(
                 module.nom,
                 racinesSourcesDe(module, modulesParNom),
                 jarsDe(module),
+                module.compatibiliteSource,
             )
         }
         return Pair(actifs, ignores)

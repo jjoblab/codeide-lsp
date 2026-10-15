@@ -216,6 +216,14 @@ public final class EcjCompilerEngine {
     private final long complianceLevel;
 
     /**
+     * Niveau Java demandé à la construction, BRUT (lot S1-a —
+     * observabilité/tests) : la chaîne reçue avant normalisation en
+     * constante ecj ({@code complianceOf}). {@code null} = le niveau par
+     * défaut « 17 » implicite.
+     */
+    private final String complianceDemandee;
+
+    /**
      * Index partagé (handles de jars, paquets) — construit paresseusement.
      * Volatile + lock séparé pour ensureIndex() : permet de pré-chauffer
      * l'index en arrière-plan dès initialized() sans bloquer les requêtes
@@ -305,8 +313,18 @@ public final class EcjCompilerEngine {
             }
         }
         this.complianceLevel = complianceOf(complianceLevel);
+        this.complianceDemandee = complianceLevel;
         this.jdkHome = jdkHome;
         this.indexNoms = indexNoms;
+    }
+
+    /**
+     * Niveau Java demandé à la construction, BRUT (lot S1-a) — pour
+     * l'observabilité et les tests : « 8 », « 1.8 », « 21 »… tel que reçu,
+     * {@code null} si le constructeur n'en a pas reçu (défaut « 17 »).
+     */
+    public String complianceDemandee() {
+        return complianceDemandee;
     }
 
     private final java.nio.file.Path jdkHome;

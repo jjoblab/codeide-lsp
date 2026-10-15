@@ -228,6 +228,124 @@ class MoteurParModuleTest {
         env.dispose();
     }
 
+    // ─── Compliance PAR projet (lot S1-a, protocole v10) ──────────────
+
+    /** Source Java 8 valide — mais `var` (Java 10+) et record (Java 16+). */
+    private static final String VAR_ET_RECORD = """
+            package demo;
+
+            public class Main {
+                record Point(int x, int y) {}
+
+                public static void main(String[] args) {
+                    var message = "Hello, " + args.length;
+                    System.out.println(message);
+                }
+            }
+            """;
+
+    /** Source Java 21 : record + switch à motifs (criterion S1-a). */
+    private static final String RECORD_ET_SWITCH = """
+            package demo;
+
+            public class Main {
+                record Point(int x, int y) {}
+
+                static String decrire(Object o) {
+                    return switch (o) {
+                        case Point p -> "point " + p.x();
+                        case Integer i -> "entier " + i;
+                        default -> "autre";
+                    };
+                }
+            }
+            """;
+
+    /**
+     * Critère d'acceptation S1-a (fixture multi-niveaux) : le MÊME source
+     * `var`+record est REFUSÉ sous un module « 8 » (var introduit en 10,
+     * records en 16) et CONFORME sous un module « 21 » — deux contextes du
+     * MÊME {@link CompilationEnvironment}, deux niveaux.
+     */
+    @Test
+    void laComplianceParModuleDiagnostiqueSelonLeNiveauDuProjet() throws Exception {
+        CompilationEnvironment env = new CompilationEnvironment();
+        env.remplacerContexteModule(":vieux", List.of(dirSource("src-vieux")),
+                Collections.emptyList(), "8");
+        env.remplacerContexteModule(":moderne", List.of(dirSource("src-moderne")),
+                Collections.emptyList(), "21");
+
+        // Le niveau est posé tel que demandé (observabilité S1-a).
+        assertEquals("8", env.complianceModule(":vieux"));
+        assertEquals("21", env.complianceModule(":moderne"));
+        assertEquals("8", env.jdt(":vieux").complianceDemandee());
+        assertEquals("21", env.jdt(":moderne").complianceDemandee());
+
+        // var + record sous « 8 » : refusés (erreurs de niveau).
+        List<jo.lspjava.api.Diagnostic> diags8 =
+                env.jdt(":vieux").diagnose("/demo/Main.java", VAR_ET_RECORD);
+        assertTrue(erreurs(diags8) >= 1,
+                "var/record doit être refusé sous compliance 8 : " + diags8);
+
+        // switch à motifs + record sous « 21 » : conformes (zéro erreur).
+        List<jo.lspjava.api.Diagnostic> diags21 =
+                env.jdt(":moderne").diagnose("/demo/Main.java", RECORD_ET_SWITCH);
+        assertEquals(0, erreurs(diags21),
+                "records/switch conformes sous compliance 21 : " + diags21);
+
+        // Le MÊME moteur « 21 » accepte aussi var (le défaut 17+ l'a).
+        assertEquals(0, erreurs(env.jdt(":moderne").diagnose("/demo/Main.java", VAR_ET_RECORD)),
+                "var conforme sous compliance 21");
+        env.dispose();
+    }
+
+    /**
+     * Sémantiques S1-a du niveau : posé → conservé par la surcharge à 3
+     * arguments (un appelant qui ignore le niveau ne le réinitialise pas),
+     * {@code null} explicite (surcharge à 4) → RETOUR au défaut ; un
+     * changement de niveau SEUL invalide le moteur et notifie les
+     * auditeurs ; un sync redondant (listes ET niveau) reste un no-op.
+     */
+    @Test
+    void semantiquesDuNiveauJavaParModule() throws Exception {
+        CompilationEnvironment env = new CompilationEnvironment();
+        env.remplacerContexteModule(":app", List.of(dirSource("src-niveau")),
+                Collections.emptyList(), "8");
+        EcjCompilerEngine avant = env.jdt(":app");
+
+        AtomicInteger notifications = new AtomicInteger();
+        env.addContextListener(notifications::incrementAndGet);
+
+        // Surcharge à 3 arguments : le niveau POSÉ est conservé.
+        env.remplacerContexteModule(":app", List.of(dirSource("src-niveau")),
+                Collections.emptyList());
+        assertEquals("8", env.complianceModule(":app"),
+                "l'appel ignorant du niveau ne doit pas le réinitialiser");
+        assertSame(avant, env.jdt(":app"), "sync redondant (listes+niveau) : no-op");
+        assertEquals(0, notifications.get(), "aucune notification sur no-op");
+
+        // Changement de niveau SEUL (mêmes listes) : moteur invalidé +
+        // notification — les diagnostics de niveau se mettent à jour.
+        env.remplacerContexteModule(":app", List.of(dirSource("src-niveau")),
+                Collections.emptyList(), "21");
+        assertNotSame(avant, env.jdt(":app"), "changement de niveau : moteur reconstruit");
+        assertEquals(1, notifications.get(), "un changement effectif notifie une fois");
+        assertEquals("21", env.jdt(":app").complianceDemandee());
+
+        // null explicite : retour au défaut de l'environnement (« 17 »).
+        env.remplacerContexteModule(":app", List.of(dirSource("src-niveau")),
+                Collections.emptyList(), null);
+        assertEquals(null, env.complianceModule(":app"), "retour au défaut");
+        assertEquals(2, notifications.get());
+
+        // Le moteur du module retombe sur le niveau de l'environnement
+        // (défaut constructeur « 17 » — la chaîne du défaut est ce que le
+        // moteur reçoit : un héritage, pas une absence).
+        assertEquals("17", env.jdt(":app").complianceDemandee(),
+                "moteur reconstruit avec le niveau hérité du défaut");
+        env.dispose();
+    }
+
     // ─── Champs partagés : invalidation de TOUS les moteurs ───────────
 
     /**

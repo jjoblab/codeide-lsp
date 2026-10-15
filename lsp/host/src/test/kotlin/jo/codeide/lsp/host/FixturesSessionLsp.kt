@@ -173,11 +173,14 @@ internal class ProjetFixture(
     }
 
     /** Résultat de classpath tooling : :lib (jar) + :app (MODULE :lib) ;
-     *  v0.102.0 : :app peut porter la plateforme (androidJar, ADR 0112). */
+     *  v0.102.0 : :app peut porter la plateforme (androidJar, ADR 0112) ;
+     *  v10 (S1-a) : niveaux Java optionnels PAR module
+     *  ([compatibiliteSourceParNom] — clé = chemin Gradle). */
     fun resultatClasspath(
         jar: Path,
         avecIgnore: Boolean = false,
         androidJar: Path? = null,
+        compatibiliteSourceParNom: Map<String, String> = emptyMap(),
     ): ClasspathResult {
         val modules =
             mutableListOf(
@@ -192,6 +195,8 @@ internal class ProjetFixture(
                                 scope = "compile",
                             ),
                         ),
+                    sourceCompatibility = compatibiliteSourceParNom[":lib"],
+                    targetCompatibility = compatibiliteSourceParNom[":lib"],
                 ),
                 ClasspathModule(
                     name = ":app",
@@ -205,6 +210,8 @@ internal class ProjetFixture(
                             ),
                         ),
                     androidJar = androidJar?.toString(),
+                    sourceCompatibility = compatibiliteSourceParNom[":app"],
+                    targetCompatibility = compatibiliteSourceParNom[":app"],
                 ),
             )
         if (avecIgnore) {

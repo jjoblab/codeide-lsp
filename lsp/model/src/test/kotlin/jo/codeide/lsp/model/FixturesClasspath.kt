@@ -76,6 +76,8 @@ internal object FixturesClasspath {
         ignore: Boolean = false,
         raisonIgnore: String? = null,
         avertissements: List<String>? = null,
+        sourceCompat: String? = null,
+        targetCompat: String? = null,
     ): ClasspathModule =
         ClasspathModule(
             name = nom,
@@ -92,6 +94,8 @@ internal object FixturesClasspath {
             ignore = ignore,
             raisonIgnore = raisonIgnore,
             avertissements = avertissements,
+            sourceCompatibility = sourceCompat,
+            targetCompatibility = targetCompat,
         )
 
     fun jar(

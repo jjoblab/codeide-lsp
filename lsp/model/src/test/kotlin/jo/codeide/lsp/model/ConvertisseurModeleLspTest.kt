@@ -484,4 +484,87 @@ class ConvertisseurModeleLspTest {
         assertEquals(listOf("dépendance non résolue : x"), projet.modules[1].avertissements)
         assertNotNull(projet.empreinte)
     }
+
+    // ------------------------------------------------------------------
+    // S1-a : niveaux Java du module (protocole v10).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `les niveaux java du module sont normalises et transportes vers le modele`() {
+        val resultat =
+            FixturesClasspath.resultat(
+                modules =
+                    listOf(
+                        // Notation historique « 1.8 » (Gradle/AGP anciens).
+                        FixturesClasspath.module(nom = ":vieux", sourceCompat = "1.8", targetCompat = "1.8"),
+                        // Notation moderne.
+                        FixturesClasspath.module(nom = ":moderne", sourceCompat = "21", targetCompat = "21"),
+                        // Indécidable : null des deux côtés.
+                        FixturesClasspath.module(nom = ":muet"),
+                    ),
+            )
+
+        val projet = convertisseur.depuisClasspathResult(resultat, stats.lecteur)
+
+        val parNom = projet.modules.associateBy { it.nom }
+        assertEquals("« 1.8 » normalisé en « 8 »", "8", parNom.getValue(":vieux").compatibiliteSource)
+        assertEquals("cible normalisée aussi", "8", parNom.getValue(":vieux").compatibiliteCible)
+        assertEquals("21", parNom.getValue(":moderne").compatibiliteSource)
+        assertEquals("21", parNom.getValue(":moderne").compatibiliteCible)
+        assertNull(parNom.getValue(":muet").compatibiliteSource)
+        assertNull(parNom.getValue(":muet").compatibiliteCible)
+    }
+
+    @Test
+    fun `normaliserNiveau - valeurs acceptees et rejets honnetes`() {
+        assertEquals("8", ConvertisseurModeleLsp.normaliserNiveau("1.8"))
+        assertEquals("11", ConvertisseurModeleLsp.normaliserNiveau("11"))
+        assertEquals("21", ConvertisseurModeleLsp.normaliserNiveau(" 21 "))
+        assertNull(ConvertisseurModeleLsp.normaliserNiveau(null))
+        assertNull(ConvertisseurModeleLsp.normaliserNiveau(""))
+        assertNull(ConvertisseurModeleLsp.normaliserNiveau("   "))
+        assertNull(ConvertisseurModeleLsp.normaliserNiveau("VERSION_17"))
+        assertNull(ConvertisseurModeleLsp.normaliserNiveau("1.8.0"))
+    }
+
+    @Test
+    fun `changer le niveau java du module change son empreinte - le moteur se revalide`() {
+        val jar = FixturesClasspath.cheminMaven("org.slf4j", "slf4j-api", "2.0.18")
+        stats.ajouter(jar)
+
+        val resultat8 =
+            FixturesClasspath.resultat(
+                modules =
+                    listOf(
+                        FixturesClasspath.module(
+                            nom = ":app",
+                            entrees = listOf(FixturesClasspath.jar(jar)),
+                            sourceCompat = "8",
+                        ),
+                    ),
+            )
+        val resultat21 =
+            FixturesClasspath.resultat(
+                modules =
+                    listOf(
+                        FixturesClasspath.module(
+                            nom = ":app",
+                            entrees = listOf(FixturesClasspath.jar(jar)),
+                            sourceCompat = "21",
+                        ),
+                    ),
+            )
+        val resultatMuet =
+            FixturesClasspath.resultat(
+                modules = listOf(FixturesClasspath.module(nom = ":app", entrees = listOf(FixturesClasspath.jar(jar)))),
+            )
+
+        val empreinte8 = convertisseur.depuisClasspathResult(resultat8, stats.lecteur).empreinte
+        val empreinte21 = convertisseur.depuisClasspathResult(resultat21, stats.lecteur).empreinte
+        val empreinteMuet = convertisseur.depuisClasspathResult(resultatMuet, stats.lecteur).empreinte
+
+        assertNotEquals("8 vs 21 : empreintes distinctes", empreinte8, empreinte21)
+        assertNotEquals("sans niveau ≠ niveau 8 (le défaut 17 est une VALEUR)", empreinteMuet, empreinte8)
+        assertNotEquals("sans niveau ≠ niveau 21", empreinteMuet, empreinte21)
+    }
 }
