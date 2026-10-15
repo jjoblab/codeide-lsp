@@ -34,20 +34,32 @@ import java.io.File
 internal class ScanProjet(
     private val parseur: ParseurKotlin,
 ) {
-    /** Racines courantes (identité d'invalidation). */
+    /** Racines courantes (identité d'invalidation).
+     *  v0.134.7 — KP6 CORRIGÉ : les deux champs sont VOLATILES et la
+     *  paire (racines, scannees) est mutée SOUS [verrouScan] — deux
+     *  sessions simultanées voient toujours un état cohérent (le
+     *  double-scan bénin est évité par le même verrou, et la visibilité
+     *  mémoire est garantie, miroir de [jo.lspkotlin.index.IndexAppelablesKotlin]). */
+    @Volatile
     private var racines: List<File> = emptyList()
 
-    /** Déclarations du dernier scan (vide avant le premier). */
+    /** Déclarations du dernier scan (vide avant le premier). @Volatile : KP6. */
+    @Volatile
     private var scannees: List<DeclarationProjet> = emptyList()
+
+    /** Verrou de la paire (racines, scannees) — scan unique sous verrou. */
+    private val verrouScan = Any()
 
     /**
      * (Re)définit les racines — un appel aux MÊMES racines est un NO-OP
      * chaud (sync redondante) ; un changement re-scanne paresseusement.
      */
     internal fun definirRacines(nouvelles: List<File>) {
-        if (nouvelles == racines) return
-        racines = nouvelles
-        scannees = emptyList()
+        synchronized(verrouScan) {
+            if (nouvelles == racines) return
+            racines = nouvelles
+            scannees = emptyList()
+        }
     }
 
     /**
@@ -62,11 +74,22 @@ internal class ScanProjet(
      *        périmé).
      */
     internal fun declarations(exclureUri: String? = null): List<DeclarationProjet> {
-        if (scannees.isEmpty() && racines.isNotEmpty()) {
-            scannees = scanner()
+        scannerAuBesoin()
+        val courantes = scannees
+        if (exclureUri == null) return courantes
+        return courantes.filter { it.uri != exclureUri }
+    }
+
+    /**
+     * Lance le scan paresseux si des racines existent et qu'aucun
+     * résultat n'est disponible — SOUS le verrou (KP6 : un seul scan,
+     * les autres sessions attendent et lisent ensuite le champ volatil).
+     */
+    private fun scannerAuBesoin() {
+        if (racines.isEmpty() || scannees.isNotEmpty()) return
+        synchronized(verrouScan) {
+            if (scannees.isEmpty()) scannees = scanner()
         }
-        if (exclureUri == null) return scannees
-        return scannees.filter { it.uri != exclureUri }
     }
 
     /** Parcours complet des racines (fichiers .kt ET .java, ordre déterministe).

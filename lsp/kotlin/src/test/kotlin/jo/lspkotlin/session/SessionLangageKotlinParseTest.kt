@@ -3,6 +3,7 @@ package jo.lspkotlin.session
 import jo.lspkotlin.api.CodesDiagnosticsKotlin
 import jo.lspkotlin.api.SeveriteKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
+import jo.lspkotlin.api.TagDiagnosticKotlin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -206,5 +207,55 @@ class SessionLangageKotlinParseTest {
         assertEquals(1, premiere.nombreDocuments)
         assertEquals(1, premiere.diagnostics("file:///a.kt").size)
         premiere.close()
+    }
+
+    // ── KP15 — métadonnées riches (plan de stabilisation §3.2 S0/S1) ────
+
+    @Test
+    fun `import inutilise - porte le tag INUTILE (KP15)`() {
+        val session = sessionNeuve()
+        session.ouvrirDocument("file:///a.kt", "import kotlin.math.PI\nval x = 1\n")
+        val diagnostic = session.diagnostics("file:///a.kt").single()
+        assertEquals(listOf(TagDiagnosticKotlin.INUTILE), diagnostic.tags)
+        session.close()
+    }
+
+    @Test
+    fun `erreur de syntaxe - aucun tag (KP15, sous-rapport)`() {
+        // Le tag INUTILE est réservé aux « inutiles » : une erreur de
+        // syntaxe ne le porte JAMAIS (le client griserait à tort).
+        val session = sessionNeuve()
+        session.ouvrirDocument("file:///a.kt", "val x = (")
+        val diagnostic = session.diagnostics("file:///a.kt").single()
+        assertEquals(CodesDiagnosticsKotlin.SYNTAXE, diagnostic.code)
+        assertTrue(diagnostic.tags.isEmpty())
+        assertTrue(diagnostic.informationsLiees.isEmpty())
+        session.close()
+    }
+
+    @Test
+    fun `imports conflictuels - information liee sur la PREMIERE directive (KP15)`() {
+        val session = sessionNeuve()
+        session.ouvrirDocument(
+            "file:///a.kt",
+            "import java.lang.Math.abs\nimport kotlin.math.abs\n",
+        )
+        val conflit = session.diagnostics("file:///a.kt")
+            .single { it.code == CodesDiagnosticsKotlin.IMPORT_CONFLIT }
+        val liee = conflit.informationsLiees.single()
+        // La plage liée est celle de la directive PREMIÈRE (ligne 1).
+        assertEquals(0, liee.debut)
+        assertEquals("import java.lang.Math.abs".length, liee.fin)
+        assertTrue(liee.message.contains("java.lang.Math.abs"))
+        session.close()
+    }
+
+    @Test
+    fun `import inutilise - aucune information liee (KP15)`() {
+        val session = sessionNeuve()
+        session.ouvrirDocument("file:///a.kt", "import kotlin.math.PI\nval x = 1\n")
+        val diagnostic = session.diagnostics("file:///a.kt").single()
+        assertTrue(diagnostic.informationsLiees.isEmpty())
+        session.close()
     }
 }

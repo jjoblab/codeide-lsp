@@ -21,10 +21,42 @@ package jo.lspkotlin.api
  * @param message message lisible (français, règles du dépôt).
  * @param debut décalage de début dans la source (inclus).
  * @param fin décalage de fin dans la source (exclusif).
+ * @param tags étiquettes neutres (KP15) — traduites en `DiagnosticTag`
+ *        LSP par l'hôte (vide dans la grande majorité des cas).
+ * @param informationsLiees plages du MÊME document liées au diagnostic
+ *        (KP15) — l'hôte fournit l'URI à la traduction (le moteur ne
+ *        connaît pas le sien, il est PUR sur l'arbre).
  */
 public data class DiagnosticKotlin(
     public val code: String,
     public val severite: SeveriteKotlin,
+    public val message: String,
+    public val debut: Int,
+    public val fin: Int,
+    public val tags: List<TagDiagnosticKotlin> = emptyList(),
+    public val informationsLiees: List<InformationLieeKotlin> = emptyList(),
+)
+
+/**
+ * Étiquette neutre d'un diagnostic (KP15) — le client LSP qui la
+ * comprend grille ou estompe la plage signalée.
+ */
+public enum class TagDiagnosticKotlin {
+    /** Le code signalé est INUTILE (ex. `kt.unusedImport`) — LSP 3.15
+     *  `DiagnosticTag.Unnecessary` ; jamais porté par une ERREUR. */
+    INUTILE,
+}
+
+/**
+ * Information liée d'un diagnostic (KP15) : une plage du MÊME document
+ * (l'URI est fourni par l'hôte à la traduction — le moteur reste neutre
+ * de protocole) et un message qui l'explique.
+ *
+ * NB : `codeDescription` (KP15) n'est PAS portée — aucune URL de
+ * documentation stable n'existe pour nos codes `kt.*` ; inventer un
+ * lien serait mensonger (D3 s'applique aux métadonnées aussi).
+ */
+public data class InformationLieeKotlin(
     public val message: String,
     public val debut: Int,
     public val fin: Int,

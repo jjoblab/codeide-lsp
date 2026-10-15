@@ -8,6 +8,7 @@ import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
 import jo.lspkotlin.api.SymboleDocumentKotlin
+import jo.lspkotlin.api.TagDiagnosticKotlin
 import org.eclipse.lsp4j.CodeAction
 import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionParams
@@ -19,7 +20,9 @@ import org.eclipse.lsp4j.CompletionOptions
 import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.Diagnostic
+import org.eclipse.lsp4j.DiagnosticRelatedInformation
 import org.eclipse.lsp4j.DiagnosticSeverity
+import org.eclipse.lsp4j.DiagnosticTag
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
@@ -179,7 +182,7 @@ internal class KotlinLanguageServer(
         val clientCourant = client ?: return
         val document = documents[uri]
         val diagnostics =
-            document?.let { traduire(session.diagnostics(uri), it.convertisseur) } ?: emptyList()
+            document?.let { traduire(uri, session.diagnostics(uri), it.convertisseur) } ?: emptyList()
         val params = PublishDiagnosticsParams(uri, diagnostics)
         document?.version?.let { params.version = it }
         try {
@@ -191,8 +194,11 @@ internal class KotlinLanguageServer(
 
     /** Traduit les diagnostics neutres en diagnostics LSP.
      *  v0.134.4 — KP13 CORRIGÉ : convertisseur partagé du [DocumentLsp]
-     *  (une construction par version, plus un scan O(n) par diagnostic). */
+     *  (une construction par version, plus un scan O(n) par diagnostic).
+     *  v0.134.7 — KP15 : TAGS (Unnecessary) + INFORMATIONS LIÉES (l'URI
+     *  du document est fourni ici — le moteur ne connaît pas le sien). */
     private fun traduire(
+        uri: String,
         diagnostics: List<DiagnosticKotlin>,
         convertisseur: ConvertisseurPositions,
     ): List<Diagnostic> =
@@ -211,7 +217,32 @@ internal class KotlinLanguageServer(
                 severiteLspDe(diagnostic.severite),
                 NOM_SERVEUR,
                 diagnostic.code,
-            )
+            ).apply {
+                if (diagnostic.tags.isNotEmpty()) {
+                    tags = diagnostic.tags.map { tagLspDe(it) }
+                }
+                if (diagnostic.informationsLiees.isNotEmpty()) {
+                    relatedInformation =
+                        diagnostic.informationsLiees.map { liee ->
+                            DiagnosticRelatedInformation(
+                                Location(
+                                    uri,
+                                    Range(
+                                        convertisseur.positionDe(liee.debut),
+                                        convertisseur.positionDe(liee.fin),
+                                    ),
+                                ),
+                                liee.message,
+                            )
+                        }
+                }
+            }
+        }
+
+    /** Étiquette LSP d'une étiquette neutre (KP15). */
+    private fun tagLspDe(tag: TagDiagnosticKotlin): DiagnosticTag =
+        when (tag) {
+            TagDiagnosticKotlin.INUTILE -> DiagnosticTag.Unnecessary
         }
 
     /** Position LSP (ligne, colonne UTF-16) d'un décalage du texte.

@@ -2,7 +2,9 @@ package jo.lspkotlin.diagnostics
 
 import jo.lspkotlin.api.CodesDiagnosticsKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
+import jo.lspkotlin.api.InformationLieeKotlin
 import jo.lspkotlin.api.SeveriteKotlin
+import jo.lspkotlin.api.TagDiagnosticKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
 import jo.lspkotlin.parse.JetonSyntaxique
 import jo.lspkotlin.parse.NoeudSyntaxique
@@ -23,9 +25,12 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *   le VRAI verdict de la grammaire vendorée, aucun diagnostic inventé ;
  * - [CodesDiagnosticsKotlin.IMPORT_INUTILISE] : nom effectif absent des
  *   identifiants du fichier (hors directives package/import) — joker et
- *   directives en édition jamais signalés ;
+ *   directives en édition jamais signalés ; porte le TAG [TagDiagnosticKotlin.INUTILE]
+ *   (KP15 : le client qui le comprend grille la directive) ;
  * - [CodesDiagnosticsKotlin.IMPORT_CONFLIT] : deux imports non joker de
- *   noms qualifiés distincts partageant le même nom effectif.
+ *   noms qualifiés distincts partageant le même nom effectif — porté avec
+ *   une INFORMATION LIÉE sur la directive PREMIÈRE (KP15 : les deux
+ *   directives du conflit sont visibles d'un coup d'œil).
  *
  * Les diagnostics sémantiques (résolution, types, surcharges) arrivent
  * K3/K4 avec le modèle de symboles — rien ici ne devine.
@@ -143,6 +148,7 @@ internal object DiagnosticsSyntaxiques {
                     "n'apparaît pas dans ce fichier",
                 debut = directive.debut,
                 fin = directive.fin,
+                tags = listOf(TagDiagnosticKotlin.INUTILE),
             )
         }
 
@@ -154,25 +160,30 @@ internal object DiagnosticsSyntaxiques {
      */
     private fun importsConflicts(directives: List<KtImportDirective>): List<DiagnosticKotlin> {
         val conflits = mutableListOf<DiagnosticKotlin>()
-        val importsParNom = mutableMapOf<String, String>()
+        val importsParNom = mutableMapOf<String, Pair<String, KtImportDirective>>()
         directives.forEach { directive ->
             val nomQualifie = directive.nomQualifie() ?: return@forEach
             val nomEffectif = nomEffectifDe(directive, nomQualifie) ?: return@forEach
             val premier = importsParNom[nomEffectif]
             if (premier == null) {
-                importsParNom[nomEffectif] = nomQualifie
-            } else if (premier != nomQualifie) {
-                conflits += conflitDe(directive, nomEffectif, premier, nomQualifie)
+                importsParNom[nomEffectif] = Pair(nomQualifie, directive)
+            } else if (premier.first != nomQualifie) {
+                conflits += conflitDe(directive, nomEffectif, premier.first, premier.second, nomQualifie)
             }
         }
         return conflits
     }
 
-    /** Diagnostic de conflit sur la directive tardive [directive]. */
+    /**
+     * Diagnostic de conflit sur la directive tardive [directive] — l'
+     * INFORMATION LIÉE porte la plage de la directive PREMIÈRE
+     * [premiereDirective] (KP15 : le client l'affiche au clic).
+     */
     private fun conflitDe(
         directive: KtImportDirective,
         nomEffectif: String,
         premier: String,
+        premiereDirective: KtImportDirective,
         second: String,
     ): DiagnosticKotlin =
         DiagnosticKotlin(
@@ -182,6 +193,13 @@ internal object DiagnosticsSyntaxiques {
                 "« $premier » et « $second »",
             debut = directive.debut,
             fin = directive.fin,
+            informationsLiees = listOf(
+                InformationLieeKotlin(
+                    "Première directive d'import en conflit : « $premier »",
+                    premiereDirective.debut,
+                    premiereDirective.fin,
+                ),
+            ),
         )
 
     /**
