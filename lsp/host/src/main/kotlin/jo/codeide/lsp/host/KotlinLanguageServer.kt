@@ -30,6 +30,9 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentHighlight
+import org.eclipse.lsp4j.DocumentHighlightKind
+import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.DocumentSymbol
 import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.FoldingRange
@@ -41,8 +44,14 @@ import org.eclipse.lsp4j.InitializeResult
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.ParameterInformation
 import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.PrepareRenameDefaultBehavior
+import org.eclipse.lsp4j.PrepareRenameParams
+import org.eclipse.lsp4j.PrepareRenameResult
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.ReferenceParams
+import org.eclipse.lsp4j.RenameOptions
+import org.eclipse.lsp4j.RenameParams
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.SignatureHelp
@@ -55,6 +64,7 @@ import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.jsonrpc.messages.Either
+import org.eclipse.lsp4j.jsonrpc.messages.Either3
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import org.eclipse.lsp4j.services.TextDocumentService
@@ -152,6 +162,16 @@ internal class KotlinLanguageServer(
         // même convention que le LSP Java).
         val signature = SignatureHelpOptions(listOf("(", ","))
         capacites.setSignatureHelpProvider(signature)
+        // S2 (v0.134.15) : OCCURRENCES — references (find usages),
+        // documentHighlight (surlignage des occurrences du document),
+        // rename + prepareRename (rename borné, miroir du « rename
+        // honnête » du LSP Java — le client cel-lsp consomme la forme
+        // legacy `changes` : il n'annonce PAS documentChanges).
+        capacites.setReferencesProvider(true)
+        capacites.setDocumentHighlightProvider(true)
+        val renommage = RenameOptions()
+        renommage.prepareProvider = true
+        capacites.setRenameProvider(renommage)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -515,6 +535,211 @@ internal class KotlinLanguageServer(
                 }
             return CompletableFuture.completedFuture(resultat)
         }
+
+        /**
+         * Références (S2) : occurrences du symbole au curseur dans les
+         * sources du projet — emplacements neutres traduits en Locations
+         * LSP (même mécanique que la définition). Liste VIDE sans cible
+         * prouvée (conservatisme D3, jamais d'exception).
+         */
+        override fun references(params: ReferenceParams): CompletableFuture<List<Location>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val decalage = decalageDe(params.position, document.texte)
+            val emplacements =
+                try {
+                    session.references(uri, decalage, params.context.isIncludeDeclaration)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "references échoué ($uri)", t)
+                    emptyList()
+                }
+            val locations =
+                emplacements.mapNotNull { emplacement ->
+                    locationLspDe(emplacement, uri)
+                }
+            return CompletableFuture.completedFuture(locations)
+        }
+
+        /**
+         * Surlignage des occurrences (S2) : décalages neutres →
+         * DocumentHighlight LSP (déclaration = Write, références = Read).
+         * Liste VIDE sans cible prouvée ou document inconnu.
+         */
+        override fun documentHighlight(params: DocumentHighlightParams): CompletableFuture<List<DocumentHighlight>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val decalage = decalageDe(params.position, document.texte)
+            val surlignages =
+                try {
+                    session.surlignagesDocument(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "documentHighlight échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                surlignages.map { surlignage ->
+                    DocumentHighlight(
+                        Range(
+                            document.convertisseur.positionDe(surlignage.debut),
+                            document.convertisseur.positionDe(surlignage.fin),
+                        ),
+                        genreSurlignageLspDe(surlignage.genre),
+                    )
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /** Genre neutre → DocumentHighlightKind LSP. */
+        private fun genreSurlignageLspDe(genre: jo.lspkotlin.api.GenreSurlignageKotlin): DocumentHighlightKind =
+            when (genre) {
+                jo.lspkotlin.api.GenreSurlignageKotlin.LECTURE -> DocumentHighlightKind.Read
+                jo.lspkotlin.api.GenreSurlignageKotlin.ECRITURE -> DocumentHighlightKind.Write
+            }
+
+        /**
+         * Pré-validation du renommage (S2 — miroir S0-b Java) : la
+         * plage EXACTE du nom + le placeholder (nom courant) — le caret
+         * AU MILIEU du nom est couvert (plage du jeton, pas heuristique
+         * findWord). Non renommable → null (la boîte de dialogue client
+         * refuse proprement, sans erreur).
+         */
+        override fun prepareRename(
+            params: PrepareRenameParams,
+        ): CompletableFuture<Either3<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri]
+            val plage =
+                document?.let { doc ->
+                    try {
+                        session.plageRenommable(uri, decalageDe(params.position, doc.texte))
+                    } catch (t: Throwable) {
+                        LOGGER.log(Level.WARNING, "prepareRename échoué ($uri)", t)
+                        null
+                    }
+                }
+            if (plage == null) return CompletableFuture.completedFuture(null)
+            val resultat =
+                PrepareRenameResult(
+                    Range(
+                        document!!.convertisseur.positionDe(plage.debut),
+                        document.convertisseur.positionDe(plage.fin),
+                    ),
+                    plage.placeholder,
+                )
+            return CompletableFuture.completedFuture(Either3.forSecond(resultat))
+        }
+
+        /**
+         * Renommage borné (S2 — miroir I8 « rename honnête » Java) : les
+         * occurrences PROUVÉES (déclaration + références + imports du
+         * FQCN) deviennent des TextEdits groupés par fichier. AUCUN
+         * échec silencieux — sans cible = erreur TYPOÉE RequestFailed
+         * (-32803) avec data {code: renommage.sansCible} ; les autres
+         * défaillances relancent, jamais un WorkspaceEdit vide.
+         *
+         * Forme legacy `changes` : le client cel-lsp actuel n'annonce
+         * PAS WorkspaceEditCapabilities.documentChanges (vérifié par
+         * décompilation, lot S0-b) — la spec impose cette forme pour un
+         * client non déclarant, il la consomme (getChanges).
+         */
+        override fun rename(params: RenameParams): CompletableFuture<WorkspaceEdit> {
+            val uri = params.textDocument.uri
+            val document = documents[uri]
+            val emplacements =
+                document?.let { doc ->
+                    try {
+                        session.renommage(uri, decalageDe(params.position, doc.texte))
+                    } catch (t: Throwable) {
+                        LOGGER.log(Level.WARNING, "rename échoué ($uri)", t)
+                        throw org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                            org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                                org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.value,
+                                "Renommage échoué : $t",
+                                null,
+                            ),
+                        )
+                    }
+                } ?: emptyList()
+            if (emplacements.isEmpty()) {
+                return futureEnEchec(
+                    org.eclipse.lsp4j.jsonrpc
+                        .ResponseErrorException(sansCible(uri, params.position)),
+                )
+            }
+            return CompletableFuture.completedFuture(editionsRenommage(emplacements, params.newName))
+        }
+
+        /**
+         * Future en échec, compatible API 26 —
+         * `CompletableFuture.failedFuture` n'existe qu'à partir de l'API
+         * 31 : la construction + [CompletableFuture.completeExceptionally]
+         * fait le même travail sur tout l'historique supporté (miroir du
+         * call-out Java, lu par le même client).
+         */
+        private fun <T> futureEnEchec(erreur: Throwable): CompletableFuture<T> =
+            CompletableFuture<T>().apply { completeExceptionally(erreur) }
+
+        /**
+         * Occurrences prouvées → WorkspaceEdit legacy `changes` : les
+         * textes viennent des documents ouverts (version vive) ou du
+         * disque (fichiers fermés) ; illisible = occurrences OMISES
+         * (jamais une édition fausse).
+         *
+         * Exemption detekt ciblée (règle 16) : SwallowedException — la
+         * lecture disque best-effort EST le contrat (miroir
+         * locationLspDe, D3 : fichier illisible = emplacement omis).
+         */
+        @Suppress("SwallowedException")
+        private fun editionsRenommage(
+            emplacements: List<jo.lspkotlin.api.EmplacementKotlin>,
+            nouveauNom: String,
+        ): WorkspaceEdit {
+            val changes = LinkedHashMap<String, List<TextEdit>>()
+            for (emplacement in emplacements) {
+                val texteFichier =
+                    if (documents.containsKey(emplacement.uri)) {
+                        documents[emplacement.uri]?.texte
+                    } else {
+                        try {
+                            File(java.net.URI(emplacement.uri)).readText()
+                        } catch (t: Throwable) {
+                            null // fichier illisible — occurrences omises (D3)
+                        }
+                    }
+                if (texteFichier == null) continue
+                val convertisseur = ConvertisseurPositions.pour(texteFichier)
+                val edition =
+                    TextEdit(
+                        Range(
+                            convertisseur.positionDe(emplacement.debut),
+                            convertisseur.positionDe(emplacement.fin),
+                        ),
+                        nouveauNom,
+                    )
+                // occurrences ordonnées par fichier, début croissant —
+                // un même URI arrive en bloc contigu (session trie).
+                changes[emplacement.uri] = (changes[emplacement.uri] ?: emptyList()) + edition
+            }
+            val workspaceEdit = WorkspaceEdit()
+            workspaceEdit.changes = changes
+            return workspaceEdit
+        }
+
+        /** Erreur typée « aucun symbole renommable » (leçon I8 Java). */
+        private fun sansCible(
+            uri: String,
+            position: Position,
+        ): org.eclipse.lsp4j.jsonrpc.messages.ResponseError =
+            org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.value,
+                "Aucun symbole renommable à la position du curseur.",
+                mapOf(
+                    "code" to "renommage.sansCible",
+                    "uri" to uri,
+                    "line" to position.line,
+                    "character" to position.character,
+                ),
+            )
 
         /**
          * Symbole neutre → DocumentSymbol LSP : nom, détail, kind,

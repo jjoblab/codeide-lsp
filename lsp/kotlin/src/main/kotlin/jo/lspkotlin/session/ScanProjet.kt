@@ -81,6 +81,38 @@ internal class ScanProjet(
     }
 
     /**
+     * URIs des sources KOTLIN des racines (`file://` FUSE, même marche
+     * bornée que le scan — S2 occurrences : le balayage des fichiers
+     * fermés pour references/rename, avec le MÊME plafond
+     * [BORN_FICHIERS]). Les `.kts` sont exclus (même convention que le
+     * scan), les `.java` aussi (le moteur Kotlin ne collecte pas
+     * d'occurrences dans les sources Java — sous-rapport D3 documenté).
+     *
+     * @param exclure URIs déjà couverts par ailleurs (documents ouverts
+     *        — leurs arbres vivants dominent le disque).
+     *
+     * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
+     * — le continue de l'extension et le return du plafond sont les
+     * DEUX bornes du parcours (miroir de [parcourir]).
+     */
+    @Suppress("LoopWithTooManyJumpStatements")
+    internal fun fichiersSources(exclure: Set<String> = emptySet()): List<String> {
+        val resultat = mutableListOf<String>()
+        for (racine in racines) {
+            val fichiers = mutableListOf<File>()
+            parcourir(racine, fichiers)
+            for (fichier in fichiers) {
+                if (fichier.extension != "kt") continue
+                val uri = fichier.toURI().toString()
+                if (uri in exclure) continue
+                resultat.add(uri)
+                if (resultat.size >= BORN_FICHIERS) return resultat
+            }
+        }
+        return resultat
+    }
+
+    /**
      * Lance le scan paresseux si des racines existent et qu'aucun
      * résultat n'est disponible — SOUS le verrou (KP6 : un seul scan,
      * les autres sessions attendent et lisent ensuite le champ volatil).

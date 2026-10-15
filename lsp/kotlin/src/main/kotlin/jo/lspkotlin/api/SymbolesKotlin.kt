@@ -203,3 +203,45 @@ public enum class GenreSymboleKotlin {
     /** Alias de type. */
     ALIAS,
 }
+
+/** Genre d'un surlignage d'occurrence (→ DocumentHighlightKind LSP). */
+public enum class GenreSurlignageKotlin {
+    /** LECTURE du symbole (référence — DocumentHighlightKind.Read). */
+    LECTURE,
+
+    /** ÉCRITURE du symbole (nom déclaré — DocumentHighlightKind.Write). */
+    ECRITURE,
+}
+
+/**
+ * Surlignage d'une occurrence du symbole au curseur
+ * (`textDocument/documentHighlight`, S2 — plan de stabilisation LSP
+ * §3.2) — décalages dans le texte du document COURANT.
+ *
+ * @property debut décalage de début de l'occurrence (inclus).
+ * @property fin décalage de fin de l'occurrence (exclusif).
+ * @property genre nature de l'occurrence (lecture / écriture) —
+ *           traduit en DocumentHighlightKind côté hôte.
+ */
+public data class PlageSurligneeKotlin(
+    public val debut: Int,
+    public val fin: Int,
+    public val genre: GenreSurlignageKotlin,
+)
+
+/**
+ * Plage renommable (`textDocument/prepareRename`, S2 — miroir du
+ * « rename honnête » du LSP Java) : le nom déclaré visé, avec le
+ * placeholder EXACT (le nom courant — la boîte de dialogue s'ouvre
+ * pré-remplie, jamais devinée).
+ *
+ * @property debut décalage de début du nom (inclus).
+ * @property fin décalage de fin du nom (exclusif).
+ * @property placeholder nom courant du symbole (texte exact de la
+ *           plage — le critère S0-b côté Java).
+ */
+public data class PlageRenommableKotlin(
+    public val debut: Int,
+    public val fin: Int,
+    public val placeholder: String,
+)

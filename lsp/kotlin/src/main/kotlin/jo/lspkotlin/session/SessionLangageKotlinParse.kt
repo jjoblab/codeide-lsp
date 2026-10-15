@@ -6,6 +6,8 @@ import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.PlagePliableKotlin
+import jo.lspkotlin.api.PlageRenommableKotlin
+import jo.lspkotlin.api.PlageSurligneeKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SymboleDocumentKotlin
@@ -14,6 +16,7 @@ import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
 import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
+import jo.lspkotlin.parse.NoeudSyntaxique
 import jo.lspkotlin.parse.ParseurKotlin
 import jo.lspkotlin.parse.kt.KtFile
 import jo.lspkotlin.plis.PlisDocumentKotlin
@@ -21,6 +24,7 @@ import jo.lspkotlin.resolve.CandidatsImport
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.InterrogationsSymboles
+import jo.lspkotlin.resolve.OccurrencesKotlin
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SignaturesAppels
 import jo.lspkotlin.resolve.SymbolesProjet
@@ -273,6 +277,90 @@ internal class SessionLangageKotlinParse(
             )
         }
 
+    /**
+     * Références (S2) — cible résolue par la chaîne des définitions,
+     * occurrences prouvées fichier par fichier par [OccurrencesKotlin]
+     * (document courant d'abord, autres fichiers ensuite).
+     */
+    override fun references(
+        uri: String,
+        decalage: Int,
+        inclureDeclaration: Boolean,
+    ): List<EmplacementKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val cible = cibleAuCurseur(document, uri, decalage) ?: return emptyList()
+            val resultat = mutableListOf<EmplacementKotlin>()
+            if (inclureDeclaration) {
+                resultat.add(EmplacementKotlin(cible.uri, cible.debutNom, cible.finNom))
+            }
+            for ((uriFichier, occurrences) in occurrencesParFichier(document, uri, cible)) {
+                for (occurrence in occurrences) {
+                    // La déclaration vit DÉJÀ en tête (inclureDeclaration)
+                    // ou n'est PAS demandée — dans les deux cas, la liste
+                    // des occurrences ne la répète jamais.
+                    if (occurrence.estDeclaration) continue
+                    resultat.add(EmplacementKotlin(uriFichier, occurrence.debut, occurrence.fin))
+                }
+            }
+            resultat
+        }
+
+    /**
+     * Surlignages (S2) — occurrences du document COURANT seul, la
+     * déclaration en écriture, les références en lecture.
+     */
+    override fun surlignagesDocument(uri: String, decalage: Int): List<PlageSurligneeKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val cible = cibleAuCurseur(document, uri, decalage) ?: return emptyList()
+            val contexteNom = contexteNomDe(document, uri)
+            OccurrencesKotlin.surlignages(
+                document.arbre.racine,
+                uri,
+                cible,
+                OccurrencesKotlin.ContexteFichier(
+                    contexteNom,
+                    declarationsProjet(document, uri, contexteNom.paquet),
+                ),
+                resolution,
+            )
+        }
+
+    /** Plage renommable (S2) — miroir du prepareRename honnête Java. */
+    override fun plageRenommable(uri: String, decalage: Int): PlageRenommableKotlin? =
+        synchronized(verrou) {
+            if (fermee) return null
+            val document = documents[uri] ?: return null
+            OccurrencesKotlin.plageRenommable(
+                document.arbre.racine,
+                decalage,
+                uri,
+                contexteInterrogations(document, uri),
+            )
+        }
+
+    /**
+     * Occurrences à renommer (S2) — déclaration TOUJOURS incluse
+     * (le rename la remplace comme les usages) ; les occurrences
+     * reviennent ordonnées par fichier (document déclarant d'abord).
+     */
+    override fun renommage(uri: String, decalage: Int): List<EmplacementKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val cible = cibleAuCurseur(document, uri, decalage) ?: return emptyList()
+            val resultat = mutableListOf<EmplacementKotlin>()
+            for ((uriFichier, occurrences) in occurrencesParFichier(document, uri, cible)) {
+                for (occurrence in occurrences) {
+                    resultat.add(EmplacementKotlin(uriFichier, occurrence.debut, occurrence.fin))
+                }
+            }
+            resultat
+        }
+
     override fun close() {
         synchronized(verrou) {
             fermee = true
@@ -316,20 +404,157 @@ internal class SessionLangageKotlinParse(
         )
     }
 
+    // ── Occurrences S2 (references / documentHighlight / rename) ────────
+
+    /** Cible du symbole au curseur (miroir de la chaîne des définitions). */
+    private fun cibleAuCurseur(
+        document: DocumentOuvert,
+        uri: String,
+        decalage: Int,
+    ): OccurrencesKotlin.Cible? =
+        OccurrencesKotlin.cibleAuCurseur(document.arbre.racine, decalage, uri, contexteInterrogations(document, uri))
+
+    /**
+     * Occurrences de la cible PAR FICHIER : document courant (arbre
+     * frais) d'abord, autres documents ouverts ensuite, fichiers fermés
+     * des racines en marche finale (pré-filtre textuel — un fichier qui
+     * ne porte pas le nom n'est pas parsé).
+     */
+    private fun occurrencesParFichier(
+        document: DocumentOuvert,
+        uri: String,
+        cible: OccurrencesKotlin.Cible,
+    ): Map<String, List<OccurrencesKotlin.Occurrence>> {
+        val resultat = LinkedHashMap<String, List<OccurrencesKotlin.Occurrence>>()
+        val contexteNom = contexteNomDe(document, uri)
+        resultat[uri] =
+            OccurrencesKotlin.occurrencesDansArbre(
+                document.arbre.racine,
+                uri,
+                cible,
+                OccurrencesKotlin.ContexteFichier(
+                    contexteNom,
+                    declarationsProjet(document, uri, contexteNom.paquet),
+                ),
+                resolution,
+            )
+        for (fichier in balayerAutresFichiers(uri, cible.nom)) {
+            resultat[fichier.uri] =
+                OccurrencesKotlin.occurrencesDansArbre(
+                    fichier.arbre.racine,
+                    fichier.uri,
+                    cible,
+                    fichier.contexte,
+                    resolution,
+                )
+        }
+        return resultat
+    }
+
+    /** Fichier balayé : URI + arbre + contexte prêt pour les preuves. */
+    private class FichierBalaye(
+        val uri: String,
+        val arbre: ArbreSyntaxiqueKotlin,
+        val contexte: OccurrencesKotlin.ContexteFichier,
+    )
+
+    /**
+     * Balayage des AUTRES fichiers du projet : documents ouverts (arbres
+     * vivants, le disque serait périmé) puis fichiers fermés des racines
+     * (re-parsés à la demande, bornés par le plafond du scan). Un
+     * fichier illisible est ABSENT (partiel honnête D3).
+     *
+     * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
+     * — les continue des DEUX tolérances (illisible, inanalysable) et
+     * SwallowedException — l'exception EST le signal du sous-rapport
+     * D3 (miroir exact de ScanProjet.scanner).
+     */
+    @Suppress("LoopWithTooManyJumpStatements", "SwallowedException")
+    private fun balayerAutresFichiers(
+        uriCourant: String,
+        nom: String,
+    ): List<FichierBalaye> {
+        val resultat = mutableListOf<FichierBalaye>()
+        val autresOuverts = documents.filterKeys { cle -> cle != uriCourant }
+        for ((uri, document) in autresOuverts) {
+            if (!document.texte.contains(nom)) continue
+            val paquet = KtFile(document.arbre.racine).directivePackage()?.nomQualifie()
+            val declarations =
+                scanProjet.declarations(exclureUri = uri) +
+                    SymbolesProjet.declarations(document.arbre.racine, uri, paquet)
+            resultat.add(
+                FichierBalaye(
+                    uri,
+                    document.arbre,
+                    OccurrencesKotlin.ContexteFichier(
+                        contexteNomPourArbre(document.arbre.racine, declarations),
+                        declarations,
+                    ),
+                ),
+            )
+        }
+        val couverts = autresOuverts.keys + uriCourant
+        for (uri in scanProjet.fichiersSources(exclure = couverts)) {
+            val texte =
+                try {
+                    File(java.net.URI(uri)).readText()
+                } catch (t: Throwable) {
+                    continue // illisible : absent (D3)
+                }
+            if (!texte.contains(nom)) continue
+            val arbre =
+                try {
+                    parseur.analyser(texte, script = false)
+                } catch (t: Throwable) {
+                    continue // inanalysable : absent (D3)
+                }
+            val declarations = scanProjet.declarations()
+            resultat.add(
+                FichierBalaye(
+                    uri,
+                    arbre,
+                    OccurrencesKotlin.ContexteFichier(
+                        contexteNomPourArbre(arbre.racine, declarations),
+                        declarations,
+                    ),
+                ),
+            )
+        }
+        return resultat
+    }
+
     /**
      * Contexte de NOMMAGE du document : paquet, imports (noms effectifs
      * → FQCN, jokers → paquets), classes du projet (FQCN → FQCN).
- *
+     */
+    private fun contexteNomDe(
+        document: DocumentOuvert,
+        uri: String,
+    ): ResolutionKotlin.ContexteNom {
+        val paquet = KtFile(document.arbre.racine).directivePackage()?.nomQualifie()
+        val reelles = scanProjet.declarations() + declarationsDocument(document, uri, paquet)
+        return contexteNomPourArbre(document.arbre.racine, reelles + synthetiquesCoupees(reelles))
+    }
+
+    /**
+     * Contexte de nommage d'un ARBRE QUELCONQUE (document courant ou
+     * fichier balayé par les occurrences S2) : paquet + imports lus
+     * depuis l'arbre, classes du projet fournies par l'appelant
+     * (top-level CLASSE/INTERFACE seulement, FQCN → FQCN — lookups
+     * « paquet.nom » de fqcnDuNomEcrit ; K5 multi-langue : les types
+     * JAVA du scan sont dedans, la bascule Java↔Kotlin résout sans
+     * frontière).
+     *
      * Exemption detekt ciblée (règle 16) : CyclomaticComplexMethod — le
      * when des DIRECTIVES d'import (joker/alias/plein) est le catalogue
      * des trois formes Kotlin, chaque branche est une ISSUE.
      */
     @Suppress("CyclomaticComplexMethod", "LoopWithTooManyJumpStatements")
-    private fun contexteNomDe(
-        document: DocumentOuvert,
-        uri: String,
+    private fun contexteNomPourArbre(
+        racine: NoeudSyntaxique,
+        classesSources: List<DeclarationProjet>,
     ): ResolutionKotlin.ContexteNom {
-        val fichier = KtFile(document.arbre.racine)
+        val fichier = KtFile(racine)
         val paquet = fichier.directivePackage()?.nomQualifie()
         val importsParNom = HashMap<String, String>()
         val importsJoker = mutableListOf<String>()
@@ -344,29 +569,15 @@ internal class SessionLangageKotlinParse(
                 importsParNom[nomEffectif] = nomQualifie
             }
         }
-        // Classes de premier niveau du projet (clé FQCN, lookups
-        // « paquet.nom » de fqcnDuNomEcrit) — classes ET interfaces
-        // (correctif K4 : la double garde K3 `!= CLASSE` suivie de
-        // `!= INTERFACE` rejetait TOUT, classesProjet restait vide).
-        // K5 multi-langue : les types JAVA du scan sont dedans — la
-        // bascule Java↔Kotlin résout sans frontière.
+        // Classes de premier niveau du projet (clé FQCN — correctif K4 :
+        // la double garde K3 `!= CLASSE` suivie de `!= INTERFACE`
+        // rejetait TOUT, classesProjet restait vide).
         val classesProjet = HashMap<String, String>()
-        val reelles = scanProjet.declarations() + declarationsDocument(document, uri, paquet)
-        for (declaration in reelles) {
+        for (declaration in classesSources) {
             if (declaration.genre != GenreDeclaration.CLASSE && declaration.genre != GenreDeclaration.INTERFACE) {
                 continue
             }
             if (declaration.conteneur != null) continue
-            val fqcn = (declaration.paquet?.let { "$it." } ?: "") + declaration.nom
-            classesProjet[fqcn] = fqcn
-        }
-        // K5 : classes SYNTHÉTIQUES de premier niveau (R, BuildConfig,
-        // bindings) — même coupure que les déclarations.
-        for (declaration in synthetiquesCoupees(reelles)) {
-            if (declaration.conteneur != null) continue
-            if (declaration.genre != GenreDeclaration.CLASSE && declaration.genre != GenreDeclaration.INTERFACE) {
-                continue
-            }
             val fqcn = (declaration.paquet?.let { "$it." } ?: "") + declaration.nom
             classesProjet[fqcn] = fqcn
         }

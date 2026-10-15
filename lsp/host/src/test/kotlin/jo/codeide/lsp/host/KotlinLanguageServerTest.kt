@@ -22,14 +22,19 @@ import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
+import org.eclipse.lsp4j.DocumentHighlightKind
+import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.PrepareRenameParams
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.ReferenceParams
+import org.eclipse.lsp4j.RenameParams
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent
@@ -500,6 +505,191 @@ class KotlinLanguageServerTest {
         espace.fermer()
     }
 
+    // ── S2 — occurrences : references / documentHighlight / rename ─────
+
+    @Test
+    fun `capacités S2 - references, documentHighlight et rename+prepare déclarés`() {
+        val espace = espaceAvecEspion()
+        val resultat = espace.serveur.initialize(InitializeParams()).join()
+        assertEquals(true, resultat.capabilities.referencesProvider.left)
+        assertEquals(true, resultat.capabilities.documentHighlightProvider.left)
+        val renommage = resultat.capabilities.renameProvider
+        assertTrue(renommage.isRight, "rename annoncé en OPTIONS (prepareProvider)")
+        assertEquals(true, renommage.right?.prepareProvider, "prepareRename annoncé (miroir S0-b Java)")
+        espace.fermer()
+    }
+
+    @Test
+    fun `references - emplacements neutres traduits en Locations LSP`() {
+        val fichierTiers = dossierTemp.resolve("tiers.kt")
+        fichierTiers.writeText("val autre = 1\n")
+        val uriTiers = fichierTiers.toURI().toString()
+        val session =
+            SessionScriptee(
+                referencesRetournees =
+                    listOf(
+                        EmplacementKotlin("file:///a.kt", 10, 16),
+                        EmplacementKotlin(uriTiers, 4, 9),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        val texte = "val reference = 1\n"
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, texte)),
+        )
+        val references =
+            serveur.textDocumentService
+                .references(
+                    ReferenceParams(
+                        TextDocumentIdentifier("file:///a.kt"),
+                        Position(0, 5),
+                        org.eclipse.lsp4j.ReferenceContext(false),
+                    ),
+                ).join()
+        assertEquals(2, references.size)
+        assertEquals("file:///a.kt", references[0].uri)
+        assertEquals(0, references[0].range.start.line)
+        assertEquals(10, references[0].range.start.character)
+        // Fichier tiers : lu sur disque pour la conversion UTF-16.
+        assertEquals(uriTiers, references[1].uri)
+        assertEquals(4, references[1].range.start.character)
+        // Le drapeau du client voyage (includeDeclaration=false ici).
+        assertEquals(false, session.dernierIncludeDeclaration)
+        session.close()
+    }
+
+    @Test
+    fun `documentHighlight - genres Read et Write traduits, plages UTF-16`() {
+        val session =
+            SessionScriptee(
+                surlignagesRetournes =
+                    listOf(
+                        jo.lspkotlin.api.PlageSurligneeKotlin(0, 4, jo.lspkotlin.api.GenreSurlignageKotlin.ECRITURE),
+                        jo.lspkotlin.api.PlageSurligneeKotlin(12, 16, jo.lspkotlin.api.GenreSurlignageKotlin.LECTURE),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val nom = nom.uppercase()\n")),
+        )
+        val surlignages =
+            serveur.textDocumentService
+                .documentHighlight(
+                    DocumentHighlightParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 5)),
+                ).join()
+        assertEquals(2, surlignages.size)
+        assertEquals(DocumentHighlightKind.Write, surlignages[0].kind)
+        assertEquals(0, surlignages[0].range.start.character)
+        assertEquals(DocumentHighlightKind.Read, surlignages[1].kind)
+        assertEquals(12, surlignages[1].range.start.character)
+        session.close()
+    }
+
+    @Test
+    fun `prepareRename - plage exacte + placeholder (Either3 second)`() {
+        val session =
+            SessionScriptee(plageRenommableRetournee = jo.lspkotlin.api.PlageRenommableKotlin(6, 10, "demo"))
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "fun demo() {}\n")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .prepareRename(
+                    PrepareRenameParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 8)),
+                ).join()
+        assertTrue(reponse.isSecond, "forme PLACEHOLDER (miroir S0-b : nom exact prérempli)")
+        assertEquals("demo", reponse.second.placeholder)
+        assertEquals(6, reponse.second.range.start.character)
+        assertEquals(10, reponse.second.range.end.character)
+        session.close()
+    }
+
+    @Test
+    fun `rename - WorkspaceEdit changes groupé par fichier (forme legacy)`() {
+        val fichierTiers = dossierTemp.resolve("tiers.kt")
+        fichierTiers.writeText("val ancienne = 1\n")
+        val uriTiers = fichierTiers.toURI().toString()
+        val session =
+            SessionScriptee(
+                renommageRetourne =
+                    listOf(
+                        EmplacementKotlin("file:///a.kt", 4, 12),
+                        EmplacementKotlin(uriTiers, 4, 12),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val ancienne = 1\n")),
+        )
+        val edition =
+            serveur.textDocumentService
+                .rename(
+                    RenameParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 6), "nouvelle"),
+                ).join()
+        // Forme legacy `changes` (le client cel-lsp ne déclare PAS
+        // documentChanges — vérifié par décompilation, lot S0-b).
+        val changes = edition.changes
+        assertEquals(2, changes.size)
+        assertEquals("nouvelle", changes["file:///a.kt"]?.single()?.newText)
+        assertEquals(
+            0,
+            changes["file:///a.kt"]
+                ?.single()
+                ?.range
+                ?.start
+                ?.line,
+        )
+        assertEquals(
+            4,
+            changes["file:///a.kt"]
+                ?.single()
+                ?.range
+                ?.start
+                ?.character,
+        )
+        // Le fichier tiers sur disque : sa PROPRE plage traduite sur son
+        // contenu (identique ici, mais la lecture disque est passée).
+        assertEquals("nouvelle", changes[uriTiers]?.single()?.newText)
+        session.close()
+    }
+
+    @Test
+    fun `rename - sans cible, erreur typée RequestFailed avec data sansCible`() {
+        val session = SessionScriptee(renommageRetourne = emptyList())
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val x = 1\n")),
+        )
+        val erreur =
+            org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.CompletionException::class.java) {
+                serveur.textDocumentService
+                    .rename(
+                        RenameParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 6), "y"),
+                    ).join()
+            }
+        val cause = erreur.cause as org.eclipse.lsp4j.jsonrpc.ResponseErrorException
+        assertEquals(-32803, cause.responseError.code, "RequestFailed (miroir I8 Java)")
+        assertEquals(
+            "renommage.sansCible",
+            (cause.responseError.data as Map<*, *>)["code"],
+        )
+        session.close()
+    }
+
+    @Test
+    fun `documentHighlight - document inconnu, liste vide sans exception`() {
+        val session = SessionScriptee()
+        val serveur = KotlinLanguageServer(session, "version-test")
+        val surlignages =
+            serveur.textDocumentService
+                .documentHighlight(
+                    DocumentHighlightParams(TextDocumentIdentifier("file:///inconnu.kt"), Position(0, 0)),
+                ).join()
+        assertTrue(surlignages.isEmpty())
+        session.close()
+    }
+
     @Test
     fun `survol riche - KDoc attachée, markdown avec bloc de code`() {
         val session =
@@ -933,8 +1123,16 @@ class KotlinLanguageServerTest {
         private val leverSurDefinitions: Boolean = false,
         private val signatures: AideSignatureKotlin? = null,
         private val leverSurSignature: Boolean = false,
+        private val referencesRetournees: List<EmplacementKotlin> = emptyList(),
+        private val surlignagesRetournes: List<jo.lspkotlin.api.PlageSurligneeKotlin> = emptyList(),
+        private val plageRenommableRetournee: jo.lspkotlin.api.PlageRenommableKotlin? = null,
+        private val renommageRetourne: List<EmplacementKotlin> = emptyList(),
     ) : SessionLangageKotlin {
         public var fermee: Boolean = false
+            private set
+
+        /** Dernier drapeau includeDeclaration reçu (assertion transport). */
+        public var dernierIncludeDeclaration: Boolean? = null
             private set
 
         /** Dernier texte poussé par modifierDocument (assertion par plage). */
@@ -1013,6 +1211,30 @@ class KotlinLanguageServerTest {
             check(!leverSurSignature) { "signature scriptée en échec" }
             return signatures
         }
+
+        override fun references(
+            uri: String,
+            decalage: Int,
+            inclureDeclaration: Boolean,
+        ): List<EmplacementKotlin> {
+            dernierIncludeDeclaration = inclureDeclaration
+            return referencesRetournees
+        }
+
+        override fun surlignagesDocument(
+            uri: String,
+            decalage: Int,
+        ): List<jo.lspkotlin.api.PlageSurligneeKotlin> = surlignagesRetournes
+
+        override fun plageRenommable(
+            uri: String,
+            decalage: Int,
+        ): jo.lspkotlin.api.PlageRenommableKotlin? = plageRenommableRetournee
+
+        override fun renommage(
+            uri: String,
+            decalage: Int,
+        ): List<EmplacementKotlin> = renommageRetourne
 
         override fun close() {
             fermee = true

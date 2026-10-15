@@ -221,6 +221,75 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun signature(uri: String, decalage: Int): AideSignatureKotlin? = null
 
     /**
+     * Références du symbole visé à [decalage] (`textDocument/references`,
+     * S2 — plan de stabilisation LSP §3.2) : les USAGES du symbole dans
+     * les sources du projet (documents ouverts + fichiers des racines),
+     * résolus CONSERVATEURMENT (D3 : une référence non prouvée n'est pas
+     * rendue — les homonymes sans preuve de résolution restent hors
+     * liste). Locales/paramètres : fichier déclarant seul (comme le
+     * rename Java). Cibles classpath : liste vide (pas de source).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @param inclureDeclaration vrai pour ajouter l'emplacement du NOM
+     *        déclaré en tête (miroir de `ReferenceContext.includeDeclaration`).
+     * @return les emplacements (références, puis déclaration si
+     *         demandée) ; liste VIDE sans cible prouvée ou document
+     *         inconnu/fermé.
+     */
+    public fun references(
+        uri: String,
+        decalage: Int,
+        inclureDeclaration: Boolean = false,
+    ): List<EmplacementKotlin> = emptyList()
+
+    /**
+     * Surlignages du symbole visé à [decalage]
+     * (`textDocument/documentHighlight`, S2) : TOUTES les occurrences du
+     * symbole dans le document COURANT (déclaration en ÉCRITURE,
+     * références en LECTURE — homonymes exclus, même preuve que
+     * [references]). Affordance éditeur tactile : la sélection met en
+     * évidence les usages.
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return les occurrences en ordre du document ; liste VIDE sans
+     *         cible prouvée ou document inconnu/fermé.
+     */
+    public fun surlignagesDocument(uri: String, decalage: Int): List<PlageSurligneeKotlin> = emptyList()
+
+    /**
+     * Plage renommable (`textDocument/prepareRename`, S2 — miroir du
+     * « rename honnête » Java) : le NOM visé avec son placeholder EXACT,
+     * ou `null` si rien n'est renommable au curseur (cible classpath,
+     * curseur hors identifiant — la boîte de dialogue client refuse
+     * proprement, jamais une plage devinée).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return la plage du nom + le nom courant, `null` si non renommable
+     *         ou document inconnu/fermé.
+     */
+    public fun plageRenommable(uri: String, decalage: Int): PlageRenommableKotlin? = null
+
+    /**
+     * Occurrences À RENOMMER (`textDocument/rename`, S2) : le nom déclaré
+     * + chaque référence PROUVÉE du symbole dans les sources du projet
+     * (miroir borné du rename Java — les occurrences reviennent en
+     * offsets, l'hôte compose le `WorkspaceEdit` avec le nouveau nom).
+     *
+     * Conservateur (D3) : cible absente/non prouvée → liste VIDE (l'hôte
+     * la traduit en erreur typée, JAMAIS en édition vide silencieuse —
+     * leçon I8 du LSP Java).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return les occurrences (déclaration incluse, ordonnées par
+     *         fichier) ; liste VIDE sans cible renommable.
+     */
+    public fun renommage(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document. Idempotente — un appel après close est
      * sans effet, pas une erreur.

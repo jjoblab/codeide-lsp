@@ -291,7 +291,7 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
      * (référence trouvée, nom déclaré trouvé, rien) est une ISSUE.
      */
     @Suppress("ReturnCount", "CyclomaticComplexMethod", "LoopWithTooManyJumpStatements")
-    private fun identifiantA(
+    internal fun identifiantA(
         racine: NoeudSyntaxique,
         decalage: Int,
     ): JetonSyntaxique? {
