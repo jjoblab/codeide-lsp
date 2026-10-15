@@ -1310,7 +1310,8 @@ est couvert par SessionLspTest h1) ; `ActionEditor.Reindexer` →
 **L'activité** (`EditorActivity`) : `CoordonnateurLsp` (interne — le
 LspProject cel-lsp créé UNE fois par session avec
 `session.definition()`, le `LspEditor` de l'onglet actif
-`createEditor("file://…")` + `setEditorView(EditorView)` +
+`createEditor("file://…")` + `setHost(LspEditorViewHost(EditorView))`
+(depuis code-editor 3.71.0, plan 03 — avant : `setEditorView`) +
 `setCurrentFilePath` + `connect()` asynchrone, déconnexion au changement
 d'onglet, `shutdown()` à la destruction — miroir MINCE du LspCoordinator
 de l'ancienne app, UN langage) ; branchement ASYNCHRONE après le rendu

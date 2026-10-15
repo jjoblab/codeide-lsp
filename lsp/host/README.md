@@ -39,5 +39,7 @@ possible, cf. LSP_JAVA.md §16.
 ## Branchement éditeur (h2)
 
 `LspProject(racine)` + `project.addServerDefinition(session.definition())`
-+ `project.createEditor(fichier)` → `LspEditor.setEditorView(EditorView)`
++ `project.createEditor(fichier)` → `LspEditor.setHost(LspEditorViewHost(EditorView))`
+(depuis code-editor 3.71.0, plan 03 — l'adaptateur cel-ui implémente le
+contrat `EditorHost` de `cel-lsp-api` ; `setEditorView` n'existe plus)
 → `connect()` — cf. LSP_JAVA.md §16.
