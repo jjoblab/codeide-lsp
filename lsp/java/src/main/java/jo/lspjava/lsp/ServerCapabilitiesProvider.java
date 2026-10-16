@@ -13,9 +13,13 @@ import java.util.List;
  * services (aujourd'hui : la forme versionnée {@code documentChanges} du
  * renommage — I8). Contrepartie honnête (I1, quick-win) : {@code
  * createCapabilities()} ne consulte PAS les capabilities pour désactiver
- * des providers — le client réel (cel-lsp in-process) consomme tout ce
- * que le serveur annonce ; toute future négociation « provider à la
- * demande » partira d'ici.</p>
+ * des providers. État de la consommation client (v0.134.19) : cel-lsp
+ * consomme les providers qu'il connaît (complétion, hover, définitions,
+ * occurrences, références, renommage, formatage, folding, hints,
+ * sémantique, signature, symboles) ; les capacités S2-b
+ * ({@code selectionRange}, {@code onTypeFormatting}, {@code codeLens},
+ * hiérarchies call/type) sont annoncées pour les clients LSP tiers — cel
+ * n'a pas (encore) d'UI pour elles, aucune n'est déclenchée in-process.</p>
  *
  * <p>{@code codeActionProvider} annonce explicitement les
  * {@code codeActionKinds} supportés ({@code quickfix}, {@code refactor},
@@ -119,6 +123,27 @@ public final class ServerCapabilitiesProvider {
         // workspace/symbol (S1-c) : recherche de types à l'échelle de
         // l'espace (index jars + sources + jrt — substrat de complétion).
         caps.setWorkspaceSymbolProvider(true);
+
+        // ── S2-b (v0.134.19) : confort structurel restant ────────────
+        // selectionRange : chaîne des nœuds AST englobant chaque position
+        // (expansion progressive de la sélection, Alt+Shift+Up des IDE).
+        caps.setSelectionRangeProvider(true);
+        // onTypeFormatting : reformatage de la construction VENANT d'être
+        // fermée — '}' ferme un bloc/corps de type, ';' termine une
+        // déclaration. Le premier déclencheur est obligatoire en LSP.
+        org.eclipse.lsp4j.DocumentOnTypeFormattingOptions onTypeOpts =
+                new org.eclipse.lsp4j.DocumentOnTypeFormattingOptions("}",
+                        List.of(";"));
+        caps.setDocumentOnTypeFormattingProvider(onTypeOpts);
+        // codeLens « références » : une lens par déclaration porteuse,
+        // comptage paresseux (codeLens/resolve — substrat renommage).
+        org.eclipse.lsp4j.CodeLensOptions codeLensOpts =
+                new org.eclipse.lsp4j.CodeLensOptions(true);
+        caps.setCodeLensProvider(codeLensOpts);
+        // Hiérarchies d'appels et de types (substrat findSuper /
+        // findImplementations — localisation SOURCE uniquement, D3).
+        caps.setCallHierarchyProvider(true);
+        caps.setTypeHierarchyProvider(true);
 
         // Signature help — déclenché par "(" et ","
         org.eclipse.lsp4j.SignatureHelpOptions sigOptions = new org.eclipse.lsp4j.SignatureHelpOptions();

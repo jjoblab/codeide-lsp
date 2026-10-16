@@ -765,4 +765,537 @@ public final class EcjNavigationEngine {
         if (fqn == null || fqn.isEmpty()) return "";
         return fqn.substring(fqn.lastIndexOf('.') + 1);
     }
+
+    // ════════════════════════════════════════════════════════════════
+    // Hiérarchies type / appel (lot S2-b)
+    // ════════════════════════════════════════════════════════════════
+
+    /** Une déclaration localisée dans les sources — l'élément de
+     *  hiérarchie (type ou méthode) : fichier, FQN, nom simple, plage du
+     *  jeton NOM et plage de la DÉCLARATION COMPLÈTE. */
+    public record CibleHierarchie(String chemin, String fqn, String nom,
+                                  int nomDebut, int nomFin,
+                                  int declDebut, int declFin) {}
+
+    /** Une méthode appelante ou appelée : sa déclaration localisée + les
+     *  plages des sites d'appel dans son corps (vides pour une préparation
+     *  d'élément, [start, end) par site pour un appel entrant/sortant). */
+    public record CibleAppel(String chemin, String nomMethode,
+                             String classeProprietaire,
+                             int nomDebut, int nomFin,
+                             int declDebut, int declFin,
+                             List<int[]> sites) {}
+
+    /** Cap des appels entrants collectés (éviter un résultat géant). */
+    static final int MAX_APPELS = 256;
+
+    /**
+     * L'ÉLÉMENT de hiérarchie de TYPES au caret : le type référencé ou
+     * déclaré sous l'offset, localisé dans les sources du projet.
+     *
+     * @return l'élément, ou null (pas de type au caret, type binaire du
+     *         classpath — D3 : jamais d'URI factice, l'appelant rend null)
+     */
+    public CibleHierarchie typeHierarchieAu(String filePath, String source,
+                                            int offset, Map<String, String> overlay) {
+        if (EcjCompilerEngine.DISABLED) return null;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            TypeBinding t = ctx.contextType();
+            if (!(t instanceof ReferenceBinding rb)) return null;
+            String fqn = String.valueOf(rb.readableName());
+            SourceDecl decl = locateTypeDeclaration(fqn,
+                    overlay == null ? Map.of() : overlay);
+            if (decl == null) return null; // binaire — jamais d'URI factice
+            return cibleType(decl, fqn);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Les supertypes DIRECTS du type au caret (superclasse + interfaces),
+     * localisés dans les sources — les supertypes binaires sont écartés
+     * (même discipline D3 que {@code findSuper}).
+     */
+    public List<CibleHierarchie> supertypesHierarchie(String filePath, String source,
+                                                      int offset, Map<String, String> overlay) {
+        List<CibleHierarchie> out = new ArrayList<>();
+        if (EcjCompilerEngine.DISABLED) return out;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            TypeBinding t = ctx.contextType();
+            if (!(t instanceof ReferenceBinding rb)) return out;
+            Map<String, String> ov = overlay == null ? Map.of() : overlay;
+            for (ReferenceBinding sup : directSupertypes(rb)) {
+                String fqn = String.valueOf(sup.readableName());
+                SourceDecl decl = locateTypeDeclaration(fqn, ov);
+                if (decl == null) continue;
+                CibleHierarchie c = cibleType(decl, fqn);
+                if (c != null) out.add(c);
+            }
+        } catch (Throwable ignored) {
+            // Hiérarchie non résolue — liste partielle.
+        }
+        return out;
+    }
+
+    /**
+     * Les héritiers DIRECTS du type au caret (même sémantique que
+     * {@code findImplementations} : superclass ou interface DIRECTE
+     * résolvant vers la cible), localisés dans les sources.
+     */
+    public List<CibleHierarchie> sousTypesHierarchie(String filePath, String source,
+                                                     int offset, Map<String, String> overlay) {
+        List<CibleHierarchie> out = new ArrayList<>();
+        if (EcjCompilerEngine.DISABLED) return out;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            TypeBinding target = ctx.contextType();
+            if (!(target instanceof ReferenceBinding rb)) return out;
+            String targetFqn = String.valueOf(rb.readableName());
+            if (targetFqn.isEmpty() || targetFqn.contains("<")) return out;
+
+            Map<String, String> ov = overlay == null ? Map.of() : overlay;
+            Set<String> seen = new HashSet<>();
+            long deadline = System.currentTimeMillis() + WALK_BUDGET_MS;
+            int[] resolved = {0};
+            for (Path file : candidateFiles(filePath)) {
+                if (resolved[0] >= MAX_WALK_FILES) break;
+                if (System.currentTimeMillis() > deadline) break;
+                String abs = file.toAbsolutePath().toString();
+                String content = contentOf(abs, filePath, source, ov);
+                if (content == null) continue;
+                resolved[0]++;
+                collecteSousTypesCible(abs, content, rb, targetFqn, out, seen);
+            }
+        } catch (Throwable ignored) {
+            // Balayage interrompu — liste partielle.
+        }
+        return out;
+    }
+
+    /** Scan d'UNE unité pour {@code sousTypesHierarchie} (miroir
+     *  {@code collectDirectSubtypes} — la version API CibleHierarchie). */
+    private void collecteSousTypesCible(String abs, String content,
+                                        ReferenceBinding target, String targetFqn,
+                                        List<CibleHierarchie> out, Set<String> seen) {
+        try {
+            CompilationUnitDeclaration cud = engine.resolveUnit(abs, content, false);
+            if (cud == null) return;
+            List<TypeDeclaration> types = new ArrayList<>();
+            EcjAst.traverseResilient(cud, typeCollector(types));
+            for (TypeDeclaration td : types) {
+                if (td == null || td.name == null || td.name.length == 0) continue;
+                if (td.binding == null) continue;
+                if (!extendsOrImplements(td.binding, target, targetFqn)) continue;
+                CibleHierarchie c = cibleType(
+                        new SourceDecl(abs, content, td),
+                        String.valueOf(td.binding.readableName()));
+                if (c == null) continue;
+                if (seen.add(abs + ":" + c.nomDebut())) out.add(c);
+            }
+        } catch (Throwable ignored) {
+            // Fichier pathologique — ignoré.
+        }
+    }
+
+    /** La CibleHierarchie d'un TypeDeclaration déjà résolu (nom exact). */
+    private static CibleHierarchie cibleType(SourceDecl decl, String fqn) {
+        try {
+            TypeDeclaration td = decl.type;
+            if (td.name == null || td.name.length == 0) return null;
+            int[] name = nameRange(decl.content, td.sourceStart, td.sourceEnd,
+                    String.valueOf(td.name));
+            if (name == null) return null;
+            int declDebut = td.declarationSourceStart != 0
+                    ? td.declarationSourceStart : td.sourceStart;
+            int declFin = td.declarationSourceEnd != 0
+                    ? td.declarationSourceEnd + 1 : td.sourceEnd + 1;
+            return new CibleHierarchie(decl.path, fqn, String.valueOf(td.name),
+                    name[0], name[1], declDebut, declFin);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * L'ÉLÉMENT de hiérarchie d'APPELS au caret : la méthode référencée ou
+     * déclarée sous l'offset, localisée dans les sources du projet.
+     *
+     * @return l'élément, ou null (pas de méthode au caret, déclaration
+     *         binaire — l'appelant rend null, jamais d'URI factice)
+     */
+    public CibleHierarchie methodeHierarchieAu(String filePath, String source,
+                                               int offset, Map<String, String> overlay) {
+        if (EcjCompilerEngine.DISABLED) return null;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            if (!(ctx.binding instanceof MethodBinding m)) return null;
+            return localiseMethode(m, overlay);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** La localisation SOURCE d'un MethodBinding (fichier déclarant, plage
+     *  du nom, plage de la déclaration) — null si binaire ou introuvable. */
+    private CibleHierarchie localiseMethode(MethodBinding m, Map<String, String> overlay) {
+        try {
+            if (m == null || m.selector == null || m.declaringClass == null) return null;
+            String classeFqn = String.valueOf(m.declaringClass.readableName());
+            SourceDecl decl = locateTypeDeclaration(classeFqn,
+                    overlay == null ? Map.of() : overlay);
+            if (decl == null) return null;
+            String selector = String.valueOf(m.selector);
+            int[] name = methodNameRange(decl, selector,
+                    m.parameters == null ? 0 : m.parameters.length);
+            if (name == null) return null;
+            // La déclaration complète : retrouver le AbstractMethodDeclaration
+            // correspondant dans le type déclarant (même arité d'abord).
+            AbstractMethodDeclaration elue = null;
+            if (decl.type.methods != null) {
+                for (AbstractMethodDeclaration md : decl.type.methods) {
+                    if (md == null || md.selector == null) continue;
+                    if (!selector.equals(String.valueOf(md.selector))) continue;
+                    int arite = md.arguments == null ? 0 : md.arguments.length;
+                    if (arite == (m.parameters == null ? 0 : m.parameters.length)) {
+                        elue = md;
+                        break;
+                    }
+                    if (elue == null) elue = md;
+                }
+            }
+            if (elue == null) return null;
+            int declDebut = elue.declarationSourceStart != 0
+                    ? elue.declarationSourceStart : elue.sourceStart;
+            int declFin = elue.declarationSourceEnd != 0
+                    ? elue.declarationSourceEnd + 1 : elue.sourceEnd + 1;
+            return new CibleHierarchie(decl.path, classeFqn + "." + selector,
+                    selector, name[0], name[1], declDebut, declFin);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Les appels ENTRANTS de la méthode au caret : chaque site MessageSend
+     * des sources du projet dont le binding résout EXACTEMENT vers la même
+     * déclaration (même classe déclarante, même sélecteur, mêmes
+     * paramètres — les appels transitant par un supertype ne sont PAS
+     * attribués : conservateur, jamais de faux positif). Groupés par
+     * méthode appelante (la plus intérieure contenant le site).
+     */
+    public List<CibleAppel> appelsEntrants(String filePath, String source,
+                                           int offset, Map<String, String> overlay) {
+        List<CibleAppel> out = new ArrayList<>();
+        if (EcjCompilerEngine.DISABLED) return out;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            if (!(ctx.binding instanceof MethodBinding m)) return out;
+            String cle = cleMethode(m);
+            if (cle == null) return out;
+
+            Map<String, String> ov = overlay == null ? Map.of() : overlay;
+            // Dédup des appelants : chemin + nomDebut → sites accumulés.
+            java.util.Map<String, CibleAppel> parAppelant = new java.util.LinkedHashMap<>();
+            long deadline = System.currentTimeMillis() + WALK_BUDGET_MS;
+            int[] resolved = {0};
+            for (Path file : candidateFiles(filePath)) {
+                if (resolved[0] >= MAX_WALK_FILES
+                        || parAppelant.size() >= MAX_APPELS) break;
+                if (System.currentTimeMillis() > deadline) break;
+                String abs = file.toAbsolutePath().toString();
+                String content = contentOf(abs, filePath, source, ov);
+                if (content == null) continue;
+                resolved[0]++;
+                collecteAppels(abs, content, cle, parAppelant);
+            }
+            out.addAll(parAppelant.values());
+        } catch (Throwable ignored) {
+            // Balayage interrompu — liste partielle.
+        }
+        return out;
+    }
+
+    /**
+     * Les appels SORTANTS de la méthode au caret : chaque MessageSend de
+     * son corps résolu vers une déclaration SOURCE du projet, groupé par
+     * méthode cible avec les plages des sites d'appel.
+     */
+    public List<CibleAppel> appelsSortants(String filePath, String source,
+                                           int offset, Map<String, String> overlay) {
+        List<CibleAppel> out = new ArrayList<>();
+        if (EcjCompilerEngine.DISABLED) return out;
+        try {
+            CompilationUnitDeclaration cud = engine.resolveUnit(filePath, source, false);
+            if (cud == null) return out;
+            Map<String, String> ov = overlay == null ? Map.of() : overlay;
+
+            // La méthode englobante au caret (la plus intérieure).
+            List<AbstractMethodDeclaration> methodes = new ArrayList<>();
+            EcjAst.traverseResilient(cud, methodCollector(methodes));
+            AbstractMethodDeclaration englobante = plusInterieure(methodes, offset);
+            if (englobante == null) return out;
+            int de = englobante.declarationSourceStart != 0
+                    ? englobante.declarationSourceStart : englobante.sourceStart;
+            int a = englobante.declarationSourceEnd != 0
+                    ? englobante.declarationSourceEnd : englobante.sourceEnd;
+
+            // Les sites d'appel DANS son corps, dédupliqués par cible.
+            List<MessageSend> envois = new ArrayList<>();
+            EcjAst.traverseResilient(cud, messageSendCollector(envois, de, a));
+            java.util.Map<String, List<int[]>> sitesParCle = new java.util.LinkedHashMap<>();
+            java.util.Map<String, MethodBinding> cibleParCle = new java.util.LinkedHashMap<>();
+            for (MessageSend envoi : envois) {
+                // MessageSend.binding est déjà typé MethodBinding (null si
+                // non résolu) — un pattern instanceof serait « inconditionnel »
+                // (Java 21, interdit en -source 17).
+                MethodBinding mb = envoi.binding;
+                if (mb == null || mb.declaringClass == null) continue;
+                String cle = cleMethode(mb);
+                if (cle == null) continue;
+                sitesParCle.computeIfAbsent(cle, k -> new ArrayList<>())
+                        .add(new int[]{envoi.sourceStart, envoi.sourceEnd + 1});
+                cibleParCle.putIfAbsent(cle, mb);
+            }
+            for (var entry : sitesParCle.entrySet()) {
+                CibleHierarchie cible = localiseMethode(cibleParCle.get(entry.getKey()), ov);
+                if (cible == null) continue; // binaire — jamais d'URI factice
+                // Le fqn d'une cible MÉTHODE est « classe.sélecteur » — le
+                // propriétaire = tout sauf le dernier segment (les classes
+                // imbriquées restent complètes : demo.Outer.Inner.m →
+                // demo.Outer.Inner).
+                String fqnComplet = cible.fqn();
+                String proprietaire = fqnComplet.contains(".")
+                        ? fqnComplet.substring(0, fqnComplet.lastIndexOf('.'))
+                        : fqnComplet;
+                out.add(new CibleAppel(cible.chemin(), cible.nom(), proprietaire,
+                        cible.nomDebut(), cible.nomFin(),
+                        cible.declDebut(), cible.declFin(),
+                        entry.getValue()));
+            }
+        } catch (Throwable ignored) {
+            // Balayage interrompu — liste partielle.
+        }
+        return out;
+    }
+
+    /** Scan d'UNE unité pour {@code appelsEntrants} : les sites MessageSend
+     *  résolvant vers {@code cle}, groupés par méthode appelante. */
+    private void collecteAppels(String abs, String content, String cle,
+                                java.util.Map<String, CibleAppel> parAppelant) {
+        try {
+            CompilationUnitDeclaration cud = engine.resolveUnit(abs, content, false);
+            if (cud == null) return;
+            List<AbstractMethodDeclaration> methodes = new ArrayList<>();
+            List<MessageSend> envois = new ArrayList<>();
+            EcjAst.traverseResilient(cud, methodCollector(methodes));
+            EcjAst.traverseResilient(cud, messageSendCollector(envois, -1, -1));
+            if (envois.isEmpty() || methodes.isEmpty()) return;
+            for (MessageSend envoi : envois) {
+                // MessageSend.binding est déjà typé MethodBinding (null si
+                // non résolu) — un pattern instanceof serait « inconditionnel »
+                // (Java 21, interdit en -source 17).
+                MethodBinding mb = envoi.binding;
+                if (mb == null) continue;
+                if (!cle.equals(cleMethode(mb))) continue;
+                AbstractMethodDeclaration appelante =
+                        plusInterieure(methodes, envoi.sourceStart);
+                if (appelante == null || appelante.selector == null) continue;
+                String selector = String.valueOf(appelante.selector);
+                int[] name = nameRange(content, appelante.sourceStart,
+                        appelante.bodyStart > appelante.sourceStart
+                                ? appelante.bodyStart : appelante.sourceEnd,
+                        selector);
+                if (name == null) continue;
+                String classeFqn = appelante instanceof MethodDeclaration md
+                        && md.binding != null && md.binding.declaringClass != null
+                        ? String.valueOf(md.binding.declaringClass.readableName())
+                        : "";
+                int declDebut = appelante.declarationSourceStart != 0
+                        ? appelante.declarationSourceStart : appelante.sourceStart;
+                int declFin = appelante.declarationSourceEnd != 0
+                        ? appelante.declarationSourceEnd + 1 : appelante.sourceEnd + 1;
+                String k = abs + ":" + name[0];
+                CibleAppel existante = parAppelant.get(k);
+                int[] site = {envoi.sourceStart, envoi.sourceEnd + 1};
+                if (existante == null) {
+                    parAppelant.put(k, new CibleAppel(abs, selector, classeFqn,
+                            name[0], name[1], declDebut, declFin,
+                            new ArrayList<>(List.of(site))));
+                } else if (existante.sites().size() < MAX_APPELS) {
+                    existante.sites().add(site);
+                }
+            }
+        } catch (Throwable ignored) {
+            // Fichier pathologique — ignoré.
+        }
+    }
+
+    /** La clé structurelle d'une méthode (classe déclarante, sélecteur,
+     *  paramètres érasés) — stable entre unités, null si indéterminable. */
+    private static String cleMethode(MethodBinding m) {
+        try {
+            if (m == null || m.selector == null || m.declaringClass == null) return null;
+            MethodBinding orig = m.original() != null ? m.original() : m;
+            StringBuilder sb = new StringBuilder(
+                    String.valueOf(orig.declaringClass.readableName()))
+                    .append('.').append(String.valueOf(orig.selector)).append('(');
+            if (orig.parameters != null) {
+                for (TypeBinding p : orig.parameters) {
+                    if (p == null) continue;
+                    sb.append(String.valueOf(p.erasure().readableName())).append(',');
+                }
+            }
+            return sb.append(')').toString();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** La méthode la plus intérieure CONTENANT l'offset (plage de
+     *  déclaration complète), ou null. */
+    private static AbstractMethodDeclaration plusInterieure(
+            List<AbstractMethodDeclaration> methodes, int offset) {
+        AbstractMethodDeclaration elue = null;
+        int longueur = Integer.MAX_VALUE;
+        for (AbstractMethodDeclaration md : methodes) {
+            if (md == null) continue;
+            int de = md.declarationSourceStart != 0
+                    ? md.declarationSourceStart : md.sourceStart;
+            int a = md.declarationSourceEnd != 0
+                    ? md.declarationSourceEnd : md.sourceEnd;
+            if (de > offset || a < offset) continue;
+            if (a - de < longueur) {
+                longueur = a - de;
+                elue = md;
+            }
+        }
+        return elue;
+    }
+
+    /** Visiteur collectant les déclarations de méthodes/constructeurs. */
+    private static ASTVisitor methodCollector(List<AbstractMethodDeclaration> out) {
+        return new ASTVisitor() {
+            @Override
+            public boolean visit(MethodDeclaration md, ClassScope s) {
+                out.add(md);
+                return true;
+            }
+
+            @Override
+            public boolean visit(ConstructorDeclaration cd, ClassScope s) {
+                out.add(cd);
+                return true;
+            }
+        };
+    }
+
+    /** Visiteur collectant les MessageSend DANS [de, a] (bornes -1/-1 =
+     *  tout le fichier), bindings résolus uniquement. */
+    private static ASTVisitor messageSendCollector(List<MessageSend> out,
+                                                   int de, int a) {
+        return new ASTVisitor() {
+            @Override
+            public boolean visit(MessageSend ms, BlockScope s) {
+                if (ms.binding == null) return true;
+                if (de >= 0 && (ms.sourceStart < de || ms.sourceStart > a)) {
+                    return true;
+                }
+                out.add(ms);
+                return true;
+            }
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // CodeLens (lot S2-b)
+    // ════════════════════════════════════════════════════════════════
+
+    /** Une déclaration porteuse de lens : type, méthode, constructeur ou
+     *  champ — la plage du jeton nom sert d'ancre à la résolution. */
+    public record LenseCode(String nom, String genre,
+                            int nomDebut, int nomFin) {}
+
+    /** Genres de lens. */
+    public static final String LENSE_TYPE = "type";
+    public static final String LENSE_METHODE = "methode";
+    public static final String LENSE_CONSTRUCTEUR = "constructeur";
+    public static final String LENSE_CHAMP = "champ";
+
+    /**
+     * Les déclarations du fichier porteuses d'une lens « références » :
+     * les types (tous niveaux d'imbrication), leurs méthodes et
+     * constructeurs, leurs champs. Les locales/paramètres sont écartés
+     * (pas de lens sur une variable locale).
+     */
+    public List<LenseCode> declarationsPourLenses(String filePath, String source) {
+        List<LenseCode> out = new ArrayList<>();
+        if (EcjCompilerEngine.DISABLED || source == null || source.isEmpty()) {
+            return out;
+        }
+        try {
+            CompilationUnitDeclaration cud = engine.resolveUnit(filePath, source, false);
+            if (cud == null) return out;
+            EcjAst.traverseResilient(cud, new ASTVisitor() {
+                private void nom(int from, int to, char[] name, String genre) {
+                    if (name == null || name.length == 0) return;
+                    int[] plage = nameRange(source, from, to, String.valueOf(name));
+                    if (plage != null) {
+                        out.add(new LenseCode(String.valueOf(name), genre,
+                                plage[0], plage[1]));
+                    }
+                }
+
+                @Override
+                public boolean visit(TypeDeclaration td, CompilationUnitScope s) {
+                    type(td);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(TypeDeclaration td, ClassScope s) {
+                    type(td);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(TypeDeclaration td, BlockScope s) {
+                    type(td);
+                    return true;
+                }
+
+                private void type(TypeDeclaration td) {
+                    nom(td.sourceStart, td.sourceEnd, td.name, LENSE_TYPE);
+                }
+
+                @Override
+                public boolean visit(MethodDeclaration md, ClassScope s) {
+                    if (md.bodyStart > md.sourceStart) {
+                        nom(md.sourceStart, md.bodyStart, md.selector, LENSE_METHODE);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(ConstructorDeclaration cd, ClassScope s) {
+                    if (cd.bodyStart > cd.sourceStart) {
+                        nom(cd.sourceStart, cd.bodyStart, cd.selector,
+                                LENSE_CONSTRUCTEUR);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(FieldDeclaration fd, MethodScope s) {
+                    nom(fd.sourceStart, fd.sourceEnd, fd.name, LENSE_CHAMP);
+                    return true;
+                }
+            });
+        } catch (Throwable ignored) {
+            // Unité pathologique — liste partielle (peut être vide).
+        }
+        return out;
+    }
 }

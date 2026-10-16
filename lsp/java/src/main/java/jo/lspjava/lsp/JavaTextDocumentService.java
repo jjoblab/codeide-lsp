@@ -2124,6 +2124,574 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     }
 
 
+    // ==================== S2-b : selectionRange / onTypeFormatting /
+    // ==================== codeLens / hiérarchies (v0.134.19) =========
+
+    /**
+     * {@code textDocument/selectionRange} : la chaîne des nœuds AST
+     * englobant chaque position demandée, du jeton nom le plus intérieur
+     * à l'unité de compilation — le client l'utilise pour l'expansion
+     * progressive de la sélection (Alt+Shift+Up des IDE).
+     *
+     * <p>Convention I9 : une position hors document ou une unité
+     * imparsable produit une chaîne VIDE pour cette position (la réponse
+     * garde autant d'éléments que de positions demandées — contracte
+     * LSP 3.17, {@code SelectionRange[] aligné sur positions[]}).</p>
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.SelectionRange>> selectionRange(
+            org.eclipse.lsp4j.SelectionRangeParams params) {
+        verifierLifecycle("selectionRange");
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        String filePath = uriToPath(uri);
+        List<org.eclipse.lsp4j.Position> positions = params.getPositions() == null
+                ? List.of() : params.getPositions();
+
+        return submitToScheduler(filePath, () -> {
+            var moteur = new jo.lspjava.ecj.EcjSelectionRanges(environment.jdt());
+            List<org.eclipse.lsp4j.SelectionRange> out = new ArrayList<>();
+            for (org.eclipse.lsp4j.Position p : positions) {
+                out.add(chaineSelectionLsp(moteur, filePath, source,
+                        toOffset(source, p)));
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /** La chaîne LSP d'une position : SelectionRange imbriqués (le nœud
+     *  intérieur porte {@code parent} = le nœud englobant suivant).
+     *  Le moteur rend la chaîne du plus intérieur au plus extérieur — la
+     *  construction LSP parcourt donc l'INVERSE (extérieur → intérieur) :
+     *  le résultat retourné est le nœud INTÉRIEUR, chaque {@code parent}
+     *  pointant vers le niveau englobant suivant (contracte LSP 3.17). */
+    private org.eclipse.lsp4j.SelectionRange chaineSelectionLsp(
+            jo.lspjava.ecj.EcjSelectionRanges moteur, String filePath,
+            String source, int offset) {
+        List<jo.lspjava.ecj.EcjSelectionRanges.Plage> chaines =
+                moteur.chaineSelection(filePath, source, offset);
+        org.eclipse.lsp4j.SelectionRange courant = null;
+        for (int i = chaines.size() - 1; i >= 0; i--) {
+            jo.lspjava.ecj.EcjSelectionRanges.Plage plage = chaines.get(i);
+            courant = new org.eclipse.lsp4j.SelectionRange(
+                    new Range(toPosition(source, plage.debut()),
+                            toPosition(source, plage.fin())),
+                    courant);
+        }
+        // Aucune chaîne (imparsable / hors bornes) → une plage vide sans
+        // parent : la réponse reste alignée sur les positions demandées.
+        if (courant != null) return courant;
+        int ancre = Math.max(0, Math.min(offset, Math.max(0, source.length() - 1)));
+        Position p = toPosition(source, ancre);
+        return new org.eclipse.lsp4j.SelectionRange(new Range(p, p), null);
+    }
+
+    /**
+     * {@code textDocument/onTypeFormatting} : reformater la construction
+     * qui vient d'être fermée par le caractère tapé ({@code }} ferme un
+     * bloc/corps de type — l'instruction entière est reformattée quand un
+     * {@code ;} termine une déclaration). Les éditions produites par le
+     * formateur Eclipse restent DANS la plage cible : le texte autour du
+     * caret n'est jamais déplacé (même contrat de sûreté que
+     * rangeFormatting). Aucune cible (caractère inattendu, unité
+     * imparsable) → aucune édition (no-op).
+     */
+    @Override
+    public CompletableFuture<List<? extends org.eclipse.lsp4j.TextEdit>> onTypeFormatting(
+            org.eclipse.lsp4j.DocumentOnTypeFormattingParams params) {
+        verifierLifecycle("onTypeFormatting");
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        String filePath = uriToPath(uri);
+        String ch = params.getCh() == null || params.getCh().isEmpty()
+                ? "" : params.getCh();
+
+        return submitToScheduler(filePath, () -> {
+            List<org.eclipse.lsp4j.TextEdit> vide = new ArrayList<>();
+            if (ch.isEmpty()) return vide;
+            char declencheur = ch.charAt(0);
+            // La position LSP pointe APRÈS le caractère déjà inséré dans le
+            // tampon (didChange arrive avant la requête) — l'offset du
+            // caractère est donc celui qui précède le caret.
+            int caret = toOffset(source, params.getPosition());
+            int offsetCaractere = caret - 1;
+            if (offsetCaractere < 0 || offsetCaractere >= source.length()
+                    || source.charAt(offsetCaractere) != declencheur) {
+                return vide;
+            }
+            try {
+                var moteur = new jo.lspjava.ecj.EcjSelectionRanges(environment.jdt());
+                var cible = moteur.plageFormattable(
+                        filePath, source, offsetCaractere, declencheur);
+                if (cible == null) return vide;
+                var fmt = new jo.lspjava.ecj.EcjFormatter(environment.complianceLevel());
+                List<jo.lspjava.ecj.EcjFormatter.Edition> editions =
+                        fmt.editionsRange(source, cible.debut(),
+                                cible.fin() - cible.debut());
+                if (editions == null || editions.isEmpty()) return vide;
+                List<org.eclipse.lsp4j.TextEdit> result = new ArrayList<>();
+                for (jo.lspjava.ecj.EcjFormatter.Edition e : editions) {
+                    result.add(new org.eclipse.lsp4j.TextEdit(
+                            new Range(toPosition(source, e.offset()),
+                                    toPosition(source, e.offset() + e.length())),
+                            e.texte()));
+                }
+                return result;
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning(
+                            "onTypeFormatting handler failed for " + filePath, t);
+                }
+                return vide;
+            }
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code textDocument/codeLens} : les lenses « références » du
+     * document — une lens par déclaration porteuse (types, méthodes,
+     * constructeurs, champs), ancrée sur le jeton nom. La commande est
+     * résolue paresseusement ({@link #resolveCodeLens}) : la liste initiale
+     * ne coûte qu'un parse (mutualisé avec le cache de l'engine).
+     *
+     * <p>État client (honnêteté v0.134.19) : cel-lsp n'a pas d'UI codeLens
+     * — la capability profite aux clients LSP tiers ; aucune commande
+     * n'est EXÉCUTABLE côté CodeIDE aujourd'hui.</p>
+     */
+    @Override
+    public CompletableFuture<List<? extends org.eclipse.lsp4j.CodeLens>> codeLens(
+            org.eclipse.lsp4j.CodeLensParams params) {
+        verifierLifecycle("codeLens");
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        String filePath = uriToPath(uri);
+
+        return submitToScheduler(filePath, () -> {
+            List<org.eclipse.lsp4j.CodeLens> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                for (jo.lspjava.ecj.EcjNavigationEngine.LenseCode lense
+                        : moteur.declarationsPourLenses(filePath, source)) {
+                    org.eclipse.lsp4j.CodeLens cl = new org.eclipse.lsp4j.CodeLens(
+                            new Range(toPosition(source, lense.nomDebut()),
+                                    toPosition(source, lense.nomFin())));
+                    // data = [uri, nomDebut] — l'ancre de résolution.
+                    cl.setData(List.of(uri, lense.nomDebut()));
+                    out.add(cl);
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning("codeLens handler failed for " + filePath, t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code codeLens/resolve} : le comptage de références d'une lens —
+     * le même substrat que le renommage projet (bindings ecj, homonymes
+     * exclus, overlay des tampons ouverts), la déclaration elle-même
+     * exclue du compte. Annulation coopérative 12 s : au-delà, le dernier
+     * compte partiel connu est rendu (partial result, contracte LSP).
+     */
+    @Override
+    public CompletableFuture<org.eclipse.lsp4j.CodeLens> resolveCodeLens(
+            org.eclipse.lsp4j.CodeLens lens) {
+        verifierLifecycle("codeLens/resolve");
+        try {
+            List<?> data = lens.getData() instanceof List<?> l ? l : List.of();
+            if (data.size() >= 2 && data.get(0) instanceof String uri
+                    && data.get(1) instanceof Number numero) {
+                int nomDebut = numero.intValue();
+                String source = openDocuments.getOrDefault(uri, "");
+                String filePath = uriToPath(uri);
+                int comptage = compteReferences(filePath, source, nomDebut);
+                lens.setCommand(new org.eclipse.lsp4j.Command(
+                        comptage + (comptage > 1 ? " références" : " référence"),
+                        "lspjava.codeLens.references",
+                        List.of(uri, nomDebut)));
+            }
+        } catch (Throwable t) {
+            if (server != null) {
+                server.logWarning("codeLens/resolve failed", t);
+            }
+            // La lens reste sans commande : le client n'affiche rien.
+        }
+        return CompletableFuture.completedFuture(lens);
+    }
+
+    /** Le compte de références d'une déclaration (substrat rename). */
+    private int compteReferences(String filePath, String source, int nomDebut) {
+        var jdt = environment.jdt();
+        if (!jdt.isLikelyUsable() || source.isEmpty()) return 0;
+        var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
+        var target = renameEngine.targetAt(filePath, source, nomDebut);
+        if (target == null) return 0;
+        int comptage = 0;
+        try (var cancel = jo.lspjava.engine.CancelToken.timeout(
+                12, java.util.concurrent.TimeUnit.SECONDS)) {
+            cancel.attachToCurrentThread();
+            java.util.Map<String, List<jo.lspjava.ecj.EcjRenameEngine.Occurrence>>
+                    parFichier = renameEngine.renameProject(
+                            filePath, source, target,
+                            buildOpenBufferOverlay(), cancel);
+            for (var entry : parFichier.entrySet()) {
+                boolean fichierDeclarant = entry.getKey().equals(filePath);
+                for (var occ : entry.getValue()) {
+                    if (fichierDeclarant && occ.start == target.declStart
+                            && occ.end == target.declEnd) {
+                        continue; // la déclaration ne compte pas
+                    }
+                    comptage++;
+                }
+            }
+        } catch (Exception interrompue) {
+            // Budget écoulé — le compte partiel est rendu tel quel.
+        }
+        return comptage;
+    }
+
+    // ── hiérarchies call / type (S2-b) ─────────────────────────────
+
+    /**
+     * {@code textDocument/prepareCallHierarchy} : la méthode (ou le
+     * constructeur) sous le caret, localisée dans les sources. Position
+     * sans méthode, ou méthode binaire du classpath → null (D3 : jamais
+     * d'URI factice — le client n'ouvre pas de panneau vide).
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.CallHierarchyItem>>
+            prepareCallHierarchy(org.eclipse.lsp4j.CallHierarchyPrepareParams params) {
+        verifierLifecycle("prepareCallHierarchy");
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        int offset = toOffset(source, params.getPosition());
+        String filePath = uriToPath(uri);
+
+        return submitToScheduler(filePath, () -> {
+            List<org.eclipse.lsp4j.CallHierarchyItem> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                var cible = moteur.methodeHierarchieAu(
+                        filePath, source, offset, buildOpenBufferOverlay());
+                if (cible != null) {
+                    out.add(itemAppelDe(cible));
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning(
+                            "prepareCallHierarchy failed for " + filePath, t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code callHierarchy/incomingCalls} : les méthodes qui appellent
+     * l'élément — appels résolus EXACTEMENT vers la même déclaration
+     * (conservateur : jamais de faux appelant), groupés par appelant avec
+     * les plages des sites d'appel.
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.CallHierarchyIncomingCall>>
+            callHierarchyIncomingCalls(org.eclipse.lsp4j.CallHierarchyIncomingCallsParams params) {
+        verifierLifecycle("callHierarchy/incomingCalls");
+        org.eclipse.lsp4j.CallHierarchyItem item = params.getItem();
+
+        return submitToScheduler(uriDe(item), () -> {
+            List<org.eclipse.lsp4j.CallHierarchyIncomingCall> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                String chemin = uriToPath(uriDe(item));
+                String contenu = contenuFichier(chemin);
+                if (contenu == null) return out;
+                int offset = toOffset(contenu,
+                        item.getSelectionRange().getStart());
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                for (var appel : moteur.appelsEntrants(chemin, contenu, offset,
+                        buildOpenBufferOverlay())) {
+                    var contenuAppelant = contenuFichier(appel.chemin());
+                    if (contenuAppelant == null) continue;
+                    var from = itemAppelDe(appel);
+                    List<org.eclipse.lsp4j.Range> sites = new ArrayList<>();
+                    for (int[] site : appel.sites()) {
+                        sites.add(new Range(
+                                toPosition(contenuAppelant, site[0]),
+                                toPosition(contenuAppelant, site[1])));
+                    }
+                    out.add(new org.eclipse.lsp4j.CallHierarchyIncomingCall(
+                            from, sites));
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning("callHierarchy/incomingCalls failed", t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code callHierarchy/outgoingCalls} : les méthodes appelées par
+     * l'élément — chaque MessageSend du corps résolu vers une déclaration
+     * SOURCE (les cibles binaires du classpath sont écartées, D3).
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.CallHierarchyOutgoingCall>>
+            callHierarchyOutgoingCalls(org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams params) {
+        verifierLifecycle("callHierarchy/outgoingCalls");
+        org.eclipse.lsp4j.CallHierarchyItem item = params.getItem();
+
+        return submitToScheduler(uriDe(item), () -> {
+            List<org.eclipse.lsp4j.CallHierarchyOutgoingCall> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                String chemin = uriToPath(uriDe(item));
+                String contenu = contenuFichier(chemin);
+                if (contenu == null) return out;
+                int offset = toOffset(contenu,
+                        item.getSelectionRange().getStart());
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                for (var appel : moteur.appelsSortants(chemin, contenu, offset,
+                        buildOpenBufferOverlay())) {
+                    var to = itemAppelDe(appel);
+                    List<org.eclipse.lsp4j.Range> sites = new ArrayList<>();
+                    for (int[] site : appel.sites()) {
+                        sites.add(new Range(
+                                toPosition(contenu, site[0]),
+                                toPosition(contenu, site[1])));
+                    }
+                    out.add(new org.eclipse.lsp4j.CallHierarchyOutgoingCall(
+                            to, sites));
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning("callHierarchy/outgoingCalls failed", t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code textDocument/prepareTypeHierarchy} : le type référencé ou
+     * déclaré sous le caret, localisé dans les sources. Type binaire →
+     * null (D3 : jamais d'URI factice).
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.TypeHierarchyItem>>
+            prepareTypeHierarchy(org.eclipse.lsp4j.TypeHierarchyPrepareParams params) {
+        verifierLifecycle("prepareTypeHierarchy");
+        String uri = params.getTextDocument().getUri();
+        String source = openDocuments.getOrDefault(uri, "");
+        int offset = toOffset(source, params.getPosition());
+        String filePath = uriToPath(uri);
+
+        return submitToScheduler(filePath, () -> {
+            List<org.eclipse.lsp4j.TypeHierarchyItem> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                var cible = moteur.typeHierarchieAu(
+                        filePath, source, offset, buildOpenBufferOverlay());
+                if (cible != null) {
+                    out.add(itemTypeDe(cible));
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning(
+                            "prepareTypeHierarchy failed for " + filePath, t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code typeHierarchy/supertypes} : les supertypes DIRECTS de
+     * l'élément (superclasse + interfaces), localisés dans les sources —
+     * les supertypes binaires sont écartés.
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.TypeHierarchyItem>>
+            typeHierarchySupertypes(org.eclipse.lsp4j.TypeHierarchySupertypesParams params) {
+        verifierLifecycle("typeHierarchy/supertypes");
+        org.eclipse.lsp4j.TypeHierarchyItem item = params.getItem();
+
+        return submitToScheduler(uriDe(item), () -> {
+            List<org.eclipse.lsp4j.TypeHierarchyItem> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                String chemin = uriToPath(uriDe(item));
+                String contenu = contenuFichier(chemin);
+                if (contenu == null) return out;
+                int offset = toOffset(contenu,
+                        item.getSelectionRange().getStart());
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                for (var sup : moteur.supertypesHierarchie(chemin, contenu,
+                        offset, buildOpenBufferOverlay())) {
+                    out.add(itemTypeDe(sup));
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning("typeHierarchy/supertypes failed", t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /**
+     * {@code typeHierarchy/subtypes} : les héritiers DIRECTS de l'élément
+     * (même sémantique que go-to-implementations — balayage borné des
+     * racines sources, overlay des tampons ouverts).
+     */
+    @Override
+    public CompletableFuture<List<org.eclipse.lsp4j.TypeHierarchyItem>>
+            typeHierarchySubtypes(org.eclipse.lsp4j.TypeHierarchySubtypesParams params) {
+        verifierLifecycle("typeHierarchy/subtypes");
+        org.eclipse.lsp4j.TypeHierarchyItem item = params.getItem();
+
+        return submitToScheduler(uriDe(item), () -> {
+            List<org.eclipse.lsp4j.TypeHierarchyItem> out = new ArrayList<>();
+            try {
+                var jdt = environment.jdt();
+                if (!jdt.isLikelyUsable()) return out;
+                String chemin = uriToPath(uriDe(item));
+                String contenu = contenuFichier(chemin);
+                if (contenu == null) return out;
+                int offset = toOffset(contenu,
+                        item.getSelectionRange().getStart());
+                var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
+                for (var sous : moteur.sousTypesHierarchie(chemin, contenu,
+                        offset, buildOpenBufferOverlay())) {
+                    out.add(itemTypeDe(sous));
+                }
+            } catch (Throwable t) {
+                if (server != null) {
+                    server.logWarning("typeHierarchy/subtypes failed", t);
+                }
+            }
+            return out;
+        }, new ArrayList<>());
+    }
+
+    /** Le CallHierarchyItem d'une cible (nom = sélecteur, kind = méthode
+     *  ou constructeur — un sélecteur égal au nom simple de la classe
+     *  déclarante est un constructeur ; détail = FQN). */
+    private org.eclipse.lsp4j.CallHierarchyItem itemAppelDe(
+            jo.lspjava.ecj.EcjNavigationEngine.CibleAppel cible) {
+        String contenu = contenuFichier(cible.chemin());
+        Range declRange = plageDe(contenu, cible.declDebut(), cible.declFin());
+        Range nomRange = plageDe(contenu, cible.nomDebut(), cible.nomFin());
+        org.eclipse.lsp4j.CallHierarchyItem item =
+                new org.eclipse.lsp4j.CallHierarchyItem(
+                        cible.nomMethode(),
+                        estConstructeur(cible.classeProprietaire(), cible.nomMethode())
+                                ? SymbolKind.Constructor : SymbolKind.Method,
+                        pathToUri(cible.chemin()),
+                        declRange, nomRange);
+        item.setDetail(cible.classeProprietaire());
+        return item;
+    }
+
+    /** Le CallHierarchyItem d'une CibleHierarchie de méthode (prepare). */
+    private org.eclipse.lsp4j.CallHierarchyItem itemAppelDe(
+            jo.lspjava.ecj.EcjNavigationEngine.CibleHierarchie cible) {
+        String contenu = contenuFichier(cible.chemin());
+        Range declRange = plageDe(contenu, cible.declDebut(), cible.declFin());
+        Range nomRange = plageDe(contenu, cible.nomDebut(), cible.nomFin());
+        // fqn = « classe.sélecteur » — un sélecteur égal au nom simple de
+        // la classe est un constructeur.
+        String classe = cible.fqn().contains(".")
+                ? cible.fqn().substring(0, cible.fqn().lastIndexOf('.'))
+                : "";
+        String selecteur = cible.nom();
+        org.eclipse.lsp4j.CallHierarchyItem item =
+                new org.eclipse.lsp4j.CallHierarchyItem(
+                        selecteur,
+                        estConstructeur(classe, selecteur)
+                                ? SymbolKind.Constructor : SymbolKind.Method,
+                        pathToUri(cible.chemin()),
+                        declRange, nomRange);
+        item.setDetail(classe);
+        return item;
+    }
+
+    /** Le TypeHierarchyItem d'une cible de type (détail = FQN). */
+    private org.eclipse.lsp4j.TypeHierarchyItem itemTypeDe(
+            jo.lspjava.ecj.EcjNavigationEngine.CibleHierarchie cible) {
+        String contenu = contenuFichier(cible.chemin());
+        Range declRange = plageDe(contenu, cible.declDebut(), cible.declFin());
+        Range nomRange = plageDe(contenu, cible.nomDebut(), cible.nomFin());
+        org.eclipse.lsp4j.TypeHierarchyItem item =
+                new org.eclipse.lsp4j.TypeHierarchyItem(
+                        cible.nom(), SymbolKind.Class,
+                        pathToUri(cible.chemin()), declRange, nomRange);
+        item.setDetail(cible.fqn());
+        return item;
+    }
+
+    /** Un sélecteur est un constructeur s'il égale le nom simple de la
+     *  classe déclarante (fqn vide → méthode par défaut). */
+    private static boolean estConstructeur(String classeFqn, String selecteur) {
+        if (classeFqn == null || classeFqn.isEmpty()) return false;
+        int dernierPoint = classeFqn.lastIndexOf('.');
+        String simple = dernierPoint >= 0
+                ? classeFqn.substring(dernierPoint + 1) : classeFqn;
+        return simple.equals(selecteur);
+    }
+
+    /** La Range d'une cible dans son contenu (protection bornage — un
+     *  contenu indisponible produit une plage d'ancrage en (0,0)). */
+    private Range plageDe(String contenu, int debut, int fin) {
+        if (contenu == null || contenu.isEmpty()) {
+            return new Range(new Position(0, 0), new Position(0, 0));
+        }
+        int d = Math.max(0, Math.min(debut, contenu.length() - 1));
+        int f = Math.max(d, Math.min(fin, contenu.length()));
+        return new Range(toPosition(contenu, d), toPosition(contenu, f));
+    }
+
+    /** L'URI d'un item d'hiérarchie (null-tolérant). */
+    private static String uriDe(
+            org.eclipse.lsp4j.CallHierarchyItem item) {
+        return item != null && item.getUri() != null ? item.getUri() : "";
+    }
+
+    private static String uriDe(org.eclipse.lsp4j.TypeHierarchyItem item) {
+        return item != null && item.getUri() != null ? item.getUri() : "";
+    }
+
+    /**
+     * Le contenu VIVANT d'un fichier : le tampon ouvert d'abord (URI
+     * {@code file://} du chemin), le disque ensuite — null si introuvable.
+     */
+    private String contenuFichier(String chemin) {
+        if (chemin == null || chemin.isEmpty()) return null;
+        String uri = pathToUri(chemin);
+        String ouvert = openDocuments.get(uri);
+        if (ouvert != null) return ouvert;
+        try {
+            return new String(java.nio.file.Files.readAllBytes(
+                    java.nio.file.Paths.get(chemin)),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+
     // ==================== Méthodes utilitaires ====================
 
     /**
@@ -2167,6 +2735,15 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             });
         }
         lsp.setDetail(item.detail());
+        // filterText (I12, S2-b) : la CLÉ que le moteur a matchée (le label
+        // — EcjPrefixMatcher matche toujours le nom du candidat). Posée
+        // EXPLICITEMENT pour verrouiller le contract : le client cel-lsp
+        // filtre sur filterText quand il est présent (LspCompletionProvider
+        // → EditorCompletionPopup) ; si un jour le label porte une
+        // décoration, le filtrage reste aligné sur ce que le serveur a
+        // réellement matché — les candidats camel-hump ne sont pas éjectés
+        // par un re-filtrage client trop strict.
+        lsp.setFilterText(item.label());
         lsp.setInsertText(item.insertText());
         // Templates live/postfix : le texte inséré est en syntaxe snippet
         // LSP ($0, ${1:défaut}, index liés) — le CLIENT gère la navigation

@@ -2055,3 +2055,95 @@ Kotlin (v0.134.9).
 - **Parité** : aucun fichier `.kt` touché — digeste INCHANGÉ
   (contre-vérification sans flag inutile ; le digeste ne couvre que les
   sources Kotlin du dépôt).
+
+### 19.4 v0.134.19 — S2-b « confort structurel restant » : selectionRange, onTypeFormatting, codeLens, hiérarchies, filterText (I12)
+
+Lot final du plan S2 Java (§ plan de stabilisation 3.1) : les cinq
+requêtes restantes sont servies par le même substrat navigation
+(`EcjNavigationEngine`) et AST (`EcjSelectionRanges`, nouveau service).
+
+- **selectionRange** — pour chaque position demandée, la chaîne des nœuds
+  AST englobants, du jeton nom le plus intérieur à l'unité de compilation
+  ; plages STRICTEMENT croissantes (dédup des nœuds aux bornes identiques
+  — `LabeledStatement` partage celles de son enfant), chaque
+  `SelectionRange.parent` pointant vers le niveau englobant suivant.
+  La réponse reste alignée sur `positions[]` (une plage d'ancrage vide
+  quand aucun nœud ne couvre la position).
+- **onTypeFormatting** — le caractère VENANT d'être tapé délimite la
+  construction : `}` → le nœud qui SE TERMINE à l'accolade (bloc imbriqué
+  ou déclaration), `;` → la déclaration dont `declarationSourceEnd` est
+  le point-virgule. Éditions confinées à la cible (même contrat que
+  rangeFormatting — le reste du buffer n'est jamais déplacé) ;
+  caractère attendu absent à l'offset → no-op.
+- **codeLens « références »** — une lens par déclaration porteuse (types
+  tous niveaux, méthodes, constructeurs, champs — pas de locales) ; la
+  liste initiale ne coûte qu'un parse mutualisé, le comptage vit dans
+  `codeLens/resolve` (substrat renommage : bindings, homonymes exclus,
+  overlay, déclaration exclue, `CancelToken` 12 s, résultat partiel).
+- **Hiérarchies call / type** — généralisation de `findSuper` /
+  `findImplementations` : éléments localisés dans les SOURCES du projet
+  (types binaires → item absent — D3, jamais d'URI factice) ; appels
+  ENTRANTS = sites `MessageSend` dont le binding résout EXACTEMENT vers
+  la même déclaration (clé : classe déclarante + sélecteur + paramètres
+  érasés — les appels transitant par un supertype ne sont pas attribués,
+  conservateur), groupés par méthode appelante la plus intérieure avec
+  les plages des sites ; SORTANTS = les `MessageSend` du corps résolus
+  vers des déclarations sources, dédupliqués par cible. Balayage borné
+  (400 fichiers / 8 s, cap 256 appelants, résultat partiel).
+- **filterText (I12)** — posé EXPLICITEMENT sur le label (la clé que
+  `EcjPrefixMatcher` a matchée) : le client cel-lsp filtre sur
+  `filterText` quand il est présent (`LspCompletionProvider` →
+  `EditorCompletionPopup`) — le contract est verrouillé contre toute
+  décoration future du label ; les candidats camel-hump ne sont plus
+  éjectables par un re-filtrage client strict.
+
+Pièges ecj relevés (sondes empiriques) :
+
+1. **Corps de méthode SANS nœud `Block`** — les instructions du corps
+   sont traversées directement sous la déclaration ; un nœud `Block`
+   n'existe que pour les blocs IMBRIQUÉS. La cible du `}` d'une méthode
+   est donc sa déclaration (`declarationSourceEnd` = l'accolade).
+2. **`LocalDeclaration.sourceStart/End` = le NOM seul** — l'instruction
+   « int y=2; » vit dans `declarationSourceStart/End` (le `;` INCLUS) ;
+   c'est la plage qui sert de cible au `;` et de niveau de sélection.
+3. **Parse tolérant-aux-fautes** — même « class {{{{ » produit une unité
+   partielle : la chaîne de sélection reste VALIDE (plages dans les
+   bornes de la source) au lieu d'être vide.
+4. **`MessageSend.binding` est déjà typé `MethodBinding`** — un pattern
+   `instanceof` serait « inconditionnel » (Java 21, interdit en
+   `-source 17`).
+5. **`ASTVisitor` n'expose pas `visit(FieldDeclaration, ClassScope)` ni
+   `visit(AssertionStatement, …)`** — une surcharge inexistante cascade
+   en erreurs `name clash` trompeuses ; s'en tenir aux 142 surcharges
+   réelles.
+
+Chaîne LSP : la construction des `SelectionRange` imbriqués parcourt la
+chaîne moteur (intérieure → extérieure) en INVERSE — le résultat retourné
+est le nœud INTÉRIEUR, chaque `parent` pointant vers le niveau englobant.
+
+État client (honnêteté) : cel-lsp n'a pas d'UI codeLens / hiérarchies /
+selectionRange / onTypeFormatting — ces capacités profitent aux clients
+LSP tiers ; `filterText` EST consommé (transport + filtrage).
+
+**Tests** : `EcjSelectionRangesTest` (7 — croissance stricte + contenance
+à chaque niveau, escalade return→méthode→classe, jeton nom de champ vs
+déclaration complète, bornes hors source / source vide, parse tolérant
+sans exception, cibles `}` (bloc de méthode) et `;` (instruction, sans
+déborder), déclencheur inattendu refusé) ; `EcjHierarchiesTest` (8 —
+élément type au caret sur référence, supertypes directs classe+interface,
+sous-types par balayage, type binaire → null, élément méthode au caret
+sur appel, entrants groupés avec 2 sites, sortants résolus
+`demo.Base.utilise`, pas de méthode au caret → vide) ;
+`JavaS2bProtocoleTest` (11 — capacités (formes `Either`), chaîne
+bout-en-bout strictement croissante, `}` reformate le bloc SANS toucher
+la méthode voisine, caractère étranger → no-op, codeLens 2 lenses +
+resolve « 0 référence » puis « 1 référence » multi-fichiers (fichiers
+canoniques sur disque — la résolution ecj mappe `demo.Base` →
+`demo/Base.java`), typeHierarchy prepare dans SA source + supertypes +
+subtypes, caret hors type → vide (et type englobant au corps = convention
+`contextType`), callHierarchy prepare sur l'APPEL → déclaration Base +
+incoming (1 appelant, 1 site) + outgoing (1 cible source), `filterText`
+posé sur TOUS les items, garde I2 sur les cinq requêtes). Chaîne :
+`:lsp:java` 387 verts ; `:lsp:host` testDebugUnitTest/lintDebug/
+koverVerify + `checkModuleDependencies` verts. Aucun `.kt` touché —
+digeste de parité INCHANGÉ.
