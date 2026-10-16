@@ -1861,7 +1861,10 @@ lifecycle réel. lsp:java 330 verts, lsp:host 86.
 
 Emplacement du PV de mesure appareil prévu par le lot S0-c (décision D3
 du propriétaire — lot G maintenant / plus tard / jamais publier, cf.
-audit §11.2). La séance dédiée n'a pas encore eu lieu.
+audit §11.2). La séance dédiée n'a pas encore eu lieu. **La séance est
+MAINTENANT PRÊTE** (v0.134.20) : le protocole complet — matériel, sept
+séquences, commandes de capture, cibles, modèle de PV, check-list — vit
+dans `docs/PROTOCOLE_MESURE_APPAREIL.md` ; le PV rempli s'archivera ICI.
 
 **Décision D3 du propriétaire — partiellement actée (16/10/2026, communiqué
 direct)** : sur la question de la réécriture (lot G), le propriétaire

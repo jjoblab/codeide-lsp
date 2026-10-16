@@ -52,7 +52,9 @@ internal object CompletionValeursXml {
         return propositions.sortedBy { it.texteTri }.take(PLAFOND_PROPOSITIONS)
     }
 
-    /** Références `@type/…` de l'INDEX PROJET (types présents seuls). */
+    /** Références `@type/…` de l'INDEX PROJET puis des BIBLIOTHÈQUES
+     *  (types présents — P3 : les styles/couleurs Material apparaissent
+     *  même sans aucun style projet). */
     private fun referencesProjet(
         prefixe: String,
         index: IndexRessources,
@@ -67,19 +69,28 @@ internal object CompletionValeursXml {
         }
     }
 
-    /** `@str` : les TYPES du projet qui matchent. */
+    /** `@str` : les TYPES (projet puis bibliothèques) qui matchent. */
     private fun propositionsDeTypes(
         apresArobase: String,
         index: IndexRessources,
     ): List<PropositionCompletionXml> {
         val propositions = mutableListOf<PropositionCompletionXml>()
-        for (type in index.types().sorted()) {
+        val types = (index.types() + index.typesLib()).sorted()
+        for (type in types) {
             if (apresArobase.isEmpty() || type.startsWith(apresArobase)) {
+                val enProjet = type in index.types()
+                val enLib = type in index.typesLib()
+                val detail =
+                    when {
+                        enProjet && enLib -> "ressources $type — projet et bibliothèques"
+                        enLib -> "ressources $type — bibliothèques"
+                        else -> "ressources $type — projet"
+                    }
                 propositions.add(
                     PropositionCompletionXml(
                         libelle = "@$type/",
                         genre = GenreCompletionXml.REFERENCE,
-                        detail = "ressources $type — projet",
+                        detail = detail,
                         texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, "@$type/"),
                     ),
                 )
@@ -88,7 +99,8 @@ internal object CompletionValeursXml {
         return propositions
     }
 
-    /** `@string/he` : noms du TYPE filtrés. */
+    /** `@string/he` : noms du TYPE filtrés — PROJET d'abord, les noms
+     *  de BIBLIOTHÈQUE complètent (détail distingué, P3). */
     private fun propositionsDeNoms(
         apresArobase: String,
         separant: Int,
@@ -104,6 +116,19 @@ internal object CompletionValeursXml {
                         libelle = "@$type/$nom",
                         genre = GenreCompletionXml.REFERENCE,
                         detail = "projet",
+                        texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, "@$type/$nom"),
+                    ),
+                )
+            }
+        }
+        for (nom in index.nomsLibParType(type)) {
+            if (nom in index.nomsParType(type).toSet()) continue
+            if (debutNom.isEmpty() || nom.startsWith(debutNom)) {
+                propositions.add(
+                    PropositionCompletionXml(
+                        libelle = "@$type/$nom",
+                        genre = GenreCompletionXml.REFERENCE,
+                        detail = "bibliothèque",
                         texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, "@$type/$nom"),
                     ),
                 )
@@ -182,20 +207,35 @@ internal object CompletionValeursXml {
         return propositions
     }
 
-    /** Attributs de style `?attr/…` (index projet). */
+    /** Attributs de style `?attr/…` — PROJET puis BIBLIOTHÈQUES (P3 :
+     *  les attrs Material/AppCompat apparaissent). */
     private fun attributsDeStyle(
         prefixe: String,
         index: IndexRessources,
     ): List<PropositionCompletionXml> {
         val apresInterrogation = prefixe.substring(1).removePrefix("attr/")
         val propositions = mutableListOf<PropositionCompletionXml>()
-        for (nom in index.nomsParType("attr")) {
+        val projet = index.nomsParType("attr")
+        for (nom in projet) {
             if (apresInterrogation.isEmpty() || nom.startsWith(apresInterrogation)) {
                 propositions.add(
                     PropositionCompletionXml(
                         libelle = "?attr/$nom",
                         genre = GenreCompletionXml.REFERENCE,
                         detail = "attribut — projet",
+                        texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, "?attr/$nom"),
+                    ),
+                )
+            }
+        }
+        for (nom in index.nomsLibParType("attr")) {
+            if (nom in projet.toSet()) continue
+            if (apresInterrogation.isEmpty() || nom.startsWith(apresInterrogation)) {
+                propositions.add(
+                    PropositionCompletionXml(
+                        libelle = "?attr/$nom",
+                        genre = GenreCompletionXml.REFERENCE,
+                        detail = "attribut — bibliothèque",
                         texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, "?attr/$nom"),
                     ),
                 )

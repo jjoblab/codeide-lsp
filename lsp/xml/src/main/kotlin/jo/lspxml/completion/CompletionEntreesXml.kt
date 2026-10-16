@@ -102,7 +102,8 @@ internal object CompletionEntreesXml {
 
     /**
      * Complétion de VALEUR dans un values — `parent="…"` d'un style :
-     * styles du PROJET (index) et thèmes du FRAMEWORK
+     * styles du PROJET (index), styles des BIBLIOTHÈQUES (P3 — les
+     * thèmes `Theme.Material3.*` apparaissent) et thèmes du FRAMEWORK
      * (`@android:style/…`, public-final).
      *
      * Exemption detekt ciblée (règle 16) : ReturnCount — les sorties
@@ -118,13 +119,28 @@ internal object CompletionEntreesXml {
         val prefixe = contexte.prefixeTape
         val propositions = mutableListOf<PropositionCompletionXml>()
         // Styles du projet.
-        for (nom in index.nomsParType("style")) {
+        val projet = index.nomsParType("style")
+        for (nom in projet) {
             if (prefixe.isEmpty() || nom.startsWith(prefixe)) {
                 propositions.add(
                     PropositionCompletionXml(
                         libelle = nom,
                         genre = GenreCompletionXml.STYLE,
                         detail = "style — projet",
+                        texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, nom),
+                    ),
+                )
+            }
+        }
+        // Styles des bibliothèques (AAR indexées — P3, racine de XP1).
+        for (nom in index.nomsLibParType("style")) {
+            if (nom in projet.toSet()) continue
+            if (prefixe.isEmpty() || nom.startsWith(prefixe)) {
+                propositions.add(
+                    PropositionCompletionXml(
+                        libelle = nom,
+                        genre = GenreCompletionXml.STYLE,
+                        detail = "style — bibliothèque",
                         texteTri = ClassementXml.cleTri(ClassementXml.RANG_REFERENCE, nom),
                     ),
                 )

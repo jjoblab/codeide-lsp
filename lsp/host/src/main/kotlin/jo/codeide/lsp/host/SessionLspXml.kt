@@ -128,6 +128,7 @@ public class SessionLspXml(
                     dossierPlateforme = plateformeDu(projet),
                     racinesSources = racinesSources(projet),
                     vueNoms = vueNoms,
+                    racinesAar = aarsDu(projet),
                 )
             classpathCourant = classpath
         }
@@ -140,6 +141,26 @@ public class SessionLspXml(
                 LOGGER.log(Level.WARNING, "poussée de classpath à une session XML échouée (ignorée)", t)
             }
         }
+    }
+
+    /**
+     * Archives AAR des DÉPENDANCES du projet (P3, racine de XP1) — la
+     * provenance v8 (`ClasspathEntry.aar`, l'AAR d'ORIGINE d'une entrée
+     * normalisée) est collectée sur tous les modules actifs, épure les
+     * disparus et déduplique (plusieurs entrées peuvent partager le
+     * MÊME conteneur) ; l'ordre est TRIÉ (déterministe — le premier AAR
+     * d'une homonymie gagne le détail côté moteur).
+     */
+    private fun aarsDu(projet: ProjetLsp): List<File> {
+        val chemins = sortedSetOf<String>()
+        for (module in projet.modules) {
+            if (module.ignore) continue
+            for (entree in module.classpath.entrees) {
+                val aar = entree.aar ?: continue
+                if (lecteurStats.existe(aar)) chemins.add(aar)
+            }
+        }
+        return chemins.map { File(it) }
     }
 
     /**

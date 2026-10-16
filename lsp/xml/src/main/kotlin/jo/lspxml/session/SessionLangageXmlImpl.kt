@@ -156,12 +156,17 @@ internal class SessionLangageXmlImpl(
     override fun definirClasspath(classpath: ClasspathXml) {
         // Tolérant : après close c'est un NO-OP ; un appel identique
         // est un no-op chaud (le catalogue XE2 se charge par empreinte,
-        // l'index XE3 re-scanne par mtime — fichiers inchangés épargnés).
+        // l'index XE3 re-scanne par mtime — fichiers inchangés épargnés,
+        // les AAR P3 par chemin+mtime — archives inchangées épargnées).
         if (fermee) return
         this.classpath = classpath
         // XE3 : l'index des ressources suit les RACINES SOURCES du
         // classpath (scan incrémental — deltas seuls).
         indexRessources.definir(classpath.racinesSources)
+        // P3 : le volet BIBLIOTHÈQUES suit les AAR des dépendances
+        // (même loi incrémentale — un conteneur inchangé n'est jamais
+        // re-décodé).
+        indexRessources.definirAar(classpath.racinesAar)
     }
 
     /**

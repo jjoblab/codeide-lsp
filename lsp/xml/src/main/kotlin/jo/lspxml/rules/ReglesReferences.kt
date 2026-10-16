@@ -19,6 +19,12 @@ import jo.lspxml.resources.IndexRessources
  * Garde X4 : `@+id/…` DÉCLARE (jamais signalé) ; `@android:…` n'est
  * signalé que si le catalogue PROUVE l'absence (public-final.xml) ;
  * index froid (aucune racine scannée) → SILENCE TOTAL.
+ *
+ * P3 (retour à l'ERREUR légitime — ADR 0120) : les ressources des
+ * DÉPENDANCES (AAR) sont indexées — projet, bibliothèques et framework
+ * sont couverts, une référence résolue nulle est un VRAI positif ; la
+ * gravité remonte à ERREUR SAUF si un AAR est illisible (doute X4 :
+ * l'index pourrait manquer — AVERTISSEMENT honnête).
  */
 internal object ReglesReferences {
     /**
@@ -31,9 +37,10 @@ internal object ReglesReferences {
         catalogue: CataloguePlateforme?,
     ): List<DiagnosticXml> {
         if (!index.estChaud) return emptyList()
+        val severite = if (index.douteux) SeveriteXml.AVERTISSEMENT else SeveriteXml.ERREUR
         val diagnostics = mutableListOf<DiagnosticXml>()
         for (racine in document.racines) {
-            sonder(racine, index, catalogue, diagnostics)
+            sonder(racine, index, catalogue, severite, diagnostics)
         }
         return diagnostics
     }
@@ -46,6 +53,7 @@ internal object ReglesReferences {
         element: XmlElement,
         index: IndexRessources,
         catalogue: CataloguePlateforme?,
+        severite: SeveriteXml,
         diagnostics: MutableList<DiagnosticXml>,
     ) {
         for (attribut in element.attributs) {
@@ -57,14 +65,10 @@ internal object ReglesReferences {
                 diagnostics.add(
                     DiagnosticXml(
                         code = CodesDiagnosticsXml.REFERENCE_NON_RESOLUE,
-                        // XP1 : downgrade en WARNING tant que les
-                        // ressources de dépendances (AAR) ne sont pas
-                        // indexées — un ERROR sur @style/Theme.Material3
-                        // est un faux positif.
-                        severite = SeveriteXml.AVERTISSEMENT,
+                        severite = severite,
                         message =
                             "référence « ${reference.type}/${reference.nom} » " +
-                                "introuvable (projet et framework)",
+                                "introuvable (projet, bibliothèques et framework)",
                         debut = reference.plageNom.debut,
                         fin = reference.plageNom.fin,
                     ),
@@ -72,7 +76,7 @@ internal object ReglesReferences {
             }
         }
         for (enfant in element.enfants) {
-            sonder(enfant, index, catalogue, diagnostics)
+            sonder(enfant, index, catalogue, severite, diagnostics)
         }
     }
 

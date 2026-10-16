@@ -17,7 +17,10 @@ import java.io.File
  *   `AndroidManifest.xml` y vivent (convention AGP `src/main/…`) ;
  * - la VUE DE NOMS du classpath (couture neutre [VueNomsXml]) : la
  *   garde « balise inconnue » X4 exige que le classpath soit d'accord —
- *   sans vue, le moteur ne signale JAMAIS de classe inconnue.
+ *   sans vue, le moteur ne signale JAMAIS de classe inconnue ;
+ * - les ARCHIVES AAR des dépendances (P3, racine de XP1) : leurs `res/`
+ *   portent les ressources Material/AppCompat/AndroidX — sans elles,
+ *   TOUTE référence `@style/Theme.Material3…` est un faux positif.
  *
  * Tolérance (X4) : composants `null`/absents = régime dégradé honnête
  * (syntaxe + règles structurelles seules) ; répéter un appel identique
@@ -36,11 +39,16 @@ import java.io.File
  *           adaptée depuis l'index fusion par la façade) ; `null`
  *           avant le premier index prêt = garde X4 active (aucun
  *           diagnostic de balise inconnue).
+ * @property racinesAar archives AAR des dépendances du projet (P3 —
+ *           provenance `ClasspathEntry.aar` du modèle v8, adaptée par
+ *           la façade) ; vide = sans ressources de bibliothèques
+ *           (projet + framework seuls, le régime historique).
  */
 public data class ClasspathXml(
     public val dossierPlateforme: File?,
     public val racinesSources: List<File>,
     public val vueNoms: VueNomsXml?,
+    public val racinesAar: List<File> = emptyList(),
 )
 
 /**

@@ -141,4 +141,132 @@ class IndexRessourcesTest {
         assertFalse(index.estChaud)
         assertTrue(index.types().isEmpty())
     }
+
+    // ── P3 — volet BIBLIOTHÈQUES (AAR) ─────────────────────────────
+
+    /** Archive AAR synthétique (ZIP) portant values + layout + drawable. */
+    private fun ecrireAar(
+        dossier: File,
+        nom: String,
+        valeurs: String,
+    ): File {
+        val aar = dossier.resolve(nom)
+        java.util.zip.ZipOutputStream(aar.outputStream()).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("res/values/values.xml"))
+            zip.write(valeurs.toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("res/layout/eleve.xml"))
+            zip.write("<merge/>".toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("res/drawable-hdpi/puce.png"))
+            zip.write(byteArrayOf(1, 2))
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("AndroidManifest.xml"))
+            zip.write("<manifest/>".toByteArray())
+            zip.closeEntry()
+        }
+        return aar
+    }
+
+    /** Values d'AAR Material fictif : named entries + styleable + item. */
+    private fun valeursMaterial(): String =
+        "<resources>" +
+            "<string name=\"material_hello\">Bonjour</string>" +
+            "<color name=\"material_red\">#FF0000</color>" +
+            "<style name=\"Theme.Material3.Day\" parent=\"android:Theme.Material\"/>" +
+            "<attr name=\"material_btn\" format=\"reference\"/>" +
+            "<declare-styleable name=\"MaterialButton\">" +
+            "<attr name=\"material_shape\"/>" +
+            "<attr name=\"material_btn\"/>" +
+            "</declare-styleable>" +
+            "<item type=\"id\" name=\"material_id\"/>" +
+            "</resources>"
+
+    @Test
+    fun `scan aar — entrees nommees, attrs de styleable, item type, dossiers`() {
+        val index = IndexRessources()
+        val aar = ecrireAar(dossierTemp.newFolder("libs"), "material-1.12.0.aar", valeursMaterial())
+        index.definirAar(listOf(aar))
+        assertTrue(index.estChaudLib)
+        assertFalse(index.douteux)
+        // Entrées nommées (values).
+        assertEquals(listOf("material_hello"), index.nomsLibParType("string"))
+        assertEquals(listOf("material_red"), index.nomsLibParType("color"))
+        assertEquals(listOf("Theme.Material3.Day"), index.nomsLibParType("style"))
+        // Fidélité aapt : l'attr porté par un declare-styleable existe.
+        assertEquals(setOf("material_btn", "material_shape"), index.nomsLibParType("attr").toSet())
+        // item type="id" : la ressource vit sous le type nommé.
+        assertEquals(listOf("material_id"), index.nomsLibParType("id"))
+        // Ressources de dossier (layout, drawable — qualifier compris).
+        assertEquals(listOf("eleve"), index.nomsLibParType("layout"))
+        assertEquals(listOf("puce"), index.nomsLibParType("drawable"))
+        // Le déclarant pointe le CONTENEUR (chemin de l'AAR).
+        assertEquals(aar.path, index.resoudreLib("string", "material_hello"))
+        assertEquals(aar.path, index.resoudreLib("layout", "eleve"))
+        // Types du volet lib.
+        assertEquals(
+            setOf("string", "color", "style", "attr", "id", "layout", "drawable"),
+            index.typesLib(),
+        )
+        // Le volet PROJET reste vierge (cartes séparées).
+        assertNull(index.resoudre("string", "material_hello"))
+        assertTrue(index.types().isEmpty())
+    }
+
+    @Test
+    fun `scan aar — increment mtime, purge des disparus`() {
+        val index = IndexRessources()
+        val dossier = dossierTemp.newFolder("libsincrement")
+        val aar = ecrireAar(dossier, "material.aar", valeursMaterial())
+        index.definirAar(listOf(aar))
+        assertEquals(listOf("material_hello"), index.nomsLibParType("string"))
+        // Ré-définition IDENTIQUE : no-op chaud (l'AAR inchangé n'est
+        // jamais re-décodé — les entrées restent).
+        index.definirAar(listOf(aar))
+        assertEquals(listOf("material_hello"), index.nomsLibParType("string"))
+        // L'AAR CHANGE (re-écriture + mtime avancé) : re-scan.
+        val nouvelle =
+            ecrireAar(dossier, "material.aar", "<resources><string name=\"autre\">X</string></resources>")
+        nouvelle.setLastModified(aar.lastModified() + 5_000)
+        index.definirAar(listOf(nouvelle))
+        assertEquals(listOf("autre"), index.nomsLibParType("string"))
+        // Les entrées de l'ANCIENNES version ont disparu (index honnête).
+        assertNull(index.resoudreLib("style", "Theme.Material3.Day"))
+        // L'AAR DISPARU de la liste purge TOUT son volet.
+        index.definirAar(emptyList())
+        assertTrue(index.typesLib().isEmpty())
+        assertTrue("le volet reste alimenté (même vide)", index.estChaudLib)
+        assertFalse(index.douteux)
+    }
+
+    @Test
+    fun `scan aar — archive corrompue = doute persistant, les saines survivent`() {
+        val index = IndexRessources()
+        val dossier = dossierTemp.newFolder("libsdoute")
+        val sain = ecrireAar(dossier, "material.aar", valeursMaterial())
+        val corrompu = dossier.resolve("casse.aar")
+        corrompu.writeBytes(byteArrayOf(0, 1, 2, 3, 4)) // PAS un ZIP
+        index.definirAar(listOf(sain, corrompu))
+        assertTrue("un AAR illisible marque le doute (X4)", index.douteux)
+        // Les entrées de l'AAR SAINE survivent.
+        assertEquals(listOf("material_hello"), index.nomsLibParType("string"))
+        // Le doute PERSISTE tant que l'AAR ne change pas (les passes
+        // suivantes l'épargnent par mtime — le doute ne s'efface pas).
+        index.definirAar(listOf(sain, corrompu))
+        assertTrue(index.douteux)
+    }
+
+    @Test
+    fun `vider — le volet bibliothèques part aussi`() {
+        val index = IndexRessources()
+        index.definir(listOf(racineProjet()))
+        val aar = ecrireAar(dossierTemp.newFolder("libsvider"), "m.aar", valeursMaterial())
+        index.definirAar(listOf(aar))
+        assertTrue(index.estChaudLib)
+        index.vider()
+        assertFalse(index.estChaudLib)
+        assertFalse(index.douteux)
+        assertTrue(index.typesLib().isEmpty())
+        assertNull(index.resoudreLib("string", "material_hello"))
+    }
 }

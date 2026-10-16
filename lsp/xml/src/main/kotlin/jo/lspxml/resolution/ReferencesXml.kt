@@ -142,7 +142,8 @@ public object ReferencesXml {
      * Une référence est-elle RÉSOLUE ? Garde X4 : une référence
      * DÉCLARANTE (`@+id`) ne se résout jamais (elle CRÉE) ; sans index
      * chaud ni catalogue, TOUT est résolu (dumb mode — la règle ne
-     * signale que ce qu'elle SAIT manquer).
+     * signale que ce qu'elle SAIT manquer). P3 : l'INDEX BIBLIOTHÈQUE
+     * (AAR des dépendances) complète projet et framework.
      */
     internal fun estResolue(
         reference: Reference,
@@ -155,10 +156,18 @@ public object ReferencesXml {
                 dansFramework(catalogue, reference.type, reference.nom)
 
             index.estChaud -> dansProjet(index, reference.type, reference.nom) ||
+                dansLib(index, reference.type, reference.nom) ||
                 (catalogueEstCharge(catalogue) && dansFramework(catalogue, reference.type, reference.nom))
 
             else -> true // index froid : silence (dumb mode)
         }
+
+    /** Le nom existe-t-il dans les BIBLIOTHÈQUES (AAR indexées) ? */
+    private fun dansLib(
+        index: IndexRessources,
+        type: String,
+        nom: String,
+    ): Boolean = index.resoudreLib(type, nom) != null
 
     /** Le catalogue porte-t-il les ressources framework ? */
     private fun catalogueEstCharge(catalogue: CataloguePlateforme?): Boolean =
@@ -166,8 +175,10 @@ public object ReferencesXml {
 
     /**
      * SURVOL d'une référence — `string « hello » — projet,
-     * values/strings.xml` ou `string « ok » » — framework android` ;
-     * `null` si rien n'est résolu (sous-rapport honnête).
+     * values/strings.xml`, `style « Theme.Material3.DayNight » —
+     * bibliothèque, material-1.12.0.aar` (P3) ou `string « ok » » —
+     * framework android` ; `null` si rien n'est résolu (sous-rapport
+     * honnête).
      */
     internal fun survol(
         reference: Reference,
@@ -188,14 +199,24 @@ public object ReferencesXml {
             // "framework android" pour une ressource projet non indexée.
             reference.framework -> ContenuSurvoleXml("${reference.type} « ${reference.nom} » — framework android")
             !index.estChaud -> null
-            else -> null
+            // P3 : le nom vit dans une DÉPENDANCE (AAR) — détail = nom
+            // du conteneur déclarant.
+            else ->
+                index.resoudreLib(reference.type, reference.nom)?.let { cheminAar ->
+                    ContenuSurvoleXml(
+                        "${reference.type} « ${reference.nom} » — bibliothèque, " +
+                            "${java.io.File(cheminAar).name}",
+                    )
+                }
         }
     }
 
     /**
      * DÉFINITIONS d'une référence — le `res/values` DÉCLARANT (projet
-     * uniquement : les ressources framework n'ont pas de source
-     * locale) ; liste vide sinon.
+     * uniquement : les ressources framework n'ont pas de source locale
+     * et les entrées de BIBLIOTHÈQUE vivent DANS une archive — D3
+     * conservateur, jamais d'URI factice vers un conteneur) ; liste
+     * vide sinon.
      */
     internal fun definitions(
         reference: Reference,

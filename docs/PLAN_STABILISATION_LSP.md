@@ -112,10 +112,8 @@
 - Genres étendus `res/color`, `res/xml`, `res/navigation` (XP12)
 
 #### S3 — Fidélité Android Studio (~2-3 semaines)
-- **Index ressources de dépendances** (racine de XP1) : AAR archive listing + parse à la volée, fusion dans `IndexRessources`
-- `xml.referenceNonResolue` redevient ERROR légitime
-- Complétion styles/couleurs Material
-- Rename borné des entrées values, formateur XML
+- **Index ressources de dépendances (AAR)** ✅ **LIVRÉ v0.134.20** (XE6) : archive listing + parse à la volée, fusion dans `IndexRessources` (cartes projet/lib séparées, projet prime) ; `xml.referenceNonResolue` ERREUR légitime (ADR 0120) ; complétion styles/couleurs Material
+- Rename borné des entrées values, formateur XML (restant)
 
 **Bloqueurs critiques** :
 - XP1 : faux positifs sur références de dépendances (Material/AppCompat/AndroidX)
@@ -136,7 +134,7 @@
 | **P2 — Moyen terme** | Tous | `didChangeWatchedFiles` (commun) | 1-2 jours | Refresh auto |
 | **P2 — Moyen terme** | XML | Vues projet en completion (XP5) | 1 jour | Completion riche |
 | **P3 — Long terme** | Java | Décision D3 + lot G | Multi-session | Publication possible |
-| **P3 — Long terme** | XML | Index ressources AAR (S3) | 2-3 semaines | Fidélité AS |
+| **P3 — Long terme** | XML | Index ressources AAR (S3) | ✅ Livré v0.134.20 | Fidélité AS |
 
 ## 5. Références
 

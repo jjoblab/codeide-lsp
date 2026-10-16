@@ -183,10 +183,81 @@ class SessionLspXmlTest {
         assertEquals(1, moteur.sessionsCrees, "la session reste décomptée une seule fois")
     }
 
+    @Test
+    fun `appliquerModele - les AAR des dependances alimentent racinesAar (P3)`() {
+        val moteur = MoteurFactice()
+        val facade = SessionLspXml(dossierTemp.resolve("aars"), moteur)
+        facade.serveur()
+        val racine = dossierTemp.resolve("src").apply { mkdirs() }
+        val aar =
+            dossierTemp.resolve("libs/material-1.12.0.aar").apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf(1))
+            }
+        val aarAbsent = dossierTemp.resolve("cache/absent.aar")
+        val moduleAar =
+            module(
+                entrees =
+                    listOf(
+                        entree(aar.path, aar = aar.path),
+                        entree(dossierTemp.resolve("cache/jar1.jar").path, aar = aar.path), // doublon
+                        entree(dossierTemp.resolve("cache/jar2.jar").path, aar = aarAbsent.path), // disparu
+                        entree(dossierTemp.resolve("cache/jar3.jar").path, aar = null), // pas d'AAR
+                    ),
+                androidJar = null,
+                ignore = false,
+                racine = racine,
+            )
+        val moduleIgnoreAussi =
+            module(
+                entrees = listOf(entree(dossierTemp.resolve("cache/jar4.jar").path, aar = aar.path)),
+                androidJar = null,
+                ignore = true,
+                racine = racine,
+            )
+        facade.appliquerModele(
+            ProjetLsp(dossierTemp.path, listOf(moduleAar, moduleIgnoreAussi), "projet"),
+            null,
+        )
+        val classpath =
+            moteur.sessions
+                .single()
+                .classpathsRecus
+                .single()
+        assertEquals(
+            listOf(aar),
+            classpath.racinesAar,
+            "AAR existant unique — doublons, disparus et modules ignorés exclus",
+        )
+        facade.close()
+    }
+
     // ── Aides de montage ───────────────────────────────────────────────
 
     /** Module JVM simple sans classpath (une racine source suffit). */
     private fun moduleSimple(racine: File): ModuleLsp = module(emptyList(), null, ignore = false, racine = racine)
+
+    /** Entrée de classpath paramétrable (P3 : provenance AAR testée). */
+    private fun entree(
+        chemin: String,
+        aar: String?,
+    ): jo.codeide.lsp.model.EntreeClasspathInstantane =
+        jo.codeide.lsp.model.EntreeClasspathInstantane(
+            kind = jo.codeide.lsp.model.KindEntree.JAR,
+            chemin = chemin,
+            portee = "compile",
+            sources = null,
+            aar = aar,
+            empreinte = "empreinte-$chemin",
+            existe =
+                java.nio.file.Files
+                    .exists(
+                        java.nio.file.Path
+                            .of(chemin),
+                    ),
+            taille = 1,
+            mtime = 0,
+        )
 
     /** Module JVM paramétrable (plateforme, ignorance, racine). */
     private fun module(
