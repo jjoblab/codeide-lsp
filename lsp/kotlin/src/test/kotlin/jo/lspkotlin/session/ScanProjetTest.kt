@@ -85,6 +85,45 @@ class ScanProjetTest {
     }
 
     @Test
+    fun `amorce warm - declarations joint le scan lancé à la définition`() {
+        // 0.134.32 : definirRacines AMORCE le scan sur le fil dédié ;
+        // une lecture immédiate S'Y JOINT (jamais de double scan) et
+        // voit le résultat complet — le coût part à la sync, pas à la
+        // première frappe.
+        scan.definirRacines(racinesAvecDeuxFichiers())
+        assertEquals(2, scan.declarations().size)
+        // Re-définition CHANGÉE puis lecture immédiate : le même chemin.
+        val autre = dossierTemporaire.newFolder("autre")
+        File(autre, "C.kt").writeText("val c = 3\n")
+        scan.definirRacines(listOf(autre))
+        assertEquals(1, scan.declarations().size)
+    }
+
+    @Test
+    fun `incremental mtime - le fichier changé re-parse, les autres survivent`() {
+        // 0.134.32 : un fichier inchangé n'est JAMAIS re-parsé (cache
+        // mtime) ; un fichier CHANGÉ rend ses NOUVELLES déclarations.
+        val racines = racinesAvecDeuxFichiers()
+        scan.definirRacines(racines)
+        assertEquals(2, scan.declarations().size)
+        // B.kt change de contenu ET de mtime (forcé — la granularité du
+        // système de fichiers masquerait un mtime trop proche).
+        val b = File(racines.first(), "B.kt")
+        b.writeText("val bDeux = 22\nval bTrois = 23\n")
+        // La granularité du FS masque un mtime trop proche : le décalage
+        // est FORCÉ (et l'échec serait un refus du FS, pas un silence).
+        assertTrue("mtime forcé accepté par le FS", b.setLastModified(System.currentTimeMillis() + 60_000))
+        // Une liste de racines RÉELLEMENT différente (le même contenu
+        // est un no-op chaud par contrat) déclenche la passe incrémentale.
+        val racineAjoutee = dossierTemporaire.newFolder("racine-ajoutee")
+        scan.definirRacines(listOf(racines.first(), racineAjoutee))
+        val noms = scan.declarations().map { it.nom }
+        assertTrue("les nouvelles déclarations de B apparaissent", "bDeux" in noms)
+        assertTrue("les déclarations de A survivent (cache)", "a" in noms)
+        assertTrue("l'ancienne déclaration de B part", "b" !in noms)
+    }
+
+    @Test
     fun `acces concurrents - chaque session voit un etat coherent (KP6)`() {
         val racines = racinesAvecDeuxFichiers()
         scan.definirRacines(racines)

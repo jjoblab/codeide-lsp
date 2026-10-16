@@ -91,6 +91,53 @@ class IndexRessourcesTest {
     }
 
     @Test
+    fun `convention AGP — res du SOURCE SET parent des racines de code`() {
+        // Rapport 0.134.31 : les racines livrées sont src/main/java et
+        // src/main/kotlin — le res/ vit SUR LE SOURCE SET (src/main/res),
+        // pas dans la racine de code. Sans le correctif, l'index projet
+        // restait VIDE (complétion @color/ muette, tout diagnostiqué
+        // non résolu).
+        val code = dossierTemp.newFolder("app/src/main/java")
+        File(code, "Main.kt").writeText("class Main")
+        val sourceSet = File(dossierTemp.root, "app/src/main")
+        val values = sourceSet.resolve("res/values").apply { mkdirs() }
+        values.resolve("colors.xml").writeText(
+            "<resources><color name=\"primary_color\">#43559E</color></resources>",
+        )
+        sourceSet.resolve("res/layout").apply { mkdirs() }
+            .resolve("activity_main.xml").writeText("<merge/>")
+        val index = IndexRessources()
+        index.definir(listOf(code))
+        assertEquals(listOf("primary_color"), index.nomsParType("color"))
+        assertEquals(listOf("activity_main"), index.nomsParType("layout"))
+    }
+
+    @Test
+    fun `convention AGP — java et kotlin dedoublonnent le même res`() {
+        // Deux racines de code du MÊME source set : le res/ parent est
+        // scanné UNE FOIS (dédoublonnage) — les entrées n'apparaissent
+        // pas en double.
+        val java = dossierTemp.newFolder("app/src/main/java")
+        File(dossierTemp.root, "app/src/main/kotlin").apply { mkdirs() }
+            .resolve("Main.kt").writeText("class Main")
+        val sourceSet = File(dossierTemp.root, "app/src/main")
+        sourceSet.resolve("res/values").apply { mkdirs() }
+            .resolve("strings.xml").writeText(
+                "<resources><string name=\"titre\">Bonjour</string></resources>",
+            )
+        val index = IndexRessources()
+        index.definir(listOf(java, File(dossierTemp.root, "app/src/main/kotlin")))
+        assertEquals(listOf("titre"), index.nomsParType("string"))
+        // Le candidat DIRECT prime encore quand il existe (contrat
+        // historique : un client qui livre src/main tout entier).
+        val direct = dossierTemp.newFolder("direct")
+        direct.resolve("res/values").apply { mkdirs() }
+            .resolve("v.xml").writeText("<resources><dimen name=\"m\">4dp</dimen></resources>")
+        index.definir(listOf(direct))
+        assertEquals(listOf("m"), index.nomsParType("dimen"))
+    }
+
+    @Test
     fun `resolution — inconnu null, deuxieme declarant resolu`() {
         val index = IndexRessources()
         index.definir(listOf(racineProjet()))

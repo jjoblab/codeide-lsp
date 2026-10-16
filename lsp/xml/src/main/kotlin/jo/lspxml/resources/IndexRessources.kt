@@ -92,22 +92,43 @@ internal class IndexRessources {
      * (Re)définit les racines sources — scan incrémental (mtime par
      * fichier), idempotent : les mêmes racines ne re-parsent que les
      * fichiers changés.
+     *
+     * CORRECTIF 0.134.32 (rapport « après @color/ ça ne propose plus de
+     * complétion, ne voit pas les fichiers res ») : les racines livrées
+     * par le tooling sont des racines de CODE (`src/main/java`,
+     * `src/main/kotlin`) — chercher `res/` DANS la racine donnait
+     * `src/main/java/res`, un dossier qui n'existe JAMAIS : l'index
+     * projet restait vide (aucune complétion `@type/nom`, chaque
+     * référence projet diagnostiquée non résolue). Le `res/` de la
+     * convention AGP vit sur le SOURCE SET parent (`src/main/res`) —
+     * chaque racine teste donc SES deux candidats, dédoublonnés.
      */
     internal fun definir(nouvellesRacines: List<File>) {
         racines = nouvellesRacines
         val vues = mutableListOf<File>()
         for (racine in nouvellesRacines) {
-            val res = racine.resolve("res")
-            if (res.isDirectory) vues.add(res)
+            dossierResDe(racine)?.let { vues.add(it) }
         }
         val vivants = mutableSetOf<String>()
-        for (res in vues) {
+        for (res in vues.distinctBy { it.path }) {
             scannerDossierRes(res, vivants)
         }
         // Les déclarants d'un fichier DISPARU partent (l'index ne ment
         // jamais — une référence résolue doit l'être VRAIMENT).
         purger(vivants)
     }
+
+    /**
+     * Le dossier `res/` alimenté par une racine livrée : le candidat
+     * DIRECT (`racine/res` — le contrat historique, un client qui livre
+     * `src/main` tout entier) puis le candidat SOURCE SET (`parent/res`
+     * — `src/main/java` → `src/main/res`, la convention AGP réelle).
+     * `null` = aucun des deux n'existe (racine JVM, build générés…) —
+     * la racine est ignorée, sous-rapport honnête X4.
+     */
+    private fun dossierResDe(racine: File): File? =
+        racine.resolve("res").takeIf { it.isDirectory }
+            ?: racine.parentFile?.resolve("res")?.takeIf { it.isDirectory }
 
     /**
      * (Re)définit les ARCHIVES AAR des dépendances — scan incrémental
