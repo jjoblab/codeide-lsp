@@ -1,3 +1,5 @@
+import java.util.zip.ZipInputStream
+
 // :lsp:java — moteur d'analyse Java vendored (mission « LSP Java »,
 // prompt 2 §3 D1 — ADR 0108).
 //
@@ -63,13 +65,14 @@ configurations {
 
 val eclipseArtDir = layout.buildDirectory.dir("eclipse-art")
 
-// Le patcheur est déclaré AVANT les dépendances : le fileTree api des
-// jars patchés (ci-dessous) porte builtBy(patchEclipseForArt) —
+// Le patcheur est déclaré AVANT les dépendances : le fileTree compileOnly
+// des jars patchés (ci-dessous) porte builtBy(patchEclipseForArt) —
 // l'ordonnancement voyage AVEC la dépendance de fichiers, garantissant
-// aux CONSOMMATEURS (:lsp:testing, v0.96.3) que le patcher a produit
-// les jars avant toute tâche qui résolvent ce classpath (compilation,
-// tests). Les dependsOn explicites de fin de script restent en doublon
-// de sécurité pour les tâches de CE module.
+// aux tâches de CE module que le patcher a produit les jars avant toute
+// tâche qui résolvent ce classpath (compilation, tests). Depuis v1.0.1,
+// les CONSUMMATEURS prennent les types ECJ dans le jar du module lui-même
+// (graphé par sortie de tâche, voir le bloc Jar plus bas) ; les dependsOn
+// explicites de fin de script restent en doublon de sécurité.
 
 /**
  * Réécrit chaque jar Eclipse du graphe jdt.core pour le runtime Android.
@@ -93,12 +96,24 @@ abstract class PatchEclipseForArtTask : DefaultTask() {
     @get:OutputDirectory
     abstract val dossierSortie: DirectoryProperty
 
+    /** Arbre de classes DÉCOMPRIMÉ (build/eclipse-art-classes) — sortie
+     *  source du jar du module (from déterministe, voir le bloc Jar).
+     *  Décompresser ICI (java.util.zip, API JDK) plutôt qu'une closure
+     *  zipTree dans le Jar : une closure from({}) est figée à la CRÉATION
+     *  de l'entrée configuration-cache (avant l'exécution du patcher) —
+     *  premier build d'un répertoire neuf (CI) = jar sans l'ECJ. */
+    @get:OutputDirectory
+    abstract val dossierSortieClasses: DirectoryProperty
+
     @TaskAction
     fun patcher() {
         val outDir = dossierSortie.get().asFile
+        val outClasses = dossierSortieClasses.get().asFile
         // Nettoie les sorties périmées (jars retirés du graphe).
         outDir.listFiles()?.forEach { it.delete() }
         outDir.mkdirs()
+        outClasses.listFiles()?.forEach { it.deleteRecursively() }
+        outClasses.mkdirs()
         val jars =
             jarsEclipse.files
                 .filter { it.name.endsWith(".jar") }
@@ -125,6 +140,41 @@ abstract class PatchEclipseForArtTask : DefaultTask() {
             if (code != 0) {
                 throw GradleException("patcher ecj-art échoué ($code) sur ${jar.name}")
             }
+            // Explosion immédiate du jar patché vers l'arbre de classes :
+            // le jar du module consommera CETTE SORTIE DE TÂCHE (jamais
+            // une closure de résolution disque — cf. dossierSortieClasses).
+            dezipper(sortie, outClasses)
+        }
+    }
+
+    /** Décompresse [jar] dans [cible] (java.util.zip pur — aucune API
+     *  Gradle). Garde anti zip-slip : chaque entrée est cantonnée à
+     *  [cible]. Les exclusions META-INF/module-info restent du ressort
+     *  du bloc Jar (l'arbre reste brut). */
+    private fun dezipper(jar: File, cible: File) {
+        val racineCanonique = cible.canonicalPath + File.separator
+        // NOTE : ZipInputStream est importé en tête de script — la
+        // qualification java.util.zip.* ne marche PAS ici (le nom `java`
+        // se résout vers l'extension du plugin java-library).
+        ZipInputStream(jar.inputStream().buffered()).use { zis ->
+            var entree = zis.nextEntry
+            while (entree != null) {
+                if (!entree.isDirectory) {
+                    val fichier = File(cible, entree.name)
+                    if (!fichier.canonicalPath.startsWith(racineCanonique)) {
+                        throw GradleException("entrée zip hors cible (${entree.name})")
+                    }
+                    fichier.parentFile?.mkdirs()
+                    // use{} OBLIGATOIRE : sans fermeture, le tampon n'est
+                    // pas vidé → fichiers tronqués/vides dans l'arbre
+                    // (class parse "Index out of bounds" côté AGP).
+                    fichier.outputStream().buffered().use { sortie ->
+                        zis.copyTo(sortie)
+                    }
+                }
+                zis.closeEntry()
+                entree = zis.nextEntry
+            }
         }
     }
 }
@@ -138,6 +188,7 @@ val patchEclipseForArt =
         // Le patcher lui-même est un input — le changer doit re-patcher les jars.
         classpathPatcher.from(configurations["eclipsePatcher"])
         dossierSortie.set(eclipseArtDir)
+        dossierSortieClasses.set(layout.buildDirectory.dir("eclipse-art-classes"))
     }
 
 dependencies {
@@ -157,7 +208,9 @@ dependencies {
     // consommateurs binaires, constaté le 2026-10-18 par la CI binaire
     // de CodeIDE). Précédent : le shadowJar du tooling server. Les
     // consommateurs (composite ET binaire) prennent les types ECJ dans
-    // l'artefact lui-même — zéro doublon, une seule source de classes.
+    // l'artefact lui-même — zéro doublon, une seule source de classes
+    // (AGP résout un projet java-library sous forme de JAR, sonde
+    // classpath du 2026-10-18).
     compileOnly(fileTree(eclipseArtDir) {
         include("*.jar")
         builtBy(patchEclipseForArt)
@@ -196,18 +249,33 @@ tasks.named("test") { dependsOn(patchEclipseForArt) }
 // Sans cette fusion, l'artefact publié n'embarque que les classes du
 // module — les dépendances de fichiers étant invisibles au POM, les
 // consommateurs binaires perdaient les classes ECJ au runtime. La
-// fusion sert AUSSI le composite : une seule source de classes, zéro
-// doublon avec l'ancien fileTree api.
+// fusion sert AUSSI le composite : AGP consomme un projet java-library
+// sous forme de JAR (sonde classpath testDebugUnitTest), donc les
+// consommateurs composites (:lsp:host, :lsp:testing, CodeIDE en
+// -Pfreres.sources) prennent TOUS les types ECJ dans l'artefact
+// lui-même — une seule source de classes, zéro doublon.
+//
+// SOURCE = SORTIE DE TÂCHE (patchEclipseForArt.map {
+// it.dossierSortieClasses } = l'arbre décompressé par le patcher) —
+// PAS une closure from({ fileTree(dir) { }.files.map { zipTree(it) } }) :
+// le contenu d'une closure est figé à la CRÉATION de l'entrée
+// configuration-cache (phase de configuration, AVANT l'exécution du
+// patcher). Premier build d'un répertoire neuf (CI, clone frais,
+// 2026-10-17, runs CI 6 et 7 rouges — reproduit en local) :
+// build/eclipse-art n'existe pas encore → closure résolue VIDE → jar
+// construit SANS l'ECJ → NoClassDefFoundError
+// org/eclipse/jdt/internal/compiler/ASTVisitor dans
+// :lsp:host:testDebugUnitTest. Le fournisseur de tâche est résolu
+// paresseusement à l'EXÉCUTION (le patcher a déjà tourné), l'arbre est
+// snapshoté comme input du jar (up-to-date redevient correct) et rien
+// ne dépend de l'état disque à la configuration.
 tasks.named<Jar>("jar") {
     dependsOn(patchEclipseForArt)
     // Les packages du graphe jdt.core ne se chevauchent pas ; exclusion
     // de sécurité des entrées META-INF conflictuelles et de
     // module-info (le patcher retire déjà OSGi, signatures et MR-jar).
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from({
-        val jarsArt = fileTree(eclipseArtDir).matching { include("*-art.jar") }
-        jarsArt.files.map { zipTree(it) }
-    }) {
+    from(patchEclipseForArt.map { it.dossierSortieClasses }) {
         exclude(
             "META-INF/MANIFEST.MF",
             "META-INF/*.SF",
