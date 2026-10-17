@@ -147,17 +147,18 @@ dependencies {
     "eclipseRaw"(libs.eclipse.jdt.core)
     "eclipsePatcher"(project(":lsp:ecj-art"))
 
-    // ★ Jars Eclipse patchés pour ART — compile + runtime. Propagent aux
-    // consommateurs (runtimeElements) qui les dexent dans l'APK. Le fileTree
-    // est évalué paresseusement ; builtBy(patchEclipseForArt) fait voyager
-    // l'ordonnancement AVEC la dépendance de fichiers : les tâches de CE
-    // module et des CONSOMMATEURS (:lsp:testing) exécutent le patcher en
-    // premier (v0.96.3 — les dépendances de fichiers portent leurs
-    // dépendances de tâches).
-    // ★ api (pas implementation) : les consommateurs utilisent AUSSI l'AST
-    // ecj directement (SymbolIndexer) — les jars Eclipse doivent être sur
-    // leur classpath de compilation.
-    api(fileTree(eclipseArtDir) {
+    // ★ Jars Eclipse patchés pour ART — COMPILEONLY : ils alimentent la
+    // compilation DU module (le moteur vendored importe l'AST ecj) sans
+    // rejoindre les variantes de consommation. Leur contenu est GRAPHÉ
+    // dans le jar du module (bloc Jar plus bas — v1.0.1) : les
+    // dépendances de FICHIERS ne voyagent JAMAIS dans un POM Maven —
+    // l'artefact 1.0.0 publié était incomplet (NoClassDefFoundError
+    // org/eclipse/jdt/internal/compiler/ASTVisitor chez les
+    // consommateurs binaires, constaté le 2026-10-18 par la CI binaire
+    // de CodeIDE). Précédent : le shadowJar du tooling server. Les
+    // consommateurs (composite ET binaire) prennent les types ECJ dans
+    // l'artefact lui-même — zéro doublon, une seule source de classes.
+    compileOnly(fileTree(eclipseArtDir) {
         include("*.jar")
         builtBy(patchEclipseForArt)
     })
@@ -188,8 +189,34 @@ dependencies {
 // (le moteur importe org.eclipse.jdt.internal.compiler.* et le formateur
 // org.eclipse.jdt.core.formatter.*).
 tasks.withType<JavaCompile>().configureEach { dependsOn(patchEclipseForArt) }
-tasks.named("jar") { dependsOn(patchEclipseForArt) }
 tasks.named("test") { dependsOn(patchEclipseForArt) }
+
+// Le jar du module INTÈGRE le contenu des jars Eclipse patchés
+// (graphé de jdt.core complet : ecj, core.runtime, equinox, osgi…).
+// Sans cette fusion, l'artefact publié n'embarque que les classes du
+// module — les dépendances de fichiers étant invisibles au POM, les
+// consommateurs binaires perdaient les classes ECJ au runtime. La
+// fusion sert AUSSI le composite : une seule source de classes, zéro
+// doublon avec l'ancien fileTree api.
+tasks.named<Jar>("jar") {
+    dependsOn(patchEclipseForArt)
+    // Les packages du graphe jdt.core ne se chevauchent pas ; exclusion
+    // de sécurité des entrées META-INF conflictuelles et de
+    // module-info (le patcher retire déjà OSGi, signatures et MR-jar).
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from({
+        val jarsArt = fileTree(eclipseArtDir).matching { include("*-art.jar") }
+        jarsArt.files.map { zipTree(it) }
+    }) {
+        exclude(
+            "META-INF/MANIFEST.MF",
+            "META-INF/*.SF",
+            "META-INF/*.DSA",
+            "META-INF/*.RSA",
+            "module-info.class",
+        )
+    }
+}
 
 tasks.named<Test>("test") {
     useJUnitPlatform()

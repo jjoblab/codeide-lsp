@@ -44,9 +44,9 @@ tasks.withType<JavaCompile>().configureEach {
 // (dependencyResolutionManagement, FAIL_ON_PROJECT_REPOS).
 
 dependencies {
-    // Moteur vendored — `api(fileTree(eclipse-art))` PROPAGE les jars
-    // Eclipse patchés (le fileTree porte builtBy(patchEclipseForArt) :
-    // la résolution du classpath de test exécute le patcher d'abord).
+    // Moteur vendored — les jars Eclipse patchés sont DÉSORMAIS GRAPHÉS
+    // dans le jar de :lsp:java (v1.0.1) : la résolution du classpath de
+    // test exécute le patcher d'abord (dependsOn du jar du module).
     testImplementation(project(":lsp:java"))
 
     // Index disque réel (Kotlin) — :lsp:index expose api(:lsp:model),
