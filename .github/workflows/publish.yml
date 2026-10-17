@@ -1,0 +1,62 @@
+# codeide-lsp — publication des artefacts sur GitHub Packages.
+#
+# Miroir du workflow codeide-tooling (mise en place du 2026-10-17 —
+# PLAN_SEPARATION_DEPOTS.md §9). Déclenchée par un tag v* (release) ou
+# manuellement (workflow_dispatch — utilisée pour la première publication
+# de la version 1.0.0, le tag v1.0.0 étant antérieur à ce workflow).
+# Le GITHUB_TOKEN du dépôt suffit (packages: write) — aucun secret
+# supplémentaire. Les CONSOMMATEURS hors dépôt (CodeIDE) ont besoin d'un
+# PAT read:packages pour résoudre ces coordonnées.
+#
+# Coordonnées (convention multi-modules) :
+#   com.github.jjoblab.codeide-lsp:{model,index,java,ecj-art,testing,
+#   kotlin,xml} (composant java) + :host (composant release, AAR).
+#
+# Le frère codeide-tooling est cloné AVANT le build : :lsp:model dépend
+# de com.github.jjoblab.codeide-tooling:protocol, intégré en SOURCE par
+# build composite (settings.gradle.kts) — le publish évite ainsi toute
+# authentification du registre Packages côté build.
+name: Publication GitHub Packages
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: pub-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer les sources
+        uses: actions/checkout@v4
+
+      - name: Récupérer codeide-tooling (build composite)
+        run: |
+          git clone --depth 1 \
+            https://github.com/jjoblab/codeide-tooling.git ../codeide-tooling
+
+      - name: JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle (cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Accepter les licences du SDK Android
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Publier (composants java + release)
+        run: ./gradlew publish --stacktrace
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

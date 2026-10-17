@@ -13,6 +13,7 @@
 // par cache LRU de budget tas explicite, nettoyage des orphelins.
 
 plugins {
+    id("maven-publish")
     id("codeide.kotlin.library")
 }
 
@@ -59,4 +60,28 @@ tasks.register<JavaExec>("bench") {
     // La JVM du banc est bornée comme au banc d'étude (§11.1 : -Xmx2g,
     // SerialGC — mesures comparables d'une étape à l'autre).
     jvmArgs("-Xmx2g", "-XX:+UseSerialGC")
+}
+
+
+// Publication GitHub Packages (miroir codeide-tooling, mise en place du
+// 2026-10-17 — PLAN_SEPARATION_DEPOTS.md §9) : composant java,
+// coordonnées com.github.jjoblab.codeide-lsp:<module> — les MÊMES coordonnées que la
+// consommation composite de CodeIDE (substitution, version déclarée
+// ignorée en dev ; l'épinglage = version du catalogue + tag du dépôt).
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/jjoblab/codeide-lsp")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
 }

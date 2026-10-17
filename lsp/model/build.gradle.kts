@@ -16,6 +16,7 @@
 // vers le moteur :lsp:java — seulement le protocole du tooling.
 
 plugins {
+    id("maven-publish")
     id("codeide.kotlin.library")
     alias(libs.plugins.kotlin.serialization)
 }
@@ -44,6 +45,30 @@ kover {
                 bound {
                     minValue.set(80)
                 }
+            }
+        }
+    }
+}
+
+
+// Publication GitHub Packages (miroir codeide-tooling, mise en place du
+// 2026-10-17 — PLAN_SEPARATION_DEPOTS.md §9) : composant java,
+// coordonnées com.github.jjoblab.codeide-lsp:<module> — les MÊMES coordonnées que la
+// consommation composite de CodeIDE (substitution, version déclarée
+// ignorée en dev ; l'épinglage = version du catalogue + tag du dépôt).
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/jjoblab/codeide-lsp")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
             }
         }
     }

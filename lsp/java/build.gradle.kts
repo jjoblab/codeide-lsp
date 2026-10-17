@@ -32,6 +32,7 @@
 // d'origine : même classpath, même main, mêmes arguments).
 
 plugins {
+    id("maven-publish")
     `java-library`
 }
 
@@ -202,4 +203,28 @@ tasks.named<Test>("test") {
     environment("JO_TEST_JDK_HOME", System.getProperty("java.home"))
     // Le reste des tests env-dépendants (android.jar, device) se skippe
     // proprement via assumeTrue/@EnabledIf.
+}
+
+
+// Publication GitHub Packages (miroir codeide-tooling, mise en place du
+// 2026-10-17 — PLAN_SEPARATION_DEPOTS.md §9) : composant java,
+// coordonnées com.github.jjoblab.codeide-lsp:<module> — les MÊMES coordonnées que la
+// consommation composite de CodeIDE (substitution, version déclarée
+// ignorée en dev ; l'épinglage = version du catalogue + tag du dépôt).
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/jjoblab/codeide-lsp")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
 }

@@ -35,7 +35,19 @@
 // (prompt compagnon section 3 — l'exception feature reste cel-ui
 // seule).
 plugins {
+    id("maven-publish")
     id("codeide.android.library")
+}
+
+// Publication : variante unique release (AGP 9 — le composant « release »
+// de maven-publish n'existe qu'une fois la variante déclarée ici). Le
+// reste de la configuration Android vit dans la convention
+// `codeide.android.library` ; ce bloc n'ajoute QUE le câblage de
+// publication (miroir codeide-tooling, PLAN_SEPARATION_DEPOTS.md §9).
+android {
+    publishing {
+        singleVariant("release")
+    }
 }
 
 dependencies {
@@ -105,4 +117,40 @@ tasks.withType<Test>().configureEach {
     // Les sondes du moteur cherchent un JDK COMPLET (lib/src.zip,
     // lib/modules) : le JDK du démon Gradle l'est par construction.
     environment("JO_TEST_JDK_HOME", System.getProperty("java.home"))
+}
+
+
+// Publication GitHub Packages (miroir codeide-tooling, mise en place du
+// 2026-10-17 — PLAN_SEPARATION_DEPOTS.md §9) : composant release,
+// coordonnées com.github.jjoblab.codeide-lsp:<module> — les MÊMES coordonnées que la
+// consommation composite de CodeIDE (substitution, version déclarée
+// ignorée en dev ; l'épinglage = version du catalogue + tag du dépôt).
+
+
+// Publication GitHub Packages (miroir codeide-tooling, mise en place du
+// 2026-10-17 — PLAN_SEPARATION_DEPOTS.md §9) : composant RELEASE (AAR),
+// coordonnées com.github.jjoblab.codeide-lsp:<module> — les MÊMES coordonnées que la
+// consommation composite de CodeIDE (substitution, version déclarée
+// ignorée en dev ; l'épinglage = version du catalogue + tag du dépôt).
+// AGP 9 : le composant « release » n'est créé qu'en afterEvaluate — la
+// publication est donc déclarée DANS afterEvaluate (accès direct =
+// « SoftwareComponent with name 'release' not found »).
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("maven") {
+                from(components["release"])
+            }
+        }
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/jjoblab/codeide-lsp")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+    }
 }
