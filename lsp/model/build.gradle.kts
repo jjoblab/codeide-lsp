@@ -22,8 +22,12 @@ plugins {
 
 dependencies {
     // Types Classpath* du protocole — source de la conversion (prompt 2
-    // §7.1 : « Construction pure depuis ClasspathResult »).
-    api(project(":tooling:protocol"))
+    // §7.1 : « Construction pure depuis ClasspathResult »). Le protocole
+    // vit dans le dépôt jjoblab/codeide-tooling (extraction 2026-10-17) :
+    // coordonnées externes convention JitPack multi-modules ; en DEV, la
+    // substitution composite de settings.gradle.kts (tooling.dir) remplace
+    // ces coordonnées par le projet source :tooling:protocol.
+    api("com.github.jjoblab.codeide-tooling:protocol:1.0.0")
     // Sérialisation de la persistance versionnée (lsp-modele.json).
     api(libs.kotlinx.serialization.json)
 
