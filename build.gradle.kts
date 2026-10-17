@@ -22,3 +22,18 @@ plugins {
     // Règles de dépendance entre modules (tâche checkModuleDependencies).
     id("codeide.module-rules")
 }
+
+// Publication (GitHub Packages d'abord, JitPack quand le dépôt est
+// stable — docs CodeIDE PLAN_SEPARATION_DEPOTS.md §4) : les coordonnées
+// suivent la convention JitPack multi-modules com.github.<user>.<repo>:<module>,
+// pour que la consommation dev (composite du dépôt CodeIDE) et binaire
+// (Packages/JitPack) utilise exactement les MÊMES coordonnées — miroir
+// du bloc équivalent du dépôt codeide-tooling (bascule 2026-10-17, §9).
+val proprietesVersion = java.util.Properties().apply {
+    rootProject.file("version.properties").inputStream().use { load(it) }
+}
+
+allprojects {
+    group = "com.github.jjoblab.codeide-lsp"
+    version = proprietesVersion.getProperty("VERSION_NAME")
+}
