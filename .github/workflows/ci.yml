@@ -1,0 +1,64 @@
+# codeide-lsp — CI complète (JVM pur + bibliothèques Android).
+# Miroir de la CI CodeIDE (ADR 0037) : la même chaîne, sans l'app.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verification:
+    name: Compilation et vérification complète
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer les sources
+        uses: actions/checkout@v4
+
+      # codeide-tooling : :lsp:model dépend de
+      # com.github.jjoblab.codeide-tooling:protocol, intégré en SOURCE par
+      # build composite (settings.gradle.kts — miroir LayoutLib de CodeIDE).
+      # Dépôt public : clonage anonyme. Le checkout vit HORS de l'espace de
+      # travail (../codeide-tooling = chemin par défaut résolu par
+      # settings.gradle.kts).
+      - name: Récupérer codeide-tooling (build composite)
+        run: |
+          git clone --depth 1 \
+            https://github.com/jjoblab/codeide-tooling.git ../codeide-tooling
+
+      - name: JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Gradle (cache wrapper + dépendances)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/tags/' }}
+
+      # Les licences du SDK préinstallé du runner sont déjà acceptées ;
+      # ce rite assure que sdkmanager peut auto-installer la plateforme
+      # (compileSdk) si besoin — même rite que la CI CodeIDE.
+      - name: Accepter les licences du SDK Android
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Vérification complète (sans clean — caches Gradle)
+        run: ./gradlew spotlessCheck detekt checkModuleDependencies lintDebug testDebugUnitTest koverVerify assembleRelease --stacktrace
+
+      - name: Publier les rapports en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapports-echec-${{ github.sha }}
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 14
