@@ -76,6 +76,10 @@ class XmlLanguageServerTest {
         assertEquals(true, capacites.codeActionProvider.left, "quick-fixes déclarés à XE4")
         assertEquals(true, capacites.documentSymbolProvider.left, "outline déclaré (S1)")
         assertEquals(true, capacites.foldingRangeProvider.left, "pliage déclaré (XP11)")
+        // S3 : rename borné (prepareProvider) + formatage ré-indentation.
+        assertTrue(capacites.renameProvider.right != null, "rename déclaré (S3)")
+        assertEquals(true, capacites.renameProvider.right?.prepareProvider, "prepareRename déclaré (S3)")
+        assertEquals(true, capacites.documentFormattingProvider.left, "formatage déclaré (S3)")
         assertEquals("codeide-xml", resultat.serverInfo.name)
         assertTrue(resultat.serverInfo.version != "inconnue")
         espace.fermer()
@@ -532,5 +536,113 @@ class XmlLanguageServerTest {
         override fun logMessage(params: MessageParams) {
             // Non sollicité.
         }
+    }
+
+    // ── S3 : rename borné + formatage ──────────────────────────────────
+
+    /** Ouvre [texte] au [uri] donné (didOpen complet). */
+    private fun ouvrir(
+        espace: Espace,
+        uri: String,
+        texte: String,
+    ) {
+        espace.serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem(uri, "xml", 1, texte)),
+        )
+    }
+
+    @Test
+    fun `rename borne - declarante plus-id et references des ouverts editees`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val texte1 = "<Button android:id=\"@+id/valider\"/>"
+        val uri1 = "file:///res/layout/form.xml"
+        ouvrir(espace, uri1, texte1)
+        val texte2 = "<Button android:id=\"@id/valider\"/>"
+        val uri2 = "file:///res/layout/confirm.xml"
+        ouvrir(espace, uri2, texte2)
+
+        val position = org.eclipse.lsp4j.Position(0, texte1.indexOf("@+id/valider") + "@+id/".length)
+        // prepareRename : plage du nom + placeholder.
+        val prepare =
+            espace.serveur.textDocumentService
+                .prepareRename(
+                    org.eclipse.lsp4j.PrepareRenameParams(VersionedTextDocumentIdentifier(uri1, 1), position),
+                ).join()
+        val resultat = prepare!!.second
+        assertEquals("valider", resultat.placeholder)
+        assertEquals(texte1.indexOf("valider"), resultat.range.start.character)
+        assertEquals(texte1.indexOf("valider") + "valider".length, resultat.range.end.character)
+
+        // rename : WorkspaceEdit legacy `changes` — les DEUX documents.
+        val edition =
+            espace.serveur.textDocumentService
+                .rename(
+                    org.eclipse.lsp4j.RenameParams(
+                        VersionedTextDocumentIdentifier(uri1, 1),
+                        position,
+                        "confirmer",
+                    ),
+                ).join()
+        val changes = edition.changes
+        assertEquals(setOf(uri1, uri2), changes.keys)
+        assertEquals("confirmer", changes[uri1]!!.single().newText)
+        assertEquals(
+            texte1.indexOf("valider"),
+            changes[uri1]!!
+                .single()
+                .range.start.character,
+        )
+        assertEquals("confirmer", changes[uri2]!!.single().newText)
+        espace.fermer()
+    }
+
+    @Test
+    fun `rename sans cible - erreur typee RequestFailed`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val uri = "file:///res/layout/main.xml"
+        ouvrir(espace, uri, "<TextView android:text=\"pas une reference\"/>")
+        val erreur =
+            org.junit.jupiter.api.assertThrows<java.util.concurrent.CompletionException> {
+                espace.serveur.textDocumentService
+                    .rename(
+                        org.eclipse.lsp4j.RenameParams(
+                            VersionedTextDocumentIdentifier(uri, 1),
+                            org.eclipse.lsp4j.Position(0, 3),
+                            "x",
+                        ),
+                    ).join()
+            }
+        val cause = erreur.cause as org.eclipse.lsp4j.jsonrpc.ResponseErrorException
+        assertEquals(
+            org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.value,
+            cause.responseError.code,
+        )
+        assertEquals("renommage.sansCible", (cause.responseError.data as Map<*, *>)["code"])
+        espace.fermer()
+    }
+
+    @Test
+    fun `formatting - re-indentation traduite en TextEdits LSP`() {
+        val espace = espaceAvecEspion()
+        espace.serveur.initialize(InitializeParams()).join()
+        val uri = "file:///res/values/strings.xml"
+        val desordonne = "<resources>\n<string name=\"a\">Bonjour</string>\n</resources>\n"
+        ouvrir(espace, uri, desordonne)
+        val edits =
+            espace.serveur.textDocumentService
+                .formatting(
+                    org.eclipse.lsp4j.DocumentFormattingParams(
+                        TextDocumentIdentifier(uri),
+                        org.eclipse.lsp4j.FormattingOptions(4, true),
+                    ),
+                ).join()
+        // Une seule édition : la ligne intérieure décalée.
+        assertEquals(1, edits.size)
+        assertEquals(1, edits[0].range.start.line)
+        assertEquals(0, edits[0].range.start.character)
+        assertEquals("    ", edits[0].newText)
+        espace.fermer()
     }
 }

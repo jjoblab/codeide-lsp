@@ -6,7 +6,9 @@ import jo.lspxml.api.CorrectifXml
 import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
+import jo.lspxml.api.EditionXml
 import jo.lspxml.api.PlagePliableXml
+import jo.lspxml.api.PlageRenommableXml
 import jo.lspxml.api.PropositionCompletionXml
 import jo.lspxml.api.SeveriteXml
 import jo.lspxml.api.SymboleDocumentXml
@@ -20,6 +22,8 @@ import jo.lspxml.completion.CompletionEntreesXml
 import jo.lspxml.completion.CompletionMenusXml
 import jo.lspxml.completion.CompletionNavigationXml
 import jo.lspxml.completion.CompletionPolicesXml
+import jo.lspxml.format.FormatXml
+import jo.lspxml.resolution.RenommageXml
 import jo.lspxml.completion.CompletionTransitionsXml
 import jo.lspxml.completion.CompletionValeursXml
 import jo.lspxml.completion.CompletionXmlApp
@@ -174,6 +178,13 @@ internal class SessionLangageXmlImpl(
      * pour le catalogue plateforme et l'index ressources).
      */
     internal fun classpathCourant(): ClasspathXml? = classpath
+
+    /**
+     * Texte vivant d'un document ouvert (SONDAGE de test — le
+     * renommage borné S3 vérifie que ses plages tombent sur le nom).
+     * `null` pour un document inconnu/fermé.
+     */
+    internal fun texteDocumentInterne(uri: String): String? = documents[uri]?.texte
 
     /** Catalogue courant (de la plateforme du classpath). */
     private fun catalogueCourant() = catalogues.catalogue(classpath?.dossierPlateforme)
@@ -665,6 +676,53 @@ internal class SessionLangageXmlImpl(
             documents[uri]?.let { PlisDocumentXml.depuis(it.document) } ?: emptyList()
         }
 
+    /**
+     * Plage renommable (S3 — rename borné des entrées values) — le
+     * travail vit dans [RenommageXml] ; la session pioche le document
+     * courant et l'index. Document inconnu/fermé : `null` (sous-rapport).
+     */
+        @Suppress("ReturnCount")
+override fun plageRenommable(uri: String, decalage: Int): PlageRenommableXml? {
+        if (fermee) return null
+        val document = documents[uri] ?: return null
+        val plage =
+            RenommageXml.plageNomAuCurseur(document.document, decalage, indexRessources)
+                ?: return null
+        return PlageRenommableXml(plage, document.texte.substring(plage.debut, plage.fin))
+    }
+
+    /**
+     * Occurrences à renommer (S3 — BORNÉ : déclarations de l'index +
+     * références des documents ouverts). Les tampons ouverts voyagent
+     * en COPIE (`uri → texte`) — le moteur ne prête jamais ses états
+     * internes. Document inconnu/fermé : liste VIDE (l'hôte traduit en
+     * erreur typée sans cible).
+     */
+        @Suppress("ReturnCount")
+override fun renommage(uri: String, decalage: Int): List<EmplacementXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        return RenommageXml.occurrences(
+            document.document,
+            uri,
+            decalage,
+            indexRessources,
+            documents.mapValues { (_, doc) -> doc.texte },
+        )
+    }
+
+    /**
+     * Formatage (S3 — ré-indentation bornée) — le travail vit dans
+     * [FormatXml] ; la session pioche le document courant. Document
+     * inconnu/fermé : liste VIDE.
+     */
+        @Suppress("ReturnCount")
+override fun formatter(uri: String, tailleIndentation: Int): List<EditionXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        return FormatXml.editer(document.document, document.texte, tailleIndentation)
+    }
+
     override fun close() {
         if (fermee) return
         fermee = true
@@ -677,4 +735,7 @@ internal class SessionLangageXmlImpl(
         val texte: String,
         val document: jo.lspxml.parse.DocumentXml,
     )
-}
+}    // Exemption detekt ciblée (règle 16) : ReturnCount — les sorties
+    // sont des régimes distincts (session fermée, document inconnu,
+    // garde cible — même patron que correctifs).
+

@@ -187,3 +187,18 @@ public data class PlagePliableXml(
     public val debut: Int,
     public val fin: Int,
 )
+
+/**
+ * Plage renommable (`textDocument/prepareRename`, S3 — plan de
+ * stabilisation LSP §3.3 « rename borné des entrées values ») : la
+ * plage du NOM d'une ressource projet + le NOM COURANT (placeholder
+ * pré-rempli dans l'éditeur). Miroir de `PlageRenommableKotlin` — la
+ * traduction en Range LSP appartient à l'hôte.
+ *
+ * @property plage plage du NOM renommable (décalages du document).
+ * @property placeholder nom courant (valeur pré-remplie du renommage).
+ */
+public data class PlageRenommableXml(
+    public val plage: jo.lspxml.parse.Plage,
+    public val placeholder: String,
+)

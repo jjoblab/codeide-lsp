@@ -151,6 +151,12 @@ internal class IndexRessources {
         nom: String,
     ): Declaration? = entrees[type]?.get(nom)?.firstOrNull()
 
+    /** TOUS les déclarants PROJET d'une entrée (premier porteur en
+     *  tête — un nom peut vivre dans values ET values-night : le
+     *  renommage borné (S3) met chaque fichier déclarant à jour). */
+    internal fun declarantsDe(type: String, nom: String): List<Declaration> =
+        entrees[type]?.get(nom)?.toList() ?: emptyList()
+
     /** Noms du TYPE (ordre d'insertion — le document décide). */
     internal fun nomsParType(type: String): List<String> {
         val parNom = entrees[type] ?: return emptyList()
@@ -494,8 +500,11 @@ internal class IndexRessources {
         empreintesAar.keys.retainAll(vivants)
     }
 
-    /** Type de ressource d'une ENTRÉE de values (`string-array` → array). */
-    private fun typeDEntree(tag: String): String? =
+    /** Type de ressource d'une ENTRÉE de values (`string-array` → array).
+     *  INTERNAL : partagé avec le renommage borné (S3) — la cible
+     *  déclarante du curseur se qualifie par le MÊME mappage que
+     *  l'indexation (une seule source de vérité des types d'entrée). */
+    internal fun typeDEntree(tag: String): String? =
         when (tag) {
             "string-array", "integer-array" -> "array"
             "plurals" -> "plurals"

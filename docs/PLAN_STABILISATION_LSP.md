@@ -46,9 +46,13 @@
 - `workspace/symbol`
 - Watched-files côté hôte
 
-#### S2 — Confort structurel
+#### S2 — Confort structurel — ✅ LIVRÉ (audit 19/10 : câblé dans
+`JavaTextDocumentService` — rangeFormatting, selectionRange,
+onTypeFormatting, codeLens, inlayHint, semanticTokens, highlight,
+references, rename, folding ; les hiérarchies call/type restent le
+seul item S2 ouvert, coût élevé côté ECJ)
 - `rangeFormatting`, `selectionRange`, `onTypeFormatting`, `codeLens`
-- Hiérarchies call/type
+- Hiérarchies call/type (restant — deferred)
 - Hover javadoc, `filterText`
 
 #### S3 — Structurel/deferred
@@ -79,11 +83,12 @@ La publication est autorisée (GitHub Packages depuis v1.0.0).
 - `didSave` republication, tags `Unnecessary`, `relatedInformation`
 - KP3 (`languageVersion` OU ADR renonciation), KP5 (fallback sans session Java)
 
-#### S2 — Confort (1-2 semaines)
-- `references` + `documentHighlight` via index inverse
-- `rename` borné (miroir Java "honest rename")
-- Hover riche (**utiliser `KDocParser` déjà vendored — actuellement inutilisé**)
-- `foldingRange` depuis arbre immuable
+#### S2 — Confort (1-2 semaines) — ✅ LIVRÉ (audit 19/10 : tout est
+dans l'historique et câblé hôte — `KotlinLanguageServer`)
+- `references` + `documentHighlight` via index inverse (OccurrencesKotlin)
+- `rename` borné (miroir Java "honest rename" — plageRenommable/renommage)
+- Hover riche (**KDocParser vendored consommé** — DocumentationKotlin)
+- `foldingRange` depuis arbre immuable (PlisDocumentKotlin)
 
 #### S3 — Deferred
 - T2 K2 compilation par pack
@@ -109,15 +114,19 @@ La publication est autorisée (GitHub Packages depuis v1.0.0).
 3. `documentSymbol` (DOM → DocumentSymbols hiérarchiques)
 4. `didChangeWatchedFiles` (re-push classpath sur événements `res/`)
 
-#### S2 — Confort & périmètre (~5 jours)
-- `foldingRanges` (ranges déjà dans DOM)
-- Cache ligne partagé + LRU pour définition (XP15)
-- Complétion valeurs littérales (XP16)
+#### S2 — Confort & périmètre (~5 jours) — ✅ LIVRÉ (audit 19/10)
+- `foldingRanges` (ranges déjà dans DOM — PlisDocumentXml, XP11)
+- Cache ligne partagé + LRU pour définition (XP15 — ConvertisseurPositions)
+- Complétion valeurs littérales (XP16 — CompletionValeursXml)
 - Genres étendus `res/color`, `res/xml`, `res/navigation` (XP12)
 
 #### S3 — Fidélité Android Studio (~2-3 semaines)
 - **Index ressources de dépendances (AAR)** ✅ **LIVRÉ v0.134.20** (XE6) : archive listing + parse à la volée, fusion dans `IndexRessources` (cartes projet/lib séparées, projet prime) ; `xml.referenceNonResolue` ERREUR légitime (ADR 0120) ; complétion styles/couleurs Material
-- Rename borné des entrées values, formateur XML (restant)
+- **Rename borné des entrées values** — ✅ LIVRÉ 19/10 (lot 1.1.0 :
+  RenommageXml — déclarations index + références des ouverts, miroir
+  « rename honnête » Java/Kotlin)
+- **Formateur XML** — ✅ LIVRÉ 19/10 (lot 1.1.0 : FormatXml —
+  ré-indentation canonique bornée, contenu jamais réécrit)
 
 **Bloqueurs critiques** :
 - XP1 : faux positifs sur références de dépendances (Material/AppCompat/AndroidX)
@@ -139,6 +148,8 @@ La publication est autorisée (GitHub Packages depuis v1.0.0).
 | **P2 — Moyen terme** | XML | Vues projet en completion (XP5) | 1 jour | Completion riche |
 | **P3 — Long terme** | Java | Décision D3 + lot G — ✅ clôturés (ADR 0110/0121) | — | Publication autorisée |
 | **P3 — Long terme** | XML | Index ressources AAR (S3) | ✅ Livré v0.134.20 | Fidélité AS |
+| **P4 — Confort** | XML | Rename borné values + formateur | ✅ Livré 19/10 (1.1.0) | Geste de renommage + format |
+| **P4 — Confort** | Tous | Audit S2 : Kotlin/Java/XML câblés | ✅ Confirmé 19/10 | — |
 
 ## 5. Références
 

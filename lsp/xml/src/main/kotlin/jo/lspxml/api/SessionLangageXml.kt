@@ -152,6 +152,64 @@ public interface SessionLangageXml : AutoCloseable {
     public fun plagesPliables(uri: String): List<PlagePliableXml> = emptyList()
 
     /**
+     * Plage renommable à [decalage] (`textDocument/prepareRename`, S3
+     * — plan de stabilisation LSP §3.3 « rename borné des entrées
+     * values ») : le nom d'une RESSOURCE projet, sous deux formes
+     * cibles — référence `@type/nom` / `?attr/nom` / `@+type/nom`
+     * dans une valeur d'attribut, ou entrée déclarante de `values`
+     * (valeur de son attribut `name`). Les références FRAMEWORK
+     * (`@android:…`) ne sont JAMAIS renommables (ressource système,
+     * pas de source projet) ; les ressources PAR FICHIER (layout,
+     * drawable…) non plus (le renommage serait celui du FICHIER,
+     * hors bornage texte).
+     *
+     * @return la plage du NOM + le placeholder (nom courant), `null`
+     *         si rien n'est renommable (sous-rapport honnête X4 —
+     *         l'éditeur ne propose pas le geste).
+     */
+    public fun plageRenommable(uri: String, decalage: Int): PlageRenommableXml? = null
+
+    /**
+     * Occurrences à renommer (`textDocument/rename`, S3 — BORNÉ, miroir
+     * du « rename honnête » Java/Kotlin) : la DÉCLARATION (entrées
+     * `values` — chaque fichier déclarant, tampon ouvert PUIS disque)
+     * et les références `@type/nom` / `?attr/nom` des documents
+     * OUVERTS (bornage assumé : un fichier fermé non déclarant ne
+     * passe PAS — jamais d'édition à l'aveugle sur un texte non vu).
+     *
+     * AUCUN échec silencieux côté hôte : liste vide = erreur typée
+     * RequestFailed (-32803), l'éditeur distingue « rien à renommer »
+     * d'un succès vide.
+     *
+     * @return les emplacements (uri + décalages), déclaration
+     *         d'abord, références ensuite par document ; liste VIDE
+     *         sans cible renommable au curseur.
+     */
+    public fun renommage(uri: String, decalage: Int): List<EmplacementXml> = emptyList()
+
+    /**
+     * Formatage du document (`textDocument/formatting`, S3 — formateur
+     * XML borné) : RÉ-INDENTATION canonique seule — la profondeur
+     * logique de chaque ligne vient du DOM (ancêtres de l'élément
+     * qu'elle ouvre/ferme/continue, texte = profondeur de contenu),
+     * le CONTENU des lignes n'est JAMAIS touché (aucun re-ligne, aucune
+     * retouche d'attribut ni de texte — les commentaires, CDATA et
+     * entités restent octet-pour-octet).
+     *
+     * Refus honnête : document cassé (reprises du parseur, balise non
+     * fermée) = liste VIDE (on ne reformate pas ce qu'on ne comprend
+     * pas — X4).
+     *
+     * @param uri identité du document.
+     * @param tailleIndentation espaces par niveau (convention Android
+     *        : 4).
+     * @return les éditions de REMPLACEMENT du blanc de tête de chaque
+     *         ligne à réindenter (jamais superposées, ordonnées) ;
+     *         liste VIDE si rien à changer ou refus.
+     */
+    public fun formatter(uri: String, tailleIndentation: Int = 4): List<EditionXml> = emptyList()
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document, vide l'index projet. Idempotente.
      */

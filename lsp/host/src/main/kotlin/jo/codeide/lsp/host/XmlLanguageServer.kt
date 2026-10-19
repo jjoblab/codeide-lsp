@@ -25,6 +25,7 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.DocumentSymbol
 import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.Hover
@@ -33,8 +34,13 @@ import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.PrepareRenameDefaultBehavior
+import org.eclipse.lsp4j.PrepareRenameParams
+import org.eclipse.lsp4j.PrepareRenameResult
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.RenameOptions
+import org.eclipse.lsp4j.RenameParams
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.SymbolInformation
@@ -43,6 +49,7 @@ import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.jsonrpc.messages.Either
+import org.eclipse.lsp4j.jsonrpc.messages.Either3
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import org.eclipse.lsp4j.services.TextDocumentService
@@ -141,6 +148,19 @@ internal class XmlLanguageServer(
         // est pliable (le DOM porte les plages), l'hôte traduit en
         // lignes LSP.
         capacites.setFoldingRangeProvider(true)
+        // S3 (lot du 19/10) : RENAME BORNÉ des entrées values +
+        // références documents ouverts — miroir du « rename honnête »
+        // Java/Kotlin (prepareRename = plage + placeholder, rename
+        // borné = WorkspaceEdit legacy `changes`, le client cel-lsp
+        // n'annonce PAS documentChanges). Framework et ressources par
+        // fichier : jamais renommables (sous-rapport honnête).
+        val renommage = RenameOptions()
+        renommage.prepareProvider = true
+        capacites.setRenameProvider(renommage)
+        // S3 (lot du 19/10) : FORMATAGE — ré-indentation canonique
+        // seule (profondeur DOM, contenu des lignes intact — les
+        // commentaires/CDATA ne sont pas modélisés : jamais réécrits).
+        capacites.setDocumentFormattingProvider(true)
         // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
         // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
         // Le client cel-lsp supporte MarkupContent → on l'utilise.
@@ -432,6 +452,181 @@ internal class XmlLanguageServer(
         }
 
         /**
+         * prepareRename (S3 — rename borné des entrées values) : la
+         * plage du NOM + le placeholder (nom courant) si le curseur
+         * porte une cible renommable, `null` sinon (l'éditeur ne
+         * propose pas le geste — jamais de renommage silencieux à
+         * l'aveugle).
+         *
+         * Exemption detekt ciblée (règle 16) : ReturnCount +
+         * SwallowedException — document inconnu, cible absente et
+         * défaut hôte sont des RÉGIMES distincts (miroir Kotlin : le
+         * catch est le contrat — une panne de session ne tue pas
+         * l'hôte).
+         */
+        @Suppress("ReturnCount", "SwallowedException")
+        override fun prepareRename(
+            params: PrepareRenameParams,
+        ): CompletableFuture<Either3<Range, PrepareRenameResult, PrepareRenameDefaultBehavior>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(null)
+            val plageRenommable =
+                try {
+                    session.plageRenommable(uri, document.convertisseur.decalageDe(params.position))
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "prepareRename XML échoué ($uri)", t)
+                    null
+                } ?: return CompletableFuture.completedFuture(null)
+            val resultat =
+                PrepareRenameResult(
+                    Range(
+                        document.convertisseur.positionDe(plageRenommable.plage.debut),
+                        document.convertisseur.positionDe(plageRenommable.plage.fin),
+                    ),
+                    plageRenommable.placeholder,
+                )
+            return CompletableFuture.completedFuture(Either3.forSecond(resultat))
+        }
+
+        /**
+         * Renommage borné (S3 — miroir I8 « rename honnête » Java) : la
+         * déclaration (entrées values, chaque fichier déclarant) + les
+         * références des documents ouverts deviennent des TextEdits
+         * groupés par fichier (forme legacy `changes` — le client
+         * cel-lsp n'annonce PAS documentChanges). AUCUN échec
+         * silencieux : sans cible = erreur TYPOÉE RequestFailed
+         * (-32803) avec data {code: renommage.sansCible}.
+         *
+         * Exemption detekt ciblée (règle 16) : ReturnCount — document
+         * inconnu et sans cible sont des RÉGIMES distincts (erreur
+         * TYPOÉE I8 — jamais de succès vide silencieux).
+         */
+        @Suppress("ReturnCount")
+        override fun rename(params: RenameParams): CompletableFuture<WorkspaceEdit> {
+            val uri = params.textDocument.uri
+            val document =
+                documents[uri]
+                    ?: return futureEnEchec(sansCible(uri, params.position))
+            val emplacements =
+                try {
+                    session.renommage(uri, document.convertisseur.decalageDe(params.position))
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "rename XML échoué ($uri)", t)
+                    throw org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                        org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                            org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.value,
+                            "Renommage échoué : $t",
+                            null,
+                        ),
+                    )
+                }
+            if (emplacements.isEmpty()) {
+                return futureEnEchec(sansCible(uri, params.position))
+            }
+            return CompletableFuture.completedFuture(editionsRenommage(emplacements, params.newName))
+        }
+
+        /**
+         * Formatage (S3) : les éditions de ré-indentation du moteur
+         * (décalages) deviennent des TextEdits LSP sur le document
+         * courant (convertisseur partagé du DocumentLsp — XP15).
+         * Refus du moteur (document cassé) = liste VIDE (succès sans
+         * édition : le document reste tel quel, jamais d'exception).
+         */
+        override fun formatting(params: DocumentFormattingParams): CompletableFuture<List<TextEdit>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val editions =
+                try {
+                    session.formatter(uri, optionsIndentation(params))
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "formatting XML échoué ($uri)", t)
+                    emptyList()
+                }
+            val edits =
+                editions.map { edition ->
+                    TextEdit(
+                        Range(
+                            document.convertisseur.positionDe(edition.debut),
+                            document.convertisseur.positionDe(edition.fin),
+                        ),
+                        edition.texte,
+                    )
+                }
+            return CompletableFuture.completedFuture(edits)
+        }
+
+        /** Taille d'indentation demandée (options du client, défaut 4). */
+        private fun optionsIndentation(params: DocumentFormattingParams): Int =
+            params.options?.takeIf { it.tabSize > 0 }?.tabSize ?: INDENTATION_DEFAUT
+
+        /** Erreur TYPOÉE « sans cible » (miroir Java/Kotlin — data FR). */
+        private fun sansCible(
+            uri: String,
+            position: Position,
+        ): org.eclipse.lsp4j.jsonrpc.ResponseErrorException =
+            org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
+                org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
+                    org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode.RequestFailed.value,
+                    "Aucune ressource renommable à la position du curseur.",
+                    java.util.Map.of(
+                        "code",
+                        "renommage.sansCible",
+                        "uri",
+                        uri,
+                        "line",
+                        position.line,
+                        "character",
+                        position.character,
+                    ),
+                ),
+            )
+
+        /** Future en échec, compatible API 26 (miroir Kotlin). */
+        private fun <T> futureEnEchec(erreur: Throwable): CompletableFuture<T> =
+            CompletableFuture<T>().apply { completeExceptionally(erreur) }
+
+        /**
+         * Emplacements neutres → WorkspaceEdit legacy `changes` : le
+         * texte cible vient du document ouvert (version vive) ou du
+         * disque (fichier fermé — le déclarant n'est pas forcément
+         * ouvert) ; illisible = emplacement OMIS (jamais une édition
+         * fausse — miroir locationLspDe).
+         *
+         * Exemption detekt ciblée (règle 16) : SwallowedException — la
+         * lecture disque best-effort EST le contrat (fichier illisible
+         * = occurrence OMISE, jamais une édition fausse).
+         */
+        @Suppress("SwallowedException")
+        private fun editionsRenommage(
+            emplacements: List<jo.lspxml.api.EmplacementXml>,
+            nouveauNom: String,
+        ): WorkspaceEdit {
+            val changes = LinkedHashMap<String, List<TextEdit>>()
+            for (emplacement in emplacements) {
+                val texteFichier =
+                    documents[emplacement.uri]?.texte
+                        ?: try {
+                            java.io.File(java.net.URI(emplacement.uri)).readText()
+                        } catch (t: Throwable) {
+                            null
+                        }
+                        ?: continue // illisible : occurrence OMISE
+                val convertisseur = ConvertisseurPositions.pour(texteFichier)
+                val edit =
+                    TextEdit(
+                        Range(
+                            convertisseur.positionDe(emplacement.debut),
+                            convertisseur.positionDe(emplacement.fin),
+                        ),
+                        nouveauNom,
+                    )
+                changes[emplacement.uri] = (changes[emplacement.uri] ?: emptyList()) + edit
+            }
+            return WorkspaceEdit(changes)
+        }
+
+        /**
          * Outline (S1) : `textDocument/documentSymbol` — la session
          * rend l'arbre DOM neutre, l'hôte traduit en `DocumentSymbol`
          * LSP (kinds, ranges UTF-16, enfants imbriqués). Liste VIDE
@@ -620,6 +815,9 @@ internal class XmlLanguageServer(
     }
 
     private companion object {
+        /** Taille d'indentation par défaut (convention Android). */
+        private const val INDENTATION_DEFAUT = 4
+
         private val LOGGER: Logger = Logger.getLogger(XmlLanguageServer::class.java.name)
 
         /** Nom du serveur (serverInfo, source des diagnostics). */
