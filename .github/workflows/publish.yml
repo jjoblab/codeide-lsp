@@ -8,6 +8,13 @@
 # supplémentaire. Les CONSOMMATEURS hors dépôt (CodeIDE) ont besoin d'un
 # PAT read:packages pour résoudre ces coordonnées.
 #
+# IDEMPOTENCE (garde 409 — leçon des re-tags v1.0.x du 2026-10-19) :
+# GitHub Packages refuse la REPUBLICATION d'une version existante
+# (HTTP 409 Conflict). Un step amont sonde le .pom de chaque module à
+# la version courante (version.properties) ; seuls les modules NON
+# encore publiés sont passés à ./gradlew. Si tout existe déjà, le
+# workflow se termine en succès sans rien publier.
+#
 # Coordonnées (convention multi-modules) :
 #   com.github.jjoblab.codeide-lsp:{model,index,java,ecj-art,testing,
 #   kotlin,xml} (composant java) + :host (composant release, AAR).
@@ -38,25 +45,52 @@ jobs:
       - name: Récupérer les sources
         uses: actions/checkout@v4
 
+      - name: Détecter les versions déjà publiées (garde 409)
+        id: existant
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep '^VERSION_NAME=' version.properties | cut -d= -f2)
+          manquants=""
+          for m in model index java ecj-art testing host kotlin xml; do
+            url="https://maven.pkg.github.com/jjoblab/codeide-lsp/com/github/jjoblab/codeide-lsp/${m}/${VERSION}/${m}-${VERSION}.pom"
+            code=$(curl -sL -o /dev/null -w '%{http_code}' -u "x-access-token:${GITHUB_TOKEN}" "${url}")
+            echo "sonde ${m} ${VERSION} -> ${code}"
+            if [ "${code}" != "200" ]; then
+              manquants="${manquants} :lsp:${m}:publish"
+            fi
+          done
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "modules=${manquants# }" >> "$GITHUB_OUTPUT"
+
       - name: Récupérer codeide-tooling (build composite)
+        if: steps.existant.outputs.modules != ''
         run: |
           git clone --depth 1 \
             https://github.com/jjoblab/codeide-tooling.git ../codeide-tooling
 
       - name: JDK 21 (Temurin)
+        if: steps.existant.outputs.modules != ''
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Gradle (cache)
+        if: steps.existant.outputs.modules != ''
         uses: gradle/actions/setup-gradle@v4
 
       - name: Accepter les licences du SDK Android
+        if: steps.existant.outputs.modules != ''
         run: yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Publier (composants java + release)
-        run: ./gradlew publish --stacktrace
+      - name: Publier (composants java + release — modules manquants seuls)
+        if: steps.existant.outputs.modules != ''
+        run: ./gradlew ${{ steps.existant.outputs.modules }} --stacktrace
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Déjà intégralement publiée — rien à faire
+        if: steps.existant.outputs.modules == ''
+        run: echo "Version ${{ steps.existant.outputs.version }} déjà publiée sur GitHub Packages (8/8 modules) — republication sautée (garde 409)."
