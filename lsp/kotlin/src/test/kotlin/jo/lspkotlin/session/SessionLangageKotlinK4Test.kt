@@ -339,6 +339,54 @@ class SessionLangageKotlinK4Test {
     }
 
     @Test
+    fun `kt unresolved - imports par defaut kotlin et jvm, jamais signales (KP8)`() {
+        val session = session()
+        // AUCUN import écrit pour les types du JDK : tout nom du catalogue
+        // IMPORTS_DEFAUT (kotlin.*, kotlin.collections/text/io/ranges,
+        // java.lang, kotlin.jvm) est implicitement en portée — un faux
+        // `kt.unresolved` ici casse D3 (le diagnostic ment). Positions de
+        // TYPES et d'APPELS CONSTRUCTEURS uniquement (le périmètre KP8) :
+        // les fonctions top-level et membres relèvent de l'index du
+        // classpath RÉEL (voie 6), pas du catalogue d'imports.
+        val source =
+            """
+            fun demo(n: Number, cs: CharSequence): ArrayList<String> {
+              val sb: StringBuilder = StringBuilder(cs)
+              val l: MutableList<Number> = ArrayList()
+              val e: Exception = IllegalStateException()
+              val r: IntRange = IntRange(0, 9)
+              when (n) {
+                is Int -> r
+                else -> r
+              }
+              return ArrayList()
+            }
+            """.trimIndent().replace("    ", "  ")
+        session.ouvrirDocument("file:///defauts.kt", source)
+        val nonResolus = session.diagnostics("file:///defauts.kt")
+            .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertTrue(
+            "imports par défaut : zéro faux unresolved (KP8) — obtenu : ${nonResolus.map { it.message }}",
+            nonResolus.isEmpty(),
+        )
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - type hors imports par defaut, toujours signale (garde KP8)`() {
+        val session = session()
+        // Le catalogue IMPORTS_DEFAUT ne doit JAMAIS masquer une absence
+        // réelle : un type inconnu en position de type reste signalé.
+        val source = "fun demo(x: ChoseIntrouvable) {\n}\n"
+        session.ouvrirDocument("file:///garde.kt", source)
+        val nonResolus = session.diagnostics("file:///garde.kt")
+            .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertEquals(1, nonResolus.size)
+        assertTrue(nonResolus.single().message.contains("ChoseIntrouvable"))
+        session.close()
+    }
+
+    @Test
     fun `kt typeMismatch - litteral chaine affecte a Int, signale`() {
         val session = session()
         session.ouvrirDocument("file:///type.kt", "val x: Int = \"s\"\n")

@@ -352,6 +352,75 @@ internal class ResolutionKotlin(
                 "Override" to "java.lang.Override",
                 "Deprecated" to "java.lang.Deprecated",
                 "SuppressWarnings" to "java.lang.SuppressWarnings",
+                // KP8 (complément 19/10/2026) — types à usage fréquent
+                // encore absents : faux `kt.unresolved` résiduels constatés
+                // sur CharSequence/Number/Iterator/ArrayDeque/… (code sans
+                // aucun import écrit, parfaitement valide).
+                // kotlin.* — racine
+                "Number" to "kotlin.Number",
+                "CharSequence" to "kotlin.CharSequence",
+                "Enum" to "kotlin.Enum",
+                "Function" to "kotlin.Function",
+                "Lazy" to "kotlin.Lazy",
+                "AutoCloseable" to "kotlin.AutoCloseable",
+                "Cloneable" to "kotlin.Cloneable",
+                "Annotation" to "kotlin.annotation.Annotation",
+                // tableaux primitifs restants
+                "BooleanArray" to "kotlin.BooleanArray",
+                "CharArray" to "kotlin.CharArray",
+                "ShortArray" to "kotlin.ShortArray",
+                "FloatArray" to "kotlin.FloatArray",
+                "DoubleArray" to "kotlin.DoubleArray",
+                "UByteArray" to "kotlin.UByteArray",
+                "UShortArray" to "kotlin.UShortArray",
+                "UIntArray" to "kotlin.UIntArray",
+                "ULongArray" to "kotlin.ULongArray",
+                // kotlin.collections.*
+                "Iterator" to "kotlin.collections.Iterator",
+                "ListIterator" to "kotlin.collections.ListIterator",
+                "MutableListIterator" to "kotlin.collections.MutableListIterator",
+                "ArrayDeque" to "kotlin.collections.ArrayDeque",
+                // kotlin.text.*
+                "StringBuffer" to "kotlin.text.StringBuffer",
+                "Appendable" to "kotlin.text.Appendable",
+                "MatchGroup" to "kotlin.text.MatchGroup",
+                // kotlin.io.*
+                "Closeable" to "kotlin.io.Closeable",
+                // java.lang.* — compléments
+                "Iterable" to "java.lang.Iterable",
+                "Void" to "java.lang.Void",
+                // hiérarchie d'erreurs/exceptions usuelles (kotlin.* =
+                // typealias JVM des java.lang correspondants)
+                "Error" to "kotlin.Error",
+                "StackOverflowError" to "kotlin.StackOverflowError",
+                "OutOfMemoryError" to "kotlin.OutOfMemoryError",
+                "AssertionError" to "kotlin.AssertionError",
+                "ConcurrentModificationException" to "kotlin.ConcurrentModificationException",
+                "InterruptedException" to "kotlin.InterruptedException",
+                "CloneNotSupportedException" to "kotlin.CloneNotSupportedException",
+                "NegativeArraySizeException" to "kotlin.NegativeArraySizeException",
+                "ArrayIndexOutOfBoundsException" to "kotlin.ArrayIndexOutOfBoundsException",
+                "StringIndexOutOfBoundsException" to "kotlin.StringIndexOutOfBoundsException",
+                // kotlin.jvm.* (default import JVM) — annotations usuelles
+                "JvmName" to "kotlin.jvm.JvmName",
+                "JvmStatic" to "kotlin.jvm.JvmStatic",
+                "JvmField" to "kotlin.jvm.JvmField",
+                "JvmOverloads" to "kotlin.jvm.JvmOverloads",
+                "JvmMultifileClass" to "kotlin.jvm.JvmMultifileClass",
+                "Throws" to "kotlin.jvm.Throws",
+                "Transient" to "kotlin.jvm.Transient",
+                "Volatile" to "kotlin.jvm.Volatile",
+                "Synchronized" to "kotlin.jvm.Synchronized",
+                "Strictfp" to "kotlin.jvm.Strictfp",
+                "JvmWildcard" to "kotlin.jvm.JvmWildcard",
+                "JvmSuppressWildcards" to "kotlin.jvm.JvmSuppressWildcards",
+                // kotlin.jvm.functions.* — types de fonctions typés
+                "Function0" to "kotlin.jvm.functions.Function0",
+                "Function1" to "kotlin.jvm.functions.Function1",
+                "Function2" to "kotlin.jvm.functions.Function2",
+                "Function3" to "kotlin.jvm.functions.Function3",
+                "Function4" to "kotlin.jvm.functions.Function4",
+                "Function5" to "kotlin.jvm.functions.Function5",
             )
 
         /** Alias JVM ↔ Kotlin (récepteurs d'extensions). */
