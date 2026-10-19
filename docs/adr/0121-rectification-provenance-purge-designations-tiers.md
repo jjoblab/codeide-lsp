@@ -55,8 +55,8 @@ complète des désignations** du projet tiers de référence.
 ## Conséquences
 
 - Positives : généalogie du code exacte ; publication sans équivoque ;
-  recherche de code (« projet de référence ») ne remonte plus de faux positifs
-  documentaires ; dette D3 clôturée.
+  recherche de code : l'ancienne désignation du projet tiers ne remonte
+  plus de faux positifs documentaires ; dette D3 clôturée.
 - Négatives : réécriture d'historique — les clones locaux antérieurs
   doivent être re-clonés ; les artefacts GitHub Packages déjà publiés
   proviennent des tags d'origine (les coordonnées binaires sont
