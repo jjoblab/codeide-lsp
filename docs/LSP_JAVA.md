@@ -325,7 +325,7 @@ versionnée de `lsp:model`), `WorkspaceModel` (→ snapshots typés).
 Exécution **après** le traitement D3 lot par lot (prompt §3), par
 refactoring, compilation et tests verts à chaque lot. Le préfixe
 retenu est **`Ecj`** (honnête : ces classes adaptent ecj/JDT) — il
-évite par construction les noms identiques à projet de référence
+évite par construction les noms identiques au projet de référence
 (`CompletionEngine`, `PrefixMatcher`, `ImportOrganizer`,
 `SignatureHelp`, `LiveTemplates`, `PostfixTemplates`,
 `JdtEnvironmentCache`…). Les shims deviennent `ArtCompat*`.
@@ -342,9 +342,9 @@ retenu est **`Ecj`** (honnête : ces classes adaptent ecj/JDT) — il
 | `JdtFastDiagnose` | `EcjFastDiagnose` | préfixe |
 | `JdtSignatureHelp` | `EcjSignatureHelp` | ≠ `SignatureHelp` (projet de référence api) |
 | `JdtInlayHints` | `EcjInlayHints` | ≠ `JdtInlayHintService` |
-| `JdtSemanticHighlighter` | `EcjSemanticHighlighter` | **nom de fichier identique à projet de référence** |
-| `JdtCodeFolder` | `EcjCodeFolder` | **nom de fichier identique à projet de référence** |
-| `JdtSourceUnit` | `EcjSourceUnit` | **nom de fichier identique à projet de référence** |
+| `JdtSemanticHighlighter` | `EcjSemanticHighlighter` | **nom de fichier identique au projet de référence** |
+| `JdtCodeFolder` | `EcjCodeFolder` | **nom de fichier identique au projet de référence** |
+| `JdtSourceUnit` | `EcjSourceUnit` | **nom de fichier identique au projet de référence** |
 | `JdtPostfixTemplates` | `EcjPostfixTemplates` | ≠ `PostfixTemplates` (projet de référence) |
 | `JdtLiveTemplates` | `EcjLiveTemplates` | ≠ `LiveTemplates` (projet de référence) |
 | `JdtFormatter` | `EcjFormatter` | ≠ `JdtFormattingService` |
@@ -358,7 +358,7 @@ retenu est **`Ecj`** (honnête : ces classes adaptent ecj/JDT) — il
 | `CompletionPrefixMatcher` | `EcjPrefixMatcher` | cohérence, ≠ `PrefixMatcher` (projet de référence) |
 | `BindingParseCache` | `EcjParseCache` | réécrit lot 2, précise « parse » |
 
-Sans changement (aucun préfixe Jdt, aucun nom identique à projet de référence) :
+Sans changement (aucun préfixe Jdt, aucun nom identique au projet de référence) :
 `RawZipReader`, `SourceFocuser`, `ClassFileStubBuilder`, `CancelToken`,
 `OperationCanceledException`, `CompilationEnvironment` (supprimé à
 terme), `JavaLanguageServer`, `JavaTextDocumentService`,
@@ -1873,7 +1873,7 @@ et clarifie la provenance :
 
 - **La quasi-totalité des fichiers du module sont les SIENS** — écrits à
   sa manière ;
-- la référence à projet de référence faite lors des recherches de solution d'erreurs
+- la référence au projet de référence faite lors des recherches de solution d'erreurs
   de test fut une **consultation d'approche parmi d'autres projets** —
   « pas au mot près mais la compréhension pour le faire à ma manière » ;
 - conséquence opérationnelle : la réécriture cloisonnée (option 1 de

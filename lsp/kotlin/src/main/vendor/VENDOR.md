@@ -33,10 +33,10 @@ notre compilateur sans montée de version. Une montée future de la grammaire
 
 ## Zéro modification locale
 
-Contrainte plus stricte que celle du projet projet de référence (étudié en
+Contrainte plus stricte que celle du projet de référence (étudié en
 référence) : **aucun** fichier vendoré n'est modifié localement. Ni la
 grammaire (parser/lexer), ni l'arbre. Les accès indexés et le re-parse
-incrémental dont projet de référence avait besoin vivent chez nous dans la façade
+incrémental dont le projet de référence avait besoin vivent chez nous dans la façade
 `jo.lspkotlin.parse` (paquet `kt/`), construite sur l'API **publique** de
 `syntax-api` — un re-sync amont ne peut donc jamais casser le build local :
 il ne reste qu'à relancer la suite de parité.

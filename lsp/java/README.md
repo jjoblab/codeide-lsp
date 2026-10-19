@@ -23,7 +23,7 @@ ont été traduits en Kotlin DSL et adaptés à Gradle 9 : `javaexec` →
 Certaines idées d'architecture de ce module (index de classpath,
 snapshots immuables, négatifs mémorisés, planification en files
 priorisées) s'inspirent des **principes d'architecture documentés de
-[projet de référence](https://github.invalid/anonymise-adr-0121)** (auteur tiers).
+**le projet de référence** (projet tiers — étude d'architecture uniquement, désignation purgée : ADR 0121).
 C'est un remerciement pour l'inspiration, **pas une licence** ; le
 traitement de provenance par fichier (réécriture cloisonnée, ADR 0110)
 reste requis et suit son cours à l'étape 3.

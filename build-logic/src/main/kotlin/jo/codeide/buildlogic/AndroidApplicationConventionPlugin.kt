@@ -51,7 +51,7 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
                 // une signature différente et Android refusait la mise à jour
                 // (« conflit de package », retours v0.35.2 puis v0.37.1).
                 // Versionner la clé debug — identifiants publics, patrons
-                // AOSP/projet de référence — fixe l'identité pour la CI, les
+                // AOSP (pratique publique) — fixe l'identité pour la CI, les
                 // contributeurs et toute machine locale : les APK successifs
                 // se mettent à jour les uns sur les autres, partout.
                 val fichierCleDebug = rootDir.resolve("config/signature/debug.keystore")

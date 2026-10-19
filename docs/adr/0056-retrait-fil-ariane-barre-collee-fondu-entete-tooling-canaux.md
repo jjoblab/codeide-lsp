@@ -5,7 +5,7 @@
 - **Contexte** : retours utilisateur du 2026-09-26 sur la v0.32.4, cinq
   points : « Tu peux enlever le breadcrumb pour le moment, cela ne me
   donne pas le design espéré. Le virtuelkey n'est toujours pas visible,
-  consulte le projet projet de référence de auteur tiers pour voir comment ils ont
+  consulte le projet de référence de auteur tiers pour voir comment ils ont
   fait. Lorsque bottomsheet behavior est expand le header devrait
   progressivement disparaitre. Le background du bottomsheet behavior est
   complètement transparent. L'étape suivante concerne le tooling : le
