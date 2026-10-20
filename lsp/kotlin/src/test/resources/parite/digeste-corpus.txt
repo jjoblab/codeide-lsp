@@ -1,3 +1,3 @@
 # Baseline de parité — suite de parité du dépôt (regénérée délibérément).
 # Voir lsp/kotlin/src/main/vendor/VENDOR.md : la mise à jour fait partie de la revue.
-fichiers=217 digeste=2d17c2d5429d6531a07d45b773204fbafe31bddec2109a7d12c3d7ec217dac3c
+fichiers=217 digeste=413c29f83242ca6536023a11bec0c4644b9441a6c26c2c91a5840ba021bb52b2
