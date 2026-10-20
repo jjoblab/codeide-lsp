@@ -75,7 +75,7 @@ class SurveillantFichiersHoteTest {
     }
 
     @Test
-    fun `périmètre - seuls les java sont suivis, build et cachés exclus`() {
+    fun `périmètre - les trois langues sont suivies, build et cachés exclus`() {
         File(projet, "build/A.java").apply {
             parentFile!!.mkdirs()
             writeText("class A {}\n")
@@ -92,8 +92,21 @@ class SurveillantFichiersHoteTest {
             parentFile!!.mkdirs()
             writeText("class Reel {}\n")
         }
-        val noms = surveillant().instantane().keys.map { it.substringAfterLast('/') }
-        assertEquals(listOf("Reel.java"), noms)
+        // Lot L1 : les événements externes atteignent les TROIS langues —
+        // .kt, .kts et .xml sont suivis comme .java (plus Java seul S1-d).
+        File(projet, "src/Moteur.kt").apply { writeText("class Moteur\n") }
+        File(projet, "src/build.gradle.kts").apply { writeText("plugins {}\n") }
+        File(projet, "src/activity_main.xml").apply { writeText("<LinearLayout />\n") }
+        val noms =
+            surveillant()
+                .instantane()
+                .keys
+                .map { it.substringAfterLast('/') }
+                .sorted()
+        assertEquals(
+            listOf("Moteur.kt", "Reel.java", "activity_main.xml", "build.gradle.kts"),
+            noms,
+        )
     }
 
     @Test

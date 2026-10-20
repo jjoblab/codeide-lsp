@@ -20,9 +20,10 @@ import java.io.File
  *
  * Remède (a) de l'audit, borné : un BALAYAGE PÉRIODIQUE du répertoire
  * projet (pas d'android.os.FileObserver — la façade vit aussi sur JVM
- * de bureau et le balayage est testable tel quel), extension limitée
- * `.java` (le domaine du LSP Java ; les autres langues ont leur
- * fraîcheur par sync/scan documentée). Chaque tour : instantané
+ * de bureau et le balayage est testable tel quel), extensions limitées
+ * aux langues servies par l'hôte (`.java`, `.kt`, `.kts`, `.xml` — lot
+ * L1 du plan 1.3.0 : les événements externes atteignent les TROIS
+ * serveurs, plus Java seul à l'origine S1-d). Chaque tour : instantané
  * (chemin → mtime), diff avec le précédent → {@code FileEvent} Changed/
  * Created/Deleted → poussés aux serveurs VIVANTS (le premier tour
  * installe la BASELINE : zéro événement synthétique au démarrage).
@@ -131,8 +132,9 @@ internal class SurveillantFichiersHote(
 
     /**
      * Marche récursive bornée (miroir ScanProjet.parcourir côté Kotlin) :
-     * `.java` SEULEMENT (S1-d borné au LSP Java), dossiers
-     * build/.git/.gradle et cachés exclus, plafond [BORN_FICHIERS].
+     * les extensions des TROIS langues servies (`.java`, `.kt`, `.kts`,
+     * `.xml` — lot L1), dossiers build/.git/.gradle et cachés exclus,
+     * plafond [BORN_FICHIERS].
      *
      * Exemption detekt ciblée (règle 16) : ReturnCount/LoopWithTooManyJump-
      * Statements — les bornes (plafond atteint, dossier illisible,
@@ -154,7 +156,7 @@ internal class SurveillantFichiersHote(
                     }
                 }
 
-                enfant.isFile && enfant.extension == "java" -> {
+                enfant.isFile && enfant.extension in EXTENSIONS_SUIVIES -> {
                     resultat[enfant.absolutePath] = enfant.lastModified()
                 }
             }
@@ -167,6 +169,14 @@ internal class SurveillantFichiersHote(
 
         /** Dossiers exclus (sorties, caches — mêmes que les scans). */
         private val EXCLUSIONS: Set<String> = setOf("build", ".git", ".gradle")
+
+        /**
+         * Extensions suivies (lot L1) : les trois langues de l'hôte —
+         * un événement externe Kotlin/XML rafraîchit désormais les
+         * diagnostics du serveur correspondant (miroir du Java S1-d).
+         * Le mode script `.kts` est couvert par son extension propre.
+         */
+        private val EXTENSIONS_SUIVIES: Set<String> = setOf("java", "kt", "kts", "xml")
     }
 }
 

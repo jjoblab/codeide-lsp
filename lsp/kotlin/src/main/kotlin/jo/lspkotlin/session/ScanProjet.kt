@@ -97,6 +97,23 @@ internal class ScanProjet(
     }
 
     /**
+     * RAFRAÎCHIT le snapshot des déclarations (lot L1 du plan 1.3.0 —
+     * un événement de fichier externe a signalé une modification hors
+     * éditeur) : le snapshot est invalidé puis ré-amorcé sur le fil
+     * dédié. Le CACHE PAR FICHIER (mtime) rend la passe DELTA-ONLY — un
+     * fichier inchangé n'est jamais re-parsé, le coût est un listage.
+     * Les documents OUVERTS restent dominants côté session (arbres
+     * vivants) : la fraîcheur gagnée est celle des fichiers FERMÉS.
+     */
+    internal fun rafraichir() {
+        if (racines.isEmpty()) return
+        synchronized(verrouScan) {
+            scannees = emptyList()
+        }
+        amorcerScan()
+    }
+
+    /**
      * Déclarations de toutes les racines — le snapshot COURANT, en
      * S'Y JOIGNANT au scan WARM en vol s'il y en a un (jamais de double
      * scan) ; sans tâche en vol et sans snapshot, le scan tolérable

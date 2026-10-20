@@ -1,5 +1,6 @@
 package jo.lspkotlin.session
 
+import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.CodesDiagnosticsKotlin
 import jo.lspkotlin.api.SeveriteKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
@@ -7,7 +8,10 @@ import jo.lspkotlin.api.TagDiagnosticKotlin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * Tests du contrat de session K2 (LSP_KOTLIN.md §5, K2 « session LSP
@@ -23,6 +27,10 @@ import org.junit.Test
  * - fin de vie : après close, plus rien n'est retenu (test de fuite).
  */
 class SessionLangageKotlinParseTest {
+    /** Dossier temporaire (racines sources du rafraîchissement L1). */
+    @get:Rule
+    public val dossierTemp: TemporaryFolder = TemporaryFolder()
+
     private fun sessionNeuve() = ServiceMoteurLangageKotlin.unique().creerSession()
 
     @Test
@@ -330,5 +338,44 @@ class SessionLangageKotlinParseTest {
         assertEquals("class Nue", survol.valeur)
         assertNull(survol.documentation)
         session.close()
+    }
+
+    // ── L1 — rafraîchissement des sources externes (plan 1.3.0, W1) ────
+
+    @Test
+    fun `rafraichirSources - une declaration externe devient resolvable (L1)`() {
+        // Le fichier FERMÉ Autre.kt ne déclare pas encore util() : la
+        // publication initiale du document OUVERT porte kt.unresolved.
+        // Une modification EXTERNE (terminal, build) crée la déclaration,
+        // rafraichirSources() la rend visible, la republication la
+        // résout — le chemin moteur du câblage L1 de l'hôte.
+        val racine = dossierTemp.newFolder("src")
+        val session = sessionNeuve()
+        session.definirClasspath(ClasspathKotlin(emptyList(), null, listOf(racine), null))
+        val a = File(racine, "A.kt")
+        a.writeText("fun principal() {\n    util()\n}\n")
+        session.ouvrirDocument(a.toURI().toString(), a.readText())
+        assertTrue(
+            "util() non déclaré : kt.unresolved à l'ouverture",
+            session.diagnostics(a.toURI().toString()).any { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+
+        // Modification EXTERNE : Autre.kt (fermé) déclare désormais util().
+        File(racine, "Autre.kt").writeText("fun util() {}\n")
+        session.rafraichirSources()
+
+        assertTrue(
+            "après rafraîchissement externe, util() est résolue",
+            session.diagnostics(a.toURI().toString()).none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+        session.close()
+    }
+
+    @Test
+    fun `rafraichirSources - session fermee, no-op honnete (L1)`() {
+        val session = sessionNeuve()
+        session.close()
+        session.rafraichirSources()
+        assertEquals(0, session.nombreDocuments)
     }
 }

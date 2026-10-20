@@ -12,6 +12,7 @@ import jo.lspxml.api.MoteurLangageXml
 import jo.lspxml.api.ServiceMoteurLangageXml
 import jo.lspxml.api.SessionLangageXml
 import jo.lspxml.api.VueNomsXml
+import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.services.LanguageServer
 import java.io.Closeable
 import java.io.File
@@ -48,11 +49,17 @@ import java.util.logging.Logger
  *        module n'est pas branché : erreur de build, pas fantôme).
  * @param lecteurStats couture de statistiques (existence des entrées),
  *        injectable pour les tests.
+ * @param sessionJava session Java du MÊME projet (lot L1 du plan 1.3.0) —
+ *        quand elle est fournie, la façade s'inscrit à son surveillant
+ *        de fichiers : les événements externes (`.xml` modifiés hors
+ *        éditeur) atteignent les serveurs XML VIVANTS par le MÊME chemin
+ *        que les serveurs Java. `null` = façade autonome.
  */
 public class SessionLspXml(
     racineProjet: File,
     private val moteur: MoteurLangageXml = ServiceMoteurLangageXml.unique(),
     private val lecteurStats: LecteurStatistiquesFichier = LecteurStatistiquesFichierDisque(),
+    sessionJava: SessionLsp? = null,
 ) : Closeable {
     /** Racine du projet ouvert (identité de la session). */
     public val racine: File = racineProjet
@@ -60,11 +67,42 @@ public class SessionLspXml(
     /** Sessions moteur des connexions vivantes (fermées à [close] aussi). */
     private val sessionsVivantes = CopyOnWriteArrayList<SessionLangageXml>()
 
+    /**
+     * Serveurs LSP4J des connexions vivantes (lot L1) — la destination
+     * des événements de fichiers externes quand la façade est branchée
+     * sur le surveillant de la session Java ; chaque serveur se retire
+     * à son arrêt (aLArret).
+     */
+    private val serveursVivants = CopyOnWriteArrayList<XmlLanguageServer>()
+
     /** Classpath courant (poussé aux sessions futures à la création). */
     @Volatile
     private var classpathCourant: ClasspathXml? = null
 
+    /**
+     * Poignée de désinscription au surveillant de la session Java (lot
+     * L1) — fermée à [close] : un destinataire mort ne reçoit plus rien.
+     */
+    private val desinscriptionSurveillance: Closeable? =
+        sessionJava?.enregistrerDestinataireFichiers(::diffuserEvenementsFichiers)
+
     private var fermee = false
+
+    /**
+     * Diffusion des événements de fichiers externes aux serveurs
+     * VIVANTS (lot L1) — chaque poussée est gardée : un serveur en
+     * arrêt n'empêche pas les autres (miroir de
+     * [SessionLsp.pousserEvenementsFichiers]).
+     */
+    private fun diffuserEvenementsFichiers(params: DidChangeWatchedFilesParams) {
+        for (serveur in serveursVivants) {
+            try {
+                serveur.workspaceService.didChangeWatchedFiles(params)
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "événements de fichiers à un serveur XML échoués (ignorés)", t)
+            }
+        }
+    }
 
     /**
      * UN serveur LSP4J pour une connexion (cel-lsp approvisionne par le
@@ -79,11 +117,22 @@ public class SessionLspXml(
         val sessionLangage = moteur.creerSession()
         classpathCourant?.let { sessionLangage.definirClasspath(it) }
         sessionsVivantes.add(sessionLangage)
-        return XmlLanguageServer(
-            session = sessionLangage,
-            versionServeur = moteur.version,
-            aLArret = { sessionsVivantes.remove(sessionLangage) },
-        )
+        // Le rappel aLArret capture le serveur par variable locale —
+        // affectée une fois le serveur construit (même patron que
+        // [SessionLsp.serveur] côté Java).
+        var inscrit: XmlLanguageServer? = null
+        val serveur =
+            XmlLanguageServer(
+                session = sessionLangage,
+                versionServeur = moteur.version,
+                aLArret = {
+                    sessionsVivantes.remove(sessionLangage)
+                    inscrit?.let { vivant -> serveursVivants.remove(vivant) }
+                },
+            )
+        inscrit = serveur
+        serveursVivants.add(serveur)
+        return serveur
     }
 
     /**
@@ -194,12 +243,22 @@ public class SessionLspXml(
     }
 
     /** Arrêt exhaustif : sessions des connexions jamais arrêtées refermées,
-     * décompte vidé. Idempotente (le Java/Kotlin le sont aussi). */
+     * décompte vidé, désinscription au surveillant de la session Java
+     * (lot L1 — la façade morte ne reçoit plus d'événements).
+     * Idempotente (le Java/Kotlin le sont aussi). */
     public override fun close() {
         synchronized(this) {
             if (fermee) return
             fermee = true
         }
+        desinscriptionSurveillance?.let { desinscription ->
+            try {
+                desinscription.close()
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "désinscription du surveillant échouée (ignorée)", t)
+            }
+        }
+        serveursVivants.clear()
         sessionsVivantes.forEach { session ->
             try {
                 session.close()

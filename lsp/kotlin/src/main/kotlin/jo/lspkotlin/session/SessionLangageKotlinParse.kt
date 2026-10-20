@@ -361,6 +361,20 @@ internal class SessionLangageKotlinParse(
             resultat
         }
 
+    /**
+     * Modifications externes (lot L1) — le scan des racines sources est
+     * RAFRAÎCHI (delta mtime) : la prochaine republication des
+     * diagnostics voit les déclarations des fichiers fermés modifiés
+     * hors éditeur. Les documents ouverts (arbres vivants) dominent de
+     * toute façon.
+     */
+    override fun rafraichirSources() {
+        synchronized(verrou) {
+            if (fermee) return
+        }
+        scanProjet.rafraichir()
+    }
+
     override fun close() {
         synchronized(verrou) {
             fermee = true

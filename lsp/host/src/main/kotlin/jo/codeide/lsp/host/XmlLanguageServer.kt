@@ -805,9 +805,15 @@ internal class XmlLanguageServer(
         }
 
         override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
-            // XP8 : republier les diagnostics des documents ouverts —
-            // un fichier externe (ressource créée/modifiée) peut
-            // changer la résolution des références XML.
+            // XP8 + lot L1 : RAFRAÎCHIR l'index des ressources (le scan
+            // suit les événements — une ressource créée/modifiée hors
+            // éditeur change la résolution des références), PUIS
+            // republier les diagnostics des documents ouverts.
+            try {
+                session.rafraichirSources()
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "rafraîchissement des ressources échoué (ignoré)", t)
+            }
             for (uri in documents.keys) {
                 publier(uri)
             }

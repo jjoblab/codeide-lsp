@@ -290,6 +290,20 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun renommage(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
 
     /**
+     * Signale des modifications de fichiers EXTERNES (lot L1 du plan
+     * 1.3.0 — le surveillant de l'hôte pousse `didChangeWatchedFiles`
+     * au serveur, qui rafraîchit SES sources avant de republier les
+     * diagnostics) : le scan des racines sources est INVALIDÉ puis
+     * ré-amorcé (incrémental par mtime — un fichier inchangé n'est
+     * jamais re-parsé, le coût est un listage). Les déclarations des
+     * documents OUVERTS dominent de toute façon (arbres vivants).
+     *
+     * Tolérance de version : défaut NO-OP — un pack K3 face à un hôte
+     * L1 dégrade honnêtement (republication seule, jamais d'exception).
+     */
+    public fun rafraichirSources() {}
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document. Idempotente — un appel après close est
      * sans effet, pas une erreur.

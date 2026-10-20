@@ -147,6 +147,18 @@ public class SessionLsp(
      */
     private val serveursJava = java.util.concurrent.CopyOnWriteArrayList<jo.lspjava.lsp.JavaLanguageServer>()
 
+    /**
+     * Destinataires EXTERNES des événements de fichiers (lot L1 du plan
+     * 1.3.0 — généralisation de S1-d aux trois langues) : les façades
+     * Kotlin ([SessionLspKotlin]) et XML ([SessionLspXml]) y inscrivent
+     * leur diffuseur ; chaque inscription retourne une poignée de
+     * DÉSINSCRIPTION (la façade se retire à sa fermeture — un
+     * destinataire mort ne reçoit plus rien, miroir du rappel aLArret
+     * des serveurs Java).
+     */
+    private val destinatairesFichiers =
+        java.util.concurrent.CopyOnWriteArrayList<DestinataireEvenementsFichiers>()
+
     /** Boucle courante du surveillant S1-d (annulée/relancée par [appliquer], lot LSP-1). */
     private var boucleSurveillance: Job? = null
 
@@ -179,20 +191,44 @@ public class SessionLsp(
     }
 
     /**
-     * Destination S1-d : les événements de fichiers externes rejoignent
-     * CHAQUE serveur Java vivant (sa notification didChangeWatchedFiles
-     * invalide le cache de parse — le serveur reparse au prochain tour).
-     * Un serveur fautif (en arrêt) n'empêche pas les autres : chaque
-     * poussée est gardée, la désinscription aLArret reste le chemin
+     * Destination S1-d (généralisée lot L1) : les événements de fichiers
+     * externes rejoignent CHAQUE serveur VIVANT de l'hôte — serveurs
+     * Java (leur notification didChangeWatchedFiles invalide le cache de
+     * parse — le serveur reparse au prochain tour) ET destinataires
+     * inscrits (façades Kotlin/XML, qui diffusent à leurs serveurs
+     * vivants). Un destinataire FAUTIF (en arrêt, en erreur) n'empêche
+     * pas les autres : chaque poussée est gardée, la désinscription
+     * (aLArret côté Java, poignée Closeable côté façade) reste le chemin
      * principal.
      */
-    private fun pousserEvenementsFichiers(params: DidChangeWatchedFilesParams) {
+    internal fun pousserEvenementsFichiers(params: DidChangeWatchedFilesParams) {
         for (serveur in serveursJava) {
             try {
                 serveur.workspaceService.didChangeWatchedFiles(params)
             } catch (t: Throwable) {
                 LOGGER.log(Level.WARNING, "événements de fichiers à un serveur échoués (ignorés)", t)
             }
+        }
+        for (destinataire in destinatairesFichiers) {
+            try {
+                destinataire.recevoir(params)
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "événements de fichiers à un destinataire échoués (ignorés)", t)
+            }
+        }
+    }
+
+    /**
+     * Enregistre un DESTINATAIRE des événements de fichiers externes
+     * (lot L1 — la façade Kotlin/XML y branche son diffuseur vers ses
+     * serveurs vivants). La poignée retournée DÉSINSCRIT le destinataire
+     * (appel [Closeable.close] à la fermeture de la façade) ; la
+     * désinscription est IDEMPOTENTE et tolère une session déjà fermée.
+     */
+    public fun enregistrerDestinataireFichiers(destinataire: DestinataireEvenementsFichiers): java.io.Closeable {
+        destinatairesFichiers.add(destinataire)
+        return java.io.Closeable {
+            destinatairesFichiers.remove(destinataire)
         }
     }
 
@@ -642,6 +678,19 @@ public data class ResultatApplication(
     public val budgetCacheMo: Long,
     public val unionChangee: Boolean,
 )
+
+/**
+ * Destinataire des événements de fichiers EXTERNES du surveillant S1-d
+ * (lot L1 du plan 1.3.0 — généralisation aux trois langues) : une façade
+ * de langue ([SessionLspKotlin], [SessionLspXml]) s'inscrit par
+ * [SessionLsp.enregistrerDestinataireFichiers] et reçoit les mêmes
+ * `DidChangeWatchedFilesParams` que les serveurs Java vivants — la
+ * notification traverse ensuite sa propre liste de serveurs.
+ */
+public fun interface DestinataireEvenementsFichiers {
+    /** Reçoit les événements externes (garde par destinataire côté session). */
+    public fun recevoir(params: DidChangeWatchedFilesParams)
+}
 
 /** Translation publique — (voir OrchestrateurLsp.Application). */
 private fun OrchestrateurLsp.Application.versPublic(): ResultatApplication =

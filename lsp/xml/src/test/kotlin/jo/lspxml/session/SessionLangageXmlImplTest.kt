@@ -504,4 +504,53 @@ class SessionLangageXmlImplTest {
         session.close()
         assertTrue(session.completion(uri, 15).isEmpty())
     }
+
+    // ── L1 — rafraîchissement des sources externes (plan 1.3.0, W1) ────
+
+    @Test
+    fun `rafraichirSources — une ressource externe creee devient resolvable (L1)`() {
+        // Le values déclarant @string/titre n'existe pas encore : le
+        // layout OUVERT porte xml.referenceNonResolue. Une création
+        // EXTERNE (build Gradle, terminal) du values déclarant, puis
+        // rafraichirSources() (l'hôte l'appelle sur l'événement de
+        // fichier du surveillant) : l'index re-scanne, la référence est
+        // résolue — le chemin moteur du câblage L1 de l'hôte.
+        val srcMain = dossierTemp.newFolder("projet").resolve("src/main").apply { mkdirs() }
+        File(srcMain, "res/layout").mkdirs()
+        val sessionLocale = SessionLangageXmlImpl(jo.lspxml.parse.ParseurXml())
+        sessionLocale.definirClasspath(ClasspathXml(null, listOf(srcMain), null))
+        val uri = File(srcMain, "res/layout/activity.xml").toURI().toString()
+        sessionLocale.ouvrirDocument(
+            uri,
+            "<TextView xmlns:android=\"http://schemas.android.com/apk/res/android\"" +
+                " android:text=\"@string/titre\" />",
+        )
+        assertTrue(
+            "@string/titre non déclarée : référence non résolue à l'ouverture",
+            sessionLocale.diagnostics(uri).any { it.code == CodesDiagnosticsXml.REFERENCE_NON_RESOLUE },
+        )
+
+        // Création EXTERNE du values déclarant, puis rafraîchissement.
+        File(srcMain, "res/values").apply { mkdirs() }
+            .resolve("strings.xml")
+            .writeText("<resources><string name=\"titre\">Titre</string></resources>")
+        sessionLocale.rafraichirSources()
+
+        assertTrue(
+            "après rafraîchissement externe, @string/titre est résolue",
+            sessionLocale.diagnostics(uri).none { it.code == CodesDiagnosticsXml.REFERENCE_NON_RESOLUE },
+        )
+        sessionLocale.close()
+    }
+
+    @Test
+    fun `rafraichirSources — session fermee ou sans classpath, no-op honnete (L1)`() {
+        // Sans classpath : rien à re-scanner, jamais d'exception.
+        session.ouvrirDocument("file:///p/res/layout/main.xml", "<a/>")
+        session.rafraichirSources()
+        assertEquals(1, session.nombreDocuments)
+        session.close()
+        session.rafraichirSources()
+        assertEquals(0, session.nombreDocuments)
+    }
 }

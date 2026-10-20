@@ -994,10 +994,15 @@ internal class KotlinLanguageServer(
         }
 
         override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
-            // KP10 : republier les diagnostics des documents ouverts —
-            // un fichier externe (créé/modifié par Gradle, terminal,
-            // autre app) peut changer la résolution. Les diagnostics
-            // sont recalculés avec le classpath courant.
+            // KP10 + lot L1 : RAFRAÎCHIR les sources externes (le scan
+            // des racines suit les événements — un fichier modifié hors
+            // éditeur par Gradle/terminal change la résolution), PUIS
+            // republier les diagnostics des documents ouverts.
+            try {
+                session.rafraichirSources()
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "rafraîchissement des sources échoué (ignoré)", t)
+            }
             for (uri in documents.keys) {
                 publier(uri)
             }

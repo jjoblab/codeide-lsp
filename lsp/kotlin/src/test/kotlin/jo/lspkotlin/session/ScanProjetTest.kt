@@ -124,6 +124,47 @@ class ScanProjetTest {
     }
 
     @Test
+    fun `rafraichissement externe - un fichier cree devient visible (L1)`() {
+        // Lot L1 (plan 1.3.0, correctif W1) : l'événement de fichier
+        // externe (surveillant de l'hôte) appelle rafraichir() — les
+        // MÊMES racines, un fichier CRÉÉ hors éditeur : ses déclarations
+        // deviennent visibles à la prochaine lecture, sans sync.
+        val racines = racinesAvecDeuxFichiers()
+        scan.definirRacines(racines)
+        assertEquals(2, scan.declarations().size)
+        File(racines.first(), "C.kt").writeText("val c = 3\n")
+        scan.rafraichir()
+        val noms = scan.declarations().map { it.nom }
+        assertTrue("c visible après rafraîchissement externe", "c" in noms)
+        assertTrue(
+            "les déclarations antérieures survivent (cache mtime)",
+            "a" in noms && "b" in noms,
+        )
+    }
+
+    @Test
+    fun `rafraichissement externe - un fichier modifie remplace ses declarations (L1)`() {
+        val racines = racinesAvecDeuxFichiers()
+        scan.definirRacines(racines)
+        assertEquals(2, scan.declarations().size)
+        val b = File(racines.first(), "B.kt")
+        b.writeText("val bDeux = 22\n")
+        // La granularité du FS masque un mtime trop proche : le décalage
+        // est FORCÉ (même garde que le test incrémental).
+        assertTrue("mtime forcé accepté par le FS", b.setLastModified(System.currentTimeMillis() + 60_000))
+        scan.rafraichir()
+        val noms = scan.declarations().map { it.nom }
+        assertTrue("bDeux visible après rafraîchissement externe", "bDeux" in noms)
+        assertTrue("l'ancienne déclaration de B part", "b" !in noms)
+    }
+
+    @Test
+    fun `sans racines - rafraichir est un no-op (L1)`() {
+        scan.rafraichir()
+        assertTrue(scan.declarations().isEmpty())
+    }
+
+    @Test
     fun `acces concurrents - chaque session voit un etat coherent (KP6)`() {
         val racines = racinesAvecDeuxFichiers()
         scan.definirRacines(racines)

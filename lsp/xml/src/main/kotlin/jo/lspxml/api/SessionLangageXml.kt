@@ -210,6 +210,20 @@ public interface SessionLangageXml : AutoCloseable {
     public fun formatter(uri: String, tailleIndentation: Int = 4): List<EditionXml> = emptyList()
 
     /**
+     * Signale des modifications de fichiers EXTERNES (lot L1 du plan
+     * 1.3.0 — le surveillant de l'hôte pousse `didChangeWatchedFiles`
+     * au serveur, qui rafraîchit SON index avant de republier les
+     * diagnostics) : l'index des ressources est RE-SCANNÉ (delta
+     * mtime — un fichier inchangé n'est jamais re-parsé, le coût est
+     * un listage) : une ressource créée/modifiée hors éditeur devient
+     * visible à la prochaine publication.
+     *
+     * Tolérance de version : défaut NO-OP — un pack XE1 face à un hôte
+     * L1 dégrade honnêtement (republication seule, jamais d'exception).
+     */
+    public fun rafraichirSources() {}
+
+    /**
      * Ferme TOUT (shutdown/exit LSP, fermeture de la façade hôte) :
      * abandonne chaque document, vide l'index projet. Idempotente.
      */

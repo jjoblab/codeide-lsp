@@ -723,6 +723,20 @@ override fun formatter(uri: String, tailleIndentation: Int): List<EditionXml> {
         return FormatXml.editer(document.document, document.texte, tailleIndentation)
     }
 
+    /**
+     * Modifications externes (lot L1) — l'index des ressources est
+     * RE-SCANNÉ sur les racines courantes (delta mtime : un fichier
+     * inchangé n'est jamais re-parsé) : une ressource créée ou modifiée
+     * hors éditeur (build Gradle, terminal) devient visible à la
+     * prochaine publication des diagnostics.
+     */
+    override fun rafraichirSources() {
+        if (fermee) return
+        val classpathCourant = classpath ?: return
+        indexRessources.definir(classpathCourant.racinesSources)
+        indexRessources.definirAar(classpathCourant.racinesAar)
+    }
+
     override fun close() {
         if (fermee) return
         fermee = true
