@@ -1,4 +1,5 @@
 import java.util.concurrent.TimeUnit
+import org.gradle.api.attributes.LibraryElements
 
 // :lsp:testing — suite d'intégration moteur ↔ index disque (mission
 // « LSP Java », étape 3 lot C ; déménagement v0.96.3).
@@ -47,7 +48,23 @@ dependencies {
     // Moteur vendored — les jars Eclipse patchés sont DÉSORMAIS GRAPHÉS
     // dans le jar de :lsp:java (v1.0.1) : la résolution du classpath de
     // test exécute le patcher d'abord (dependsOn du jar du module).
-    testImplementation(project(":lsp:java"))
+    //
+    // ATTRIBUT JAR EXIGÉ (lot LSP-1, reproduction clone frais 2026-10-20)
+    // : le variant SECONDAIRE « classes » (répertoire) que propose
+    // :lsp:java ne transporte PAS le graphe ECJ fusionné — un
+    // consommateur java pur peut le sélectionner et échouer au compil
+    // (`cannot access ClassFileReader` dans IndexNomsIntegrationTest).
+    // AGP le fait déjà naturellement côté :lsp:host (consommation par
+    // JAR, voir lsp/java/build.gradle.kts) ; on EXIGE le même variant
+    // ici : les types ECJ ne vivent QUE dans le jar fusionné.
+    testImplementation(project(":lsp:java")) {
+        attributes {
+            attribute(
+                LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE,
+                objects.named(LibraryElements::class, LibraryElements.JAR),
+            )
+        }
+    }
 
     // Index disque réel (Kotlin) — :lsp:index expose api(:lsp:model),
     // donc ClasspathInstantane et les types d'entrées joignent le

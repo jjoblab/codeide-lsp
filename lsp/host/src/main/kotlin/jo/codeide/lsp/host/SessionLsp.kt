@@ -93,12 +93,13 @@ public class SessionLsp(
     androidJar: File? = null,
     parentJob: Job? = null,
     /**
-     * Période du surveillant de fichiers S1-d (I4) en millisecondes —
-     * ≤ 0 = surveillant NEUTRE (jamais lancé ; les tests pilotent le
-     * diff à la main). Défaut 5 s : un git pull / édition externe
-     * atteint le cache de parse sans réouverture.
+     * Configuration de la session (lot LSP-1, ADR 0128) — plafond du
+     * budget du cache (Auto par défaut) et période du surveillant de
+     * fichiers S1-d (I4 : 5 s par défaut, 0 = désactivé). Les défauts
+     * sont le comportement HISTORIQUE (v1.0.x–v1.1.x) ; le sous-ensemble
+     * dynamique est appliquable en cours de session par [appliquer].
      */
-    private val surveillanceFichiersMs: Long = 5_000L,
+    private var config: ConfigurationLsp = ConfigurationLsp.parDefaut(),
 ) : Closeable {
     /** Racine du projet ouvert (identité de la session). */
     public val racine: File = racineProjet
@@ -146,8 +147,11 @@ public class SessionLsp(
      */
     private val serveursJava = java.util.concurrent.CopyOnWriteArrayList<jo.lspjava.lsp.JavaLanguageServer>()
 
-    /** Surveillant de fichiers S1-d (balayage périodique borné .java). */
-    private val surveillantFichiers = SurveillantFichiersHote(racineProjet, surveillanceFichiersMs)
+    /** Boucle courante du surveillant S1-d (annulée/relancée par [appliquer], lot LSP-1). */
+    private var boucleSurveillance: Job? = null
+
+    /** Dispatcher de la session (relances dynamiques du surveillant, lot LSP-1). */
+    private val dispatcheurSession = dispatcheurIo
 
     private var fermee = false
 
@@ -168,10 +172,10 @@ public class SessionLsp(
         // S1-d « watched files côté hôte » (I4) : le balayage périodique
         // pousse les événements .java externes aux serveurs vivants — la
         // voie protocole n'est plus muette. Borné (plafond du scan),
-        // testable (periodeMs <= 0 = neutre), annulé par le scope.
-        if (surveillanceFichiersMs > 0) {
-            surveillantFichiers.boucle(scope, dispatcheurIo, ::pousserEvenementsFichiers)
-        }
+        // testable (periodeMs <= 0 = neutre), annulé par le scope. Depuis
+        // le lot LSP-1, la période est un réglage DYNAMIQUE (interrupteur
+        // « Surveiller les modifications externes » de l'écran L3).
+        relancerSurveillance(config.surveillanceFichiersMs)
     }
 
     /**
@@ -269,6 +273,97 @@ public class SessionLsp(
         verifierOuverte()
         orchestrateur.reindexer()
     }
+
+    /** Configuration COURANTE de la session (lot LSP-1) — l'écran L3
+     *  affiche les valeurs réelles, jamais devinées. */
+    public fun configuration(): ConfigurationLsp = config
+
+    /**
+     * Applique un sous-ensemble DYNAMIQUE de la configuration (lot LSP-1,
+     * ADR 0128 §4) :
+     *
+     * - **plafond du budget du cache** : un plafond explicite recrée le
+     *   service d'index avec le NOUVEAU budget (les segments persistent
+     *   sur disque — zéro ré-indexation ; l'adaptateur changé invalide
+     *   les moteurs, reconstruits paresseusement — même sémantique que
+     *   la croissance historique) ; retour à `null` (Auto) = re-dérivation
+     *   depuis le corpus courant ;
+     * - **surveillance des fichiers externes** : la boucle courante est
+     *   ANNULÉE puis relancée à la nouvelle période (`0` = désactivée) ;
+     *   la nouvelle boucle réinstalle sa baseline au premier tour (aucun
+     *   événement fantôme, même contrat que le démarrage).
+     *
+     * Ce qui n'est pas dynamique (JDK, plateforme, stockage) est fixé à la
+     * construction par l'environnement (écran L4, lecture seule).
+     */
+    public fun appliquer(config: ConfigurationLsp) {
+        verifierOuverte()
+        orchestrateur.appliquerPlafondBudget(config.budgetCacheOctets)
+        relancerSurveillance(config.surveillanceFichiersMs)
+        this.config = config
+    }
+
+    /**
+     * Taille sur DISQUE du cache d'index (octets) — écran L3 « Occupation ».
+     * Mesure l'entrepôt de segments (y compris AVANT le premier sync : un
+     * stockage hérité d'une session précédente compte) ; le budget LRU
+     * (tas), lui, voyage dans [ResultatApplication.budgetCacheMo].
+     */
+    public fun tailleCacheOctets(): Long {
+        verifierOuverte()
+        return orchestrateur.tailleCacheOctets()
+    }
+
+    /**
+     * Vide le cache d'index SUR DISQUE (écran L3 « Vider le cache », lot
+     * LSP-1) : segments et temporaires supprimés, cache LRU mémoire vidé.
+     * **Refusé pendant une indexation** ([ResultatVidageCache.Refusee]) :
+     * vider pendant la construction laisserait des segments à moitié écrits
+     * — l'écran désactive le bouton avec l'explication. Après un vidage
+     * réussi, l'index est reconstruit À LA PROCHAINE OUVERTURE ou par
+     * « Réindexer » (dialogue de l'écran L3) ; les requêtes vivantes
+     * tombent sur des segments absents et se dégradent honnêtement.
+     */
+    public fun viderCache(): ResultatVidageCache {
+        verifierOuverte()
+        if (orchestrateur.constructionActive()) {
+            return ResultatVidageCache.Refusee(RaisonRefusVidage.INDEXATION_EN_COURS)
+        }
+        val vidage = orchestrateur.viderCache()
+        return ResultatVidageCache.Videe(
+            segmentsSupprimes = vidage.first,
+            octetsLiberes = vidage.second,
+        )
+    }
+
+    /**
+     * Capacités ANNONCÉES par le moteur du langage (lot LSP-1) — la liste
+     * des interrupteurs de l'écran L2 en est DÉRIVÉE (jamais
+     * d'interrupteur pour une capacité non annoncée, ADR 0128 §4) ; la
+     * parité avec les `ServerCapabilities` réelles est verrouillée par
+     * test ([CapacitesAnnoncees]).
+     */
+    public fun capacites(langage: LangageLsp): Set<CapaciteLsp> = CapacitesAnnoncees.capacites(langage)
+
+    /**
+     * (Re)branche la boucle du surveillant S1-d — appelée à la construction
+     * puis à chaque [appliquer] : l'ancienne boucle est annulée, la
+     * nouvelle réinstalle sa baseline au premier tour (zéro événement
+     * synthétique, même contrat que le démarrage, [SurveillantFichiersHote]).
+     */
+    private fun relancerSurveillance(periodeMs: Long) {
+        boucleSurveillance?.cancel()
+        boucleSurveillance = null
+        if (periodeMs > 0) {
+            boucleSurveillance =
+                SurveillantFichiersHote(racine, periodeMs)
+                    .boucle(scope, dispatcheurSession, ::pousserEvenementsFichiers)
+        }
+    }
+
+    /** Boucle de surveillance vivante (observation de test, lot LSP-1). */
+    internal val surveillanceVivante: Boolean
+        get() = boucleSurveillance?.isActive == true
 
     /**
      * UN serveur LSP4J in-process pour une connexion (cel-lsp

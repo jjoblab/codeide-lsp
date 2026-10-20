@@ -45,10 +45,13 @@ import java.util.logging.Logger
  *
  * **Budget de cache** (leçon du banc lot F2, §15.8 point 3) : dérivé du
  * modèle — la cible §9 « tas < 30 Mo / 100 jars » est un budget PAR
- * JAR. Le budget ne fait que CROÎTRE en cours de session : une
+ * JAR. En Auto, le budget ne fait que CROÎTRE en cours de session : une
  * croissance au-delà du courant recrée le service (les segments
  * persistent sur disque — zéro ré-indexation), ce qui invalide les
- * moteurs (indexNoms changé) — honnête : le classpath a changé.
+ * moteurs (indexNoms changé) — honnête : le classpath a changé. Depuis
+ * le lot LSP-1 (ADR 0128), un PLAFOND EXPLICITE (ConfigurationLsp) borne
+ * le dérivé et s'applique dans les DEUX sens (l'écran L3 propose
+ * Auto / 256 / 512 / 1024 Mo).
  *
  * Les sync REDONDANTS ne coûtent rien : empreinte de l'union inchangée
  * → même adaptateur → `setIndexNoms` idempotent → contextes
@@ -95,6 +98,15 @@ internal class OrchestrateurLsp(
     /** Empreinte de l'union courante (détection de sync redondante). */
     private var empreinteUnion: String = ""
 
+    /** Plafond de budget EXPLICITE (lot LSP-1) — `null` = Auto (dérivé du corpus). */
+    private var plafondBudget: Long? = null
+
+    /** Dernière union alignée — rejouée par [appliquerPlafondBudget]. */
+    private var derniereUnion: ClasspathInstantane? = null
+
+    /** Nombre d'entrées de la dernière union alignée. */
+    private var derniersNbEntrees: Int = 0
+
     /**
      * Applique un résultat de classpath complet (post-sync) : modèle,
      * index fusion, moteurs par module.
@@ -120,6 +132,8 @@ internal class OrchestrateurLsp(
                 empreinte = empreinteDe(entrees.values.toList()),
             )
         val unionChangee = union.empreinte != empreinteUnion
+        derniereUnion = union
+        derniersNbEntrees = entrees.size
         alignerIndex(entrees.size, union, unionChangee)
         val compteurs = pousserMoteurs(projet)
         return Application(
@@ -192,9 +206,23 @@ internal class OrchestrateurLsp(
         unionChangee: Boolean,
     ) {
         val budgetVoulu = budgetPour(nbEntrees)
-        val serviceARecree = service == null || budgetVoulu > budgetOctets
+        // Lot LSP-1 : avec un plafond EXPLICITE, toute différence du budget
+        // cible recrée le service (le réglage a été DEMANDÉ, croissant ou
+        // décroissant) ; en Auto, le contrat historique tient (croissance
+        // seulement — une sync redondante ne recrée jamais rien).
+        val serviceARecree =
+            service == null || budgetVoulu > budgetOctets ||
+                (plafondBudget != null && budgetVoulu != budgetOctets)
         if (serviceARecree) {
-            budgetOctets = maxOf(budgetOctets, budgetVoulu)
+            // Lot LSP-1 : en Auto le budget ne croît jamais (contrat
+            // historique) ; avec un plafond explicite, le budget DEMANDÉ
+            // s'applique tel quel (croissant ou décroissant).
+            budgetOctets =
+                if (plafondBudget != null) {
+                    budgetVoulu
+                } else {
+                    maxOf(budgetOctets, budgetVoulu)
+                }
             service =
                 ServiceIndexDisque(
                     repertoire = stockage,
@@ -258,18 +286,61 @@ internal class OrchestrateurLsp(
         construction = service?.construire(vueCourante)
     }
 
+    /**
+     * Plafond de budget explicite (lot LSP-1, ADR 0128 §4) — rejoue
+     * l'alignement de l'union COURANTE : le service est recréé si le
+     * budget cible change (croissance OU décroissance), la construction
+     * repart des segments persistés (zéro ré-indexation, ADR 0111 §3).
+     * Sans union alignée (avant le premier sync), le plafond est RETENU :
+     * le premier alignement l'appliquera.
+     */
+    internal fun appliquerPlafondBudget(nouveauPlafond: Long?) {
+        plafondBudget = nouveauPlafond
+        val union = derniereUnion ?: return
+        alignerIndex(derniersNbEntrees, union, unionChangee = false)
+    }
+
+    /** Taille sur DISQUE de l'entrepôt de segments (lot LSP-1, écran L3). */
+    internal fun tailleCacheOctets(): Long = service?.tailleStockage() ?: ServiceIndexDisque.tailleStockageDe(stockage)
+
+    /** Une construction d'index est-elle EN VOL (refus du vidage, lot LSP-1). */
+    internal fun constructionActive(): Boolean = construction?.isActive == true
+
+    /**
+     * Vide l'entrepôt de segments SUR DISQUE + le cache LRU mémoire (lot
+     * LSP-1, écran L3 « Vider le cache ») — retour (segments supprimés,
+     * octets libérés). La construction courante est ANNULÉE avant la
+     * purge ; le refus « indexation en vol » est géré par l'appelant
+     * (SessionLsp.viderCache refuse AVANT d'ici).
+     */
+    internal fun viderCache(): Pair<Int, Long> {
+        construction?.cancel()
+        val serviceCourant = service
+        return if (serviceCourant != null) {
+            serviceCourant.viderStockage()
+        } else {
+            ServiceIndexDisque.viderStockageDe(stockage)
+        }
+    }
+
     /** État d'indexation de la vue fusion (flux consommé par l'UI). */
     internal fun etat(): VueIndex? = vue
 
     /** Purge les temporaires d'écritures interrompues (démarrage). */
     internal fun purgerTemporaires(): Int = service?.purgerTemporaires() ?: 0
 
-    /** Budget dérivé du corpus (plancher = défaut ADR 0111). */
-    private fun budgetPour(entrees: Int): Long =
-        maxOf(
-            ServiceIndexDisque.BUDGET_CACHE_PAR_DEFAUT,
-            entrees * OCTETS_PAR_JAR,
-        )
+    /**
+     * Budget dérivé du corpus (plancher = défaut ADR 0111), BORNÉ par le
+     * plafond explicite du lot LSP-1 quand il existe (Auto = sans borne).
+     */
+    private fun budgetPour(entrees: Int): Long {
+        val derive =
+            maxOf(
+                ServiceIndexDisque.BUDGET_CACHE_PAR_DEFAUT,
+                entrees * OCTETS_PAR_JAR,
+            )
+        return minOf(derive, plafondBudget ?: Long.MAX_VALUE)
+    }
 
     /**
      * Racines sources d'un module : les siennes (principal + générés,

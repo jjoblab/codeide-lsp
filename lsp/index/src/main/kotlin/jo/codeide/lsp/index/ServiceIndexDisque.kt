@@ -36,7 +36,14 @@ import java.util.concurrent.atomic.AtomicLong
  * Auto-guérison (ADR 0111 §4) : une corruption détectée à la lecture
  * (crc) reconstruit CE segment en arrière-plan — jamais de crash, jamais
  * d'index global reconstruit.
+ *
+ * TooManyFunctions justifié (règle 8) : chaque fonction est un VERBE du
+ * contrat public (vues, construction, temporaires, budget LRU, et
+ * depuis le lot LSP-1 l'occupation/vidage du stockage + leurs miroirs
+ * statiques sans vue alignée) — les regrouper dans une classe séparée
+ * casserait l'unicité du service sur son entrepôt.
  */
+@Suppress("TooManyFunctions")
 public class ServiceIndexDisque internal constructor(
     internal val entrepot: EntrepotSegments,
     private val analyseur: AnalyseurClasspath,
@@ -108,6 +115,28 @@ public class ServiceIndexDisque internal constructor(
 
     /** Purge les `.tmp` d'écritures interrompues (au démarrage de l'hôte). */
     public fun purgerTemporaires(): Int = entrepot.purgerTemporaires()
+
+    /**
+     * Taille sur DISQUE de l'entrepôt de segments (octets — temporaires
+     * exclus, seuls les fichiers au nom de segment comptent) ; lot LSP-1,
+     * écran L3 « Occupation ».
+     */
+    public fun tailleStockage(): Long = entrepot.tailleTotale()
+
+    /**
+     * Vide l'entrepôt SUR DISQUE (segments + temporaires) et le cache LRU
+     * MÉMOIRE (lot LSP-1, écran L3 « Vider le cache ») — retour (segments
+     * supprimés, octets libérés). Les positions adoptées par les vues
+     * vivantes deviennent orphelines : la revalidation au prochain passage
+     * reconstruit (auto-guérison ADR 0111 §4) — jamais de faux résultat.
+     */
+    public fun viderStockage(): Pair<Int, Long> {
+        val octets = entrepot.tailleTotale()
+        val supprimes = entrepot.lister().count { it.delete() }
+        entrepot.purgerTemporaires()
+        cache.vider()
+        return Pair(supprimes, octets)
+    }
 
     /**
      * Octets comptés dans le budget du cache LRU (transparence du budget
@@ -408,5 +437,26 @@ public class ServiceIndexDisque internal constructor(
         @JvmStatic
         public fun parallelismeParDefaut(): Int =
             minOf(PARALLELISME_MAX, Runtime.getRuntime().availableProcessors() / DIVISEUR_COEURS).coerceAtLeast(1)
+
+        /**
+         * Taille sur DISQUE d'un stockage SANS service (lot LSP-1) — la
+         * session mesure l'occupation AVANT son premier sync : un stockage
+         * hérité d'une session précédente compte déjà à l'écran L3.
+         */
+        @JvmStatic
+        public fun tailleStockageDe(repertoire: File): Long = EntrepotSegments(repertoire).tailleTotale()
+
+        /**
+         * Vide un stockage SANS service (lot LSP-1) — miroir statique de
+         * [viderStockage] quand aucune vue n'a encore été alignée.
+         */
+        @JvmStatic
+        public fun viderStockageDe(repertoire: File): Pair<Int, Long> {
+            val entrepot = EntrepotSegments(repertoire)
+            val octets = entrepot.tailleTotale()
+            val supprimes = entrepot.lister().count { it.delete() }
+            entrepot.purgerTemporaires()
+            return Pair(supprimes, octets)
+        }
     }
 }
