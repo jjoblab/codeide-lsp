@@ -5,7 +5,7 @@
 - **Contexte** : le LSP Kotlin doit être in-process (jamais de serveur
   externe, cohérence avec :lsp:java/ADR 0109) et ne doit pas embarquer le
   compilateur complet (leçon projet de référence : « le frontend FIR à chaque
-  frappe est trop lourd pour un éditeur sur appareil »). L'étudu projet de référence
+  frappe est trop lourd pour un éditeur sur appareil »). L'étude du projet de référence
   (auteur tiers, GPL-3.0 — enseignements d'architecture, zéro code réutilisé)
   a montré la voie : **le parseur multiplateforme du compilateur Kotlin
   lui-même** (`compiler/multiplatform-parsing`, Apache 2.0, ~25 fichiers)
