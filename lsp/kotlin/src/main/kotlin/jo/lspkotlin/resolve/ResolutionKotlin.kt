@@ -86,7 +86,9 @@ internal class ResolutionKotlin(
         // Nom unique au projet (tous paquets) : résolu sans import
         // écrit — c'est le cas de figure Kotlin le plus courant hors
         // bibliothèques ; AMBIGU = null (deux classes homonymes).
-        val porteurs = contexte.classesProjet.values.filter { it.endsWith(".$nomEcrit") }
+        // Un fqcn SANS PAQUET (« Base ») porte l'égalité stricte ; un
+        // fqcn qualifié porte le suffixe « .nom ».
+        val porteurs = contexte.classesProjet.values.filter { it == nomEcrit || it.endsWith(".$nomEcrit") }
         if (porteurs.size == 1) return porteurs.single()
         return null
     }
