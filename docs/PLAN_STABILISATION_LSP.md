@@ -17,7 +17,7 @@
 |---|---|---|---|---|
 | **XML** | ✅ La plus disciplinée (zéro dépendance, parser tolérant, X4 rigoureux) | 188 module + 17 host, verts | XP1/XP2/XP3 (faux positifs sur références) | Oui (probe B/D/E) |
 | **Kotlin** | ✅ Saine (grammaire officielle vendored, D3 conservateur) | 118 tests, 1 échec (baseline) | KP1 (baseline rouge) + KP8 (faux `kt.unresolved`) | Oui (`ArrayList`, `StringBuilder`) |
-| **Java** | ✅ Riche (ecj vendored, index disque, completion, diagnostics) | 498 tests, 0 échec, 76 ignorés | D3 — clôturé (ADR 0110/0121) | Non (niveau A réécrit, niveau B attesté) |
+| **Java** | ✅ Riche (ecj vendored, index disque, completion, diagnostics) | 498 tests, 0 échec, 76 ignorés | D3 — clôturé (ADR 0110/0200) | Non (niveau A réécrit, niveau B attesté) |
 
 ## 2. Synthèse transversale — problèmes communs
 
@@ -38,7 +38,7 @@
 #### S0 — Stabiliser (2-3 lots)
 - **S0-a** : hygiène protocole (lifecycle guard centralisé, `prepareRename`, version injectée, convention null/empty uniforme)
 - **S0-b** : `prepareRename` honnête (range + placeholder, error typée, `documentChanges` versionné)
-- **S0-c** : **décision D3** — CLÔTURÉE (niveau A réécrit v0.94.0, niveau B attesté, ADR 0110/0121) ; protocole appareil §11.2 toujours applicable
+- **S0-c** : **décision D3** — CLÔTURÉE (niveau A réécrit v0.94.0, niveau B attesté, ADR 0110/0200) ; protocole appareil §11.2 toujours applicable
 
 #### S1 — Parité utile avec JDT.LS (3-4 lots)
 - Conformité par-projet (`sourceCompatibility`/`targetCompatibility` dans `ClasspathModule`)
@@ -61,7 +61,7 @@ seul item S2 ouvert, coût élevé côté ECJ)
 - Socket transport (ADR 0109 plan B)
 - Extraction bibliothèque (après D3)
 
-**Bloqueur critique — CLÔTURÉ (19/10/2026, ADR 0110/0121)** : D3/projet
+**Bloqueur critique — CLÔTURÉ (19/10/2026, ADR 0110/0200)** : D3/projet
 de référence GPL — niveau A réécrit depuis la spécification publique du
 JDK (v0.94.0), niveau B attesté travail original par le propriétaire,
 désignations purgées du code, de la documentation et de l'historique.
@@ -146,7 +146,7 @@ dans l'historique et câblé hôte — `KotlinLanguageServer`)
 | **P2 — Moyen terme** | Tous | `documentSymbol` (Kotlin S1, XML S1) | 2 jours | Navigation structure |
 | **P2 — Moyen terme** | Tous | `didChangeWatchedFiles` (commun) | 1-2 jours | Refresh auto |
 | **P2 — Moyen terme** | XML | Vues projet en completion (XP5) | 1 jour | Completion riche |
-| **P3 — Long terme** | Java | Décision D3 + lot G — ✅ clôturés (ADR 0110/0121) | — | Publication autorisée |
+| **P3 — Long terme** | Java | Décision D3 + lot G — ✅ clôturés (ADR 0110/0200) | — | Publication autorisée |
 | **P3 — Long terme** | XML | Index ressources AAR (S3) | ✅ Livré v0.134.20 | Fidélité AS |
 | **P4 — Confort** | XML | Rename borné values + formateur | ✅ Livré 19/10 (1.1.0) | Geste de renommage + format |
 | **P4 — Confort** | Tous | Audit S2 : Kotlin/Java/XML câblés | ✅ Confirmé 19/10 | — |

@@ -11,7 +11,7 @@ principal CodeIDE — `feature:editor`, `core:ui`,
 `core:terminal-runtime`, `feature:terminal`, `:preview:xml` — ont été
 retirées de ce fichier ; leur suivi continue dans les notices du dépôt
 CodeIDE. Les références historiques aux ADR de ce dépôt (0035, 0036,
-0115, 0121) restent exactes : le fichier continue de recenser les
+0115, 0200) restent exactes : le fichier continue de recenser les
 dépendances du périmètre lsp.
 
 | Bibliothèque | Version | Licence | Usage | Modules |

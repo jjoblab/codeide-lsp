@@ -7,7 +7,7 @@
   intégral `Jdt* → Ecj*` (v0.95.0), attestation de paternité du niveau
   B reconfirmée par le propriétaire (19/10/2026), purge des désignations
   du projet tiers de référence dans le code, la documentation et
-  l'historique (**ADR 0121**). Le protocole de mesure appareil (second
+  l'historique (**ADR 0200**). Le protocole de mesure appareil (second
   volet du S0-c) reste en attente, sans effet sur le statut de licence.
   (v0.91.0, étape 0 — prompt 2 §3 D3)
 - **Contexte** : le prompt 2 annonce un audit de provenance fourni
@@ -115,7 +115,7 @@ Décision actée (trace de ce PV : `docs/LSP_JAVA.md §18.2`) :
    niveau A n'est pas faite** : module vendored privé, aucune publication
    en bibliothèque indépendante, aucun nouveau copiage du projet de référence.
 
-## Clôture (19/10/2026 — ADR 0121)
+## Clôture (19/10/2026 — ADR 0200)
 
 La condition du point 3 ci-dessus est levée : la réécriture niveau A
 est exécutée (v0.94.0 — les trois shims `compat/` actuels sont écrits
@@ -124,5 +124,5 @@ niveau B est attesté travail original par le propriétaire (16/10/2026,
 reconfirmé 19/10/2026), et les désignations du projet tiers de
 référence sont purgées de l'ensemble du dépôt — code, commentaires,
 documentation et historique des commits (rectification d'attribution,
-ADR 0121). La publication en bibliothèque indépendante est autorisée :
+ADR 0200). La publication en bibliothèque indépendante est autorisée :
 GitHub Packages sert les artefacts depuis v1.0.0.

@@ -1,7 +1,10 @@
-# ADR 0121 — Rectification de provenance : purge des désignations du projet tiers de référence
+# ADR 0200 — Rectification de provenance : purge des désignations du projet tiers de référence
 
 - **Statut** : accepté (19/10/2026, décision directe du propriétaire,
-  exécutée lors de la stabilisation post-extraction codeide-lsp).
+  exécutée lors de la stabilisation post-extraction codeide-lsp ;
+  **renumérotée de 0121 en 0200 le 2026-10-20** — la plage 0001–0199
+  appartient à CodeIDE, ce dépôt numérote ses décisions propres à
+  partir de 0200 ; voir README § « ADR et numérotation »).
 - **Contexte** : l'ADR 0110 a documenté l'audit de provenance du module
   `lsp:java` et la décision du propriétaire (16/10/2026) : réécriture
   ciblée du niveau A (les trois shims `compat/`, exécutée v0.94.0
