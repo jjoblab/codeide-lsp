@@ -142,70 +142,19 @@ class CapacitesLspPariteTest {
      * (déclencheurs, préparation du renommage, kinds d'actions, légende).
      * Une capacité absente des capacités réelles est absente de la table —
      * la comparaison avec la table attendue est EXACTE (ni plus, ni moins).
+     *
+     * Le catalogue vit dans [EXTRACTEURS] (une lambda par capacité, l'ordre
+     * du protocole) — la méthode elle-même reste TRIVIALE : la complexité
+     * d'un catalogue n'est pas celle d'une méthode (leçon de l'échec CI du
+     * commit 02aee32 : 27 branches d'if en cascade = 37 de complexité
+     * cyclomatique, detekt a raison de refuser).
      */
-    private fun tableComplete(capacites: ServerCapabilities): Map<String, String> {
-        val table = LinkedHashMap<String, String>()
-        capacites.textDocumentSync?.let { sync ->
-            table["synchronisation"] =
-                when (sync.left) {
-                    TextDocumentSyncKind.Full -> "complète"
-                    TextDocumentSyncKind.Incremental -> "incrémentale"
-                    else -> "autre"
-                }
+    private fun tableComplete(capacites: ServerCapabilities): Map<String, String> =
+        LinkedHashMap<String, String>().apply {
+            for (extraction in EXTRACTEURS) {
+                extraction(capacites)?.let { (cle, valeur) -> put(cle, valeur) }
+            }
         }
-        capacites.completionProvider?.let {
-            table["complétion"] = "déclencheurs ${declencheurs(it.triggerCharacters)}"
-        }
-        if (capacites.hoverProvider?.left == true) table["survol"] = "oui"
-        if (capacites.definitionProvider?.left == true) table["définition"] = "oui"
-        if (capacites.typeDefinitionProvider?.left == true) table["définition de type"] = "oui"
-        if (capacites.implementationProvider?.left == true) table["implémentations"] = "oui"
-        capacites.codeActionProvider?.let {
-            table["actions de code"] =
-                it.right?.codeActionKinds?.joinToString(",") ?: "oui"
-        }
-        if (capacites.documentSymbolProvider?.left == true) table["symboles de document"] = "oui"
-        if (capacites.documentHighlightProvider?.left == true) table["surlignage"] = "oui"
-        if (capacites.referencesProvider?.left == true) table["références"] = "oui"
-        capacites.renameProvider?.let {
-            table["renommage"] = if (it.right?.prepareProvider == true) "prépare" else "oui"
-        }
-        if (capacites.documentFormattingProvider?.left == true) table["formatage"] = "oui"
-        if (capacites.documentRangeFormattingProvider?.left == true) table["formatage de plage"] = "oui"
-        capacites.documentOnTypeFormattingProvider?.let {
-            table["formatage à la frappe"] =
-                "déclencheurs ${it.firstTriggerCharacter}${it.moreTriggerCharacter.orEmpty().joinToString("")}"
-        }
-        if (capacites.workspaceSymbolProvider != null) table["symboles d'espace"] = "oui"
-        if (capacites.selectionRangeProvider?.left == true) table["plage de sélection"] = "oui"
-        capacites.codeLensProvider?.let {
-            table["lentilles de code"] = if (it.resolveProvider == true) "résolution oui" else "résolution non"
-        }
-        if (capacites.callHierarchyProvider?.left == true) table["hiérarchie d'appels"] = "oui"
-        if (capacites.typeHierarchyProvider?.left == true) table["hiérarchie de types"] = "oui"
-        capacites.signatureHelpProvider?.let {
-            table["aide à la signature"] = "déclencheurs ${declencheurs(it.triggerCharacters)}"
-        }
-        if (capacites.inlayHintProvider != null) table["indices en ligne"] = "oui"
-        if (capacites.foldingRangeProvider?.left == true) table["pliage"] = "oui"
-        capacites.semanticTokensProvider?.let {
-            table["jetons sémantiques"] =
-                "complète, légende ${it.legend.tokenTypes.size} types"
-        }
-        if (capacites.linkedEditingRangeProvider?.left == true) table["édition liée"] = "oui"
-        if (capacites.colorProvider != null) table["couleurs de document"] = "oui"
-        if (capacites.executeCommandProvider != null) table["commandes"] = "oui"
-        capacites.positionEncoding?.let { table["encodage de position"] = it }
-        (capacites.experimental as? Map<*, *>)?.let { experimental ->
-            if ("superDefinitionProvider" in experimental) table["super-définition (expérimental)"] = "oui"
-            if ("decompiledSourceProvider" in experimental) table["source décompilée (expérimental)"] = "oui"
-        }
-        return table
-    }
-
-    /** Déclencheurs compacts (l'espace devient ␣, lisible dans un diff). */
-    private fun declencheurs(caracteres: List<String>?): String =
-        caracteres.orEmpty().joinToString("") { car -> if (car == " ") "␣" else car }
 
     /**
      * ANTI-STUB (L0, critère 2) : toute capacité annoncée par [table]
@@ -261,6 +210,173 @@ class CapacitesLspPariteTest {
      * annoncée (la clé est celle de [tableComplete]).
      */
     private companion object {
+        /** Déclencheurs compacts (l'espace devient ␣, lisible dans un diff). */
+        private fun declencheurs(caracteres: List<String>?): String =
+            caracteres.orEmpty().joinToString("") { car -> if (car == " ") "␣" else car }
+
+        /**
+         * Catalogue des extracteurs L0 (l'ordre canonique du protocole) :
+         * une lambda par capacité LSP, rend la paire (clé, détail) si la
+         * capacité est annoncée, `null` sinon — le catalogue EST une table,
+         * la méthode [tableComplete] reste triviale.
+         */
+        private val EXTRACTEURS: List<(ServerCapabilities) -> Pair<String, String>?> =
+            listOf(
+                { c ->
+                    c.textDocumentSync?.let { sync ->
+                        "synchronisation" to
+                            when (sync.left) {
+                                TextDocumentSyncKind.Full -> "complète"
+                                TextDocumentSyncKind.Incremental -> "incrémentale"
+                                else -> "autre"
+                            }
+                    }
+                },
+                { c ->
+                    c.completionProvider?.let { "complétion" to "déclencheurs ${declencheurs(it.triggerCharacters)}" }
+                },
+                { c ->
+                    c.hoverProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "survol" to "oui" }
+                },
+                { c ->
+                    c.definitionProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "définition" to "oui" }
+                },
+                { c ->
+                    c.typeDefinitionProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "définition de type" to "oui" }
+                },
+                { c ->
+                    c.implementationProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "implémentations" to "oui" }
+                },
+                { c ->
+                    c.codeActionProvider?.let {
+                        "actions de code" to (it.right?.codeActionKinds?.joinToString(",") ?: "oui")
+                    }
+                },
+                { c ->
+                    c.documentSymbolProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "symboles de document" to "oui" }
+                },
+                { c ->
+                    c.documentHighlightProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "surlignage" to "oui" }
+                },
+                { c ->
+                    c.referencesProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "références" to "oui" }
+                },
+                { c ->
+                    c.renameProvider?.let {
+                        "renommage" to if (it.right?.prepareProvider == true) "prépare" else "oui"
+                    }
+                },
+                { c ->
+                    c.documentFormattingProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "formatage" to "oui" }
+                },
+                { c ->
+                    c.documentRangeFormattingProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "formatage de plage" to "oui" }
+                },
+                { c ->
+                    c.documentOnTypeFormattingProvider?.let {
+                        "formatage à la frappe" to
+                            "déclencheurs ${it.firstTriggerCharacter}${it.moreTriggerCharacter.orEmpty().joinToString(
+                                "",
+                            )}"
+                    }
+                },
+                { c -> c.workspaceSymbolProvider?.let { "symboles d'espace" to "oui" } },
+                { c ->
+                    c.selectionRangeProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "plage de sélection" to "oui" }
+                },
+                { c ->
+                    c.codeLensProvider?.let {
+                        "lentilles de code" to if (it.resolveProvider == true) "résolution oui" else "résolution non"
+                    }
+                },
+                { c ->
+                    c.callHierarchyProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "hiérarchie d'appels" to "oui" }
+                },
+                { c ->
+                    c.typeHierarchyProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "hiérarchie de types" to "oui" }
+                },
+                { c ->
+                    c.signatureHelpProvider?.let {
+                        "aide à la signature" to "déclencheurs ${declencheurs(it.triggerCharacters)}"
+                    }
+                },
+                { c -> c.inlayHintProvider?.let { "indices en ligne" to "oui" } },
+                { c ->
+                    c.foldingRangeProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "pliage" to "oui" }
+                },
+                { c ->
+                    c.semanticTokensProvider?.let {
+                        "jetons sémantiques" to "complète, légende ${it.legend.tokenTypes.size} types"
+                    }
+                },
+                { c ->
+                    c.linkedEditingRangeProvider
+                        ?.left
+                        ?.takeIf { it }
+                        ?.let { "édition liée" to "oui" }
+                },
+                { c -> c.colorProvider?.let { "couleurs de document" to "oui" } },
+                { c -> c.executeCommandProvider?.let { "commandes" to "oui" } },
+                { c -> c.positionEncoding?.let { "encodage de position" to it } },
+                { c ->
+                    (c.experimental as? Map<*, *>)?.let { experimental ->
+                        if ("superDefinitionProvider" in experimental) {
+                            "super-définition (expérimental)" to "oui"
+                        } else {
+                            null
+                        }
+                    }
+                },
+                { c ->
+                    (c.experimental as? Map<*, *>)?.let { experimental ->
+                        if ("decompiledSourceProvider" in experimental) {
+                            "source décompilée (expérimental)" to "oui"
+                        } else {
+                            null
+                        }
+                    }
+                },
+            )
+
         /**
          * Table COMPLÈTE attendue du serveur Java (L0) — miroir exact de
          * `ServerCapabilitiesProvider.createCapabilities()` : toute
