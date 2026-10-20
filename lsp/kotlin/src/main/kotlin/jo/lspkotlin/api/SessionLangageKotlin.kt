@@ -290,6 +290,165 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun renommage(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
 
     /**
+     * Éditions de ré-indentation du document ENTIER
+     * (`textDocument/formatting`, L2 — plan 1.3.0, formateur BORNÉ,
+     * ADR 0202) : ré-indentation canonique calculée depuis l'arbre
+     * syntaxique — le CONTENU des lignes n'est jamais réécrit, seules
+     * les plènes de tête décalées sont remplacées.
+     *
+     * Refus honnête (D3) : document avec marqueurs d'erreur de syntaxe
+     * (édition en cours, fragment non reconnu) ⇒ liste VIDE — on ne
+     * reformate pas ce qu'on ne comprend pas. Les lignes à l'intérieur
+     * d'un jeton multi-ligne (chaîne brute, bloc de commentaire, KDoc)
+     * ne sont JAMAIS touchées. Les lignes déjà justes ne produisent pas
+     * d'édition (idempotence : reformater un document formaté ne change
+     * rien).
+     *
+     * Tolérance de version : défaut VIDE — un pack S2 face à un hôte L2
+     * dégrade honnêtement (pas de formatage, jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @param tailleIndentation nombre d'espaces par niveau (options du
+     *        client ; défaut 4).
+     * @return les éditions ordonnées par position ; liste VIDE pour un
+     *         document inconnu/fermé ou refusé.
+     */
+    public fun formatage(
+        uri: String,
+        tailleIndentation: Int,
+    ): List<EditionSourceKotlin> = emptyList()
+
+    /**
+     * Éditions de ré-indentation d'une PLAGE SEULE
+     * (`textDocument/rangeFormatting`, L2) : mêmes règles que
+     * [formatage] (borné, refus honnête, idempotent), mais seules les
+     * lignes qui INTERSECTENT la plage [debutPlage, finPlage) sont
+     * candidates — le reste du document ne bouge jamais (une édition
+     * hors plage décalerait le buffer du client).
+     *
+     * @param uri identité du document.
+     * @param debutPlage décalage de début de la plage demandée (inclus).
+     * @param finPlage décalage de fin de la plage demandée (exclusif).
+     * @param tailleIndentation nombre d'espaces par niveau.
+     * @return les éditions ordonnées, TOUS dans la plage demandée ;
+     *         liste VIDE pour un document inconnu/fermé ou refusé.
+     */
+    public fun formatage(
+        uri: String,
+        debutPlage: Int,
+        finPlage: Int,
+        tailleIndentation: Int,
+    ): List<EditionSourceKotlin> = emptyList()
+
+    /**
+     * Définitions du TYPE du symbole visé (`textDocument/typeDefinition`,
+     * L2 — plan 1.3.0) : l'emplacement de la déclaration du TYPE —
+     * référence de type sous le curseur, type ÉCRIT d'une
+     * locale/paramètre/propriété, ou constructeur appelé. Réutilise la
+     * chaîne de résolution des définitions (même conservatisme).
+     *
+     * Conservateur (D3) : type non certain (littéral, cible classpath
+     * sans source, curseur hors identifiant) ⇒ liste VIDE.
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return les emplacements (souvent un seul) ; liste VIDE sans type
+     *         prouvé dans les sources du projet.
+     */
+    public fun definitionsType(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
+
+    /**
+     * Implémentations du type visé (`textDocument/implementation`, L2 —
+     * plan 1.3.0) : les déclarations du PROJET dont les supertypes
+     * ÉCRITS résolvent vers le type en contexte — une référence de type
+     * sous le curseur, sinon la classe englobante. Les supertypes sont
+     * résolus par les imports du fichier de CHAQUE candidate (une
+     * homonymie de nom simple ne suffit PAS — preuve par FQCN).
+     *
+     * Conservateur (D3) : héritiers du classpath non listés (pas de
+     * source) ; type non prouvé ⇒ liste VIDE.
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return les emplacements des NOMS déclarants des types dérivés,
+     *         ordonnés (document courant en tête) ; liste VIDE sans
+     *         type prouvé ou sans héritier.
+     */
+    public fun implementations(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
+
+    /**
+     * Indices en ligne d'une plage (`textDocument/inlayHint`, L2 —
+     * plan 1.3.0) : noms de paramètres aux appels de la plage
+     * (arguments POSITIONNELS seulement — un argument nommé porte déjà
+     * son nom) et types CERTAINS des déclarations sans type écrit de
+     * la plage (littéraux et constructeurs — jamais un type inféré
+     * deviné).
+     *
+     * Conservateur (D3) : un appel dont la candidate n'est pas prouvée
+     * ne rend AUCUN indice de paramètre (réutilise l'extraction de
+     * l'aide à la signature) ; une initialisation dont le type n'est
+     * pas certain ne rend AUCUN indice de type.
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @param debutPlage décalage de début de la plage demandée (inclus).
+     * @param finPlage décalage de fin de la plage demandée (exclusif).
+     * @return les indices ordonnés par position ; liste VIDE pour un
+     *         document inconnu/fermé ou une plage vide.
+     */
+    public fun indices(
+        uri: String,
+        debutPlage: Int,
+        finPlage: Int,
+    ): List<IndiceEnLigneKotlin> = emptyList()
+
+    /**
+     * Symboles de l'ESPACE de travail (`workspace/symbol`, L2 — plan
+     * 1.3.0) : les déclarations NOMMÉES du projet (documents ouverts +
+     * racines sources, multi-fichiers) dont le nom RÉPOND à la requête
+     * (contient, insensible à la casse) — la palette « aller au
+     * symbole » de l'éditeur en est le consommateur.
+     *
+     * Borné : plafond de résultats (le balayage des racines est celui
+     * du scan projet, déjà plafonné) ; les locales/paramètres ne
+     * remontent JAMAIS (des centaines par fichier : du bruit pour une
+     * palette).
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param requête texte de recherche (vide = tout, plafonné).
+     * @return les symboles ordonnés par nom ; liste VIDE sans candidat.
+     */
+    public fun symbolesEspace(requete: String): List<SymboleEspaceKotlin> = emptyList()
+
+    /**
+     * Chaînes de sélection (`textDocument/selectionRange`, L2 — plan
+     * 1.3.0) : pour CHAQUE position demandée, la chaîne des nœuds
+     * englobants (du plus profond au fichier entier) — l'expansion
+     * progressive de la sélection. Chaque maillon englobe STRICTEMENT
+     * le précédent ; une position hors arbre rend la chaîne du
+     * fichier seul.
+     *
+     * Tolérance de version : défaut VIDE — un pack S2 face à un hôte
+     * L2 dégrade honnêtement.
+     *
+     * @param uri identité du document.
+     * @param decalages les positions demandées (une chaîne par
+     *        position, DANS L'ORDRE de la requête).
+     * @return une chaîne par position ; liste VIDE pour un document
+     *         inconnu/fermé.
+     */
+    public fun selections(
+        uri: String,
+        decalages: List<Int>,
+    ): List<ChaineSelectionKotlin> = emptyList()
+
+    /**
      * Signale des modifications de fichiers EXTERNES (lot L1 du plan
      * 1.3.0 — le surveillant de l'hôte pousse `didChangeWatchedFiles`
      * au serveur, qui rafraîchit SES sources avant de republier les

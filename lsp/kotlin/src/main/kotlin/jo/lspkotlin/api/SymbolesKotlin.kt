@@ -245,3 +245,55 @@ public data class PlageRenommableKotlin(
     public val fin: Int,
     public val placeholder: String,
 )
+
+/**
+ * Plage d'un maillon de la chaîne de sélection
+ * (`textDocument/selectionRange`, L2 — plan 1.3.0) — décalages dans le
+ * texte du document courant.
+ *
+ * @property debut décalage de début du maillon (inclus).
+ * @property fin décalage de fin du maillon (exclusif).
+ */
+public data class PlageSelectionKotlin(
+    public val debut: Int,
+    public val fin: Int,
+)
+
+/**
+ * Chaîne des nœuds englobants d'une position
+ * (`textDocument/selectionRange`, L2) : l'expansion progressive de la
+ * sélection — chaque maillon est STRICTEMENT plus grand que le
+ * précédent (le plus profond d'abord, le fichier entier en dernier).
+ *
+ * @property plages les maillons du plus profond au plus englobant,
+ *           STRICTEMENT croissants (une plage égale à la précédente
+ *           est fusionnée : deux productions aux mêmes frontières ne
+ *           font qu'un maillon pour l'utilisateur).
+ */
+public data class ChaineSelectionKotlin(
+    public val plages: List<PlageSelectionKotlin>,
+)
+
+/**
+ * Symbole d'espace (`workspace/symbol`, L2 — plan 1.3.0) : une
+ * déclaration NOMMÉE du projet (documents ouverts + racines sources),
+ * répondant à une requête par nom — la palette « aller au symbole »
+ * de l'éditeur en est le consommateur.
+ *
+ * @property nom nom de la déclaration (`Foo`, `bar`).
+ * @property genre genre du symbole (→ SymbolKind LSP côté hôte).
+ * @property uri URI du document porteur.
+ * @property debutNom décalage de début du nom déclaré (inclus).
+ * @property finNom décalage de fin du nom déclaré (exclusif).
+ * @property conteneur nom du conteneur (`Classe` pour un membre),
+ *           `null` au premier niveau (colonne « conteneur » de la
+ *           palette).
+ */
+public data class SymboleEspaceKotlin(
+    public val nom: String,
+    public val genre: GenreSymboleKotlin,
+    public val uri: String,
+    public val debutNom: Int,
+    public val finNom: Int,
+    public val conteneur: String?,
+)

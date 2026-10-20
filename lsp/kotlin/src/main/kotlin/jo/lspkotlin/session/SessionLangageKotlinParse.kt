@@ -4,6 +4,7 @@ import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
+import jo.lspkotlin.api.EditionSourceKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.PlagePliableKotlin
 import jo.lspkotlin.api.PlageRenommableKotlin
@@ -14,6 +15,7 @@ import jo.lspkotlin.api.SymboleDocumentKotlin
 import jo.lspkotlin.completion.CompletionKotlin
 import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
+import jo.lspkotlin.format.FormateurKotlin
 import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
 import jo.lspkotlin.parse.NoeudSyntaxique
@@ -28,6 +30,7 @@ import jo.lspkotlin.resolve.OccurrencesKotlin
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SignaturesAppels
 import jo.lspkotlin.resolve.SymbolesProjet
+import jo.lspkotlin.resolve.TypesKotlin
 import jo.lspkotlin.symboles.SymbolesDocumentKotlin
 import jo.lspkotlin.synthetics.ClassesSynthetiques
 import java.io.File
@@ -357,6 +360,110 @@ internal class SessionLangageKotlinParse(
                 for (occurrence in occurrences) {
                     resultat.add(EmplacementKotlin(uriFichier, occurrence.debut, occurrence.fin))
                 }
+            }
+            resultat
+        }
+
+    /**
+     * Formatage BORNÉ du document ENTIER (L2, ADR 0202) — le calcul
+     * vit dans [FormateurKotlin] (ré-indentation canonique seule, le
+     * contenu n'est jamais réécrit, refus honnête sur arbre en erreur).
+     * Document inconnu/fermé : liste VIDE.
+     */
+    override fun formatage(
+        uri: String,
+        tailleIndentation: Int,
+    ): List<EditionSourceKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            FormateurKotlin.editer(document.arbre, document.texte, tailleIndentation)
+        }
+
+    /**
+     * Formatage BORNÉ d'une PLAGE (L2, ADR 0202) — mêmes règles que
+     * [formatage], restreintes aux lignes qui INTERSECTENT la plage
+     * demandée (une édition hors plage décalerait le buffer du client).
+     */
+    override fun formatage(
+        uri: String,
+        debutPlage: Int,
+        finPlage: Int,
+        tailleIndentation: Int,
+    ): List<EditionSourceKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            FormateurKotlin.editer(document.arbre, document.texte, tailleIndentation, debutPlage, finPlage)
+        }
+
+    /**
+     * Définitions de TYPE (L2) — la chaîne de résolution vit dans
+     * [TypesKotlin] (même conservatisme que les définitions : une
+     * cible sans source dans le projet n'est PAS servie). Document
+     * inconnu/fermé : liste VIDE.
+     */
+    override fun definitionsType(
+        uri: String,
+        decalage: Int,
+    ): List<EmplacementKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            TypesKotlin.definitionsType(
+                document.arbre.racine,
+                decalage,
+                uri,
+                contexteInterrogations(document, uri),
+            )
+        }
+
+    /**
+     * Implémentations du type en contexte (L2) — preuve par FQCN
+     * ([TypesKotlin.implementationsDansArbre]) : chaque candidate du
+     * PROJET prouve son supertype par les imports de SON fichier.
+     * Balayage miroir des occurrences : document courant (arbre frais)
+     * en tête, puis les autres fichiers — pré-filtre textuel sur le
+     * nom du supertype (un héritier l'écrit dans sa clause).
+     */
+    override fun implementations(
+        uri: String,
+        decalage: Int,
+    ): List<EmplacementKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val cible =
+                TypesKotlin.typeEnContexte(
+                    document.arbre.racine,
+                    decalage,
+                    uri,
+                    contexteInterrogations(document, uri),
+                ) ?: return emptyList()
+            val resultat = mutableListOf<EmplacementKotlin>()
+            val contexteNom = contexteNomDe(document, uri)
+            resultat.addAll(
+                TypesKotlin.implementationsDansArbre(
+                    document.arbre.racine,
+                    uri,
+                    cible,
+                    OccurrencesKotlin.ContexteFichier(
+                        contexteNom,
+                        declarationsProjet(document, uri, contexteNom.paquet),
+                    ),
+                    resolution,
+                ),
+            )
+            for (fichier in balayerAutresFichiers(uri, cible.nom)) {
+                resultat.addAll(
+                    TypesKotlin.implementationsDansArbre(
+                        fichier.arbre.racine,
+                        fichier.uri,
+                        cible,
+                        fichier.contexte,
+                        resolution,
+                    ),
+                )
             }
             resultat
         }
