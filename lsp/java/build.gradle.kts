@@ -216,6 +216,18 @@ dependencies {
         builtBy(patchEclipseForArt)
     })
 
+    // Le CLASSPATH DE TEST voit les mêmes jars Eclipse patchés que la
+    // production (dette préexistante au 21/10/2026 : quatre fichiers de
+    // test importent org.eclipse.jdt.* — CodeActionServiceTest,
+    // CreateMethodFixTest, JavaProblemFamilyTest, ScratchAstShapesTest —
+    // et la CI ne lance pas :lsp:java:test, l'échec de compilation
+    // n'était vu nulle part). Même fileTree, même builtBy : les jars
+    // existent avant la compilation des tests.
+    testImplementation(fileTree(eclipseArtDir) {
+        include("*.jar")
+        builtBy(patchEclipseForArt)
+    })
+
     implementation(libs.lsp4j)
     implementation(libs.gson)
 
