@@ -210,6 +210,9 @@ class SessionLspReglagesTest {
                 CapaciteLsp.REFERENCES,
                 CapaciteLsp.RENOMMAGE,
                 CapaciteLsp.ACTIONS_RAPIDES,
+                // L2 (plan 1.3.0) : formateur borné + indices en ligne.
+                CapaciteLsp.FORMATAGE,
+                CapaciteLsp.INDICES_EN_LIGNE,
             ),
             session.capacites(LangageLsp.KOTLIN),
         )

@@ -430,6 +430,13 @@ class CapacitesLspPariteTest {
                 "références" to "oui",
                 "surlignage" to "oui",
                 "renommage" to "prépare",
+                "formatage" to "oui",
+                "formatage de plage" to "oui",
+                "définition de type" to "oui",
+                "implémentations" to "oui",
+                "indices en ligne" to "oui",
+                "symboles d'espace" to "oui",
+                "plage de sélection" to "oui",
             )
 
         /**

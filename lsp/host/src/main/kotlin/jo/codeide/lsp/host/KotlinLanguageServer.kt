@@ -1,9 +1,11 @@
 package jo.codeide.lsp.host
 
 import jo.lspkotlin.api.AideSignatureKotlin
+import jo.lspkotlin.api.ChaineSelectionKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.GenreCompletionKotlin
+import jo.lspkotlin.api.GenreIndiceKotlin
 import jo.lspkotlin.api.GenreSymboleKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
@@ -30,17 +32,23 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.DocumentHighlightParams
+import org.eclipse.lsp4j.DocumentRangeFormattingParams
 import org.eclipse.lsp4j.DocumentSymbol
 import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.FoldingRange
 import org.eclipse.lsp4j.FoldingRangeRequestParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
+import org.eclipse.lsp4j.ImplementationParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
+import org.eclipse.lsp4j.InlayHint
+import org.eclipse.lsp4j.InlayHintKind
+import org.eclipse.lsp4j.InlayHintParams
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.ParameterInformation
 import org.eclipse.lsp4j.Position
@@ -52,6 +60,8 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ReferenceParams
 import org.eclipse.lsp4j.RenameOptions
 import org.eclipse.lsp4j.RenameParams
+import org.eclipse.lsp4j.SelectionRange
+import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.SignatureHelp
@@ -60,9 +70,12 @@ import org.eclipse.lsp4j.SignatureHelpParams
 import org.eclipse.lsp4j.SignatureInformation
 import org.eclipse.lsp4j.SymbolInformation
 import org.eclipse.lsp4j.SymbolKind
+import org.eclipse.lsp4j.TextDocumentPositionParams
 import org.eclipse.lsp4j.TextDocumentSyncKind
 import org.eclipse.lsp4j.TextEdit
+import org.eclipse.lsp4j.TypeDefinitionParams
 import org.eclipse.lsp4j.WorkspaceEdit
+import org.eclipse.lsp4j.WorkspaceSymbolParams
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.jsonrpc.messages.Either3
 import org.eclipse.lsp4j.services.LanguageClient
@@ -172,6 +185,19 @@ internal class KotlinLanguageServer(
         val renommage = RenameOptions()
         renommage.prepareProvider = true
         capacites.setRenameProvider(renommage)
+        // L2 (plan 1.3.0) : FORMATAGE borné (document entier + plage),
+        // DÉFINITION DE TYPE et IMPLÉMENTATIONS (preuve par FQCN),
+        // INDICES EN LIGNE, SYMBOLES D'ESPACE et CHAÎNES DE SÉLECTION.
+        // Jetons sémantiques : NON annoncés — la distinction qu'ils
+        // portent n'est pas fiable au niveau du parseur (honnêteté D3,
+        // la matrice de capacités consigne l'écart).
+        capacites.setDocumentFormattingProvider(true)
+        capacites.setDocumentRangeFormattingProvider(true)
+        capacites.setTypeDefinitionProvider(true)
+        capacites.setImplementationProvider(true)
+        capacites.setInlayHintProvider(true)
+        capacites.setWorkspaceSymbolProvider(true)
+        capacites.setSelectionRangeProvider(true)
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -597,6 +623,183 @@ internal class KotlinLanguageServer(
             }
 
         /**
+         * Formatage borné (L2, plan 1.3.0) : les éditions de
+         * ré-indentation du moteur (décalages) deviennent des TextEdits
+         * LSP (convertisseur partagé du document). Refus du moteur
+         * (document en erreur) = liste VIDE (le document reste tel
+         * quel, jamais d'exception).
+         */
+        override fun formatting(params: DocumentFormattingParams): CompletableFuture<List<TextEdit>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val taille = params.options?.takeIf { it.tabSize > 0 }?.tabSize ?: INDENTATION_DEFAUT
+            val editions =
+                try {
+                    session.formatage(uri, taille)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "formatting Kotlin échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(editionsTexte(editions, document))
+        }
+
+        /**
+         * Formatage borné d'une PLAGE (L2) : mêmes règles que
+         * [formatting], restreintes aux lignes qui intersectent la
+         * plage demandée — les éditions ne sortent JAMAIS de la plage
+         * (une édition hors plage décalerait le buffer du client).
+         */
+        override fun rangeFormatting(params: DocumentRangeFormattingParams): CompletableFuture<List<TextEdit>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val taille = params.options?.takeIf { it.tabSize > 0 }?.tabSize ?: INDENTATION_DEFAUT
+            val debut = decalageDe(params.range.start, document.texte)
+            val fin = decalageDe(params.range.end, document.texte)
+            val editions =
+                try {
+                    session.formatage(uri, debut, fin, taille)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "rangeFormatting Kotlin échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(editionsTexte(editions, document))
+        }
+
+        /** Éditions neutres (décalages) → TextEdits LSP. */
+        private fun editionsTexte(
+            editions: List<jo.lspkotlin.api.EditionSourceKotlin>,
+            document: DocumentLsp,
+        ): List<TextEdit> =
+            editions.map { edition ->
+                TextEdit(
+                    Range(
+                        document.convertisseur.positionDe(edition.debut),
+                        document.convertisseur.positionDe(edition.fin),
+                    ),
+                    edition.texte,
+                )
+            }
+
+        /**
+         * Définition de TYPE (L2) : emplacements de la déclaration du
+         * type du symbole visé — LocationLinks vers le fichier cible
+         * (même mécanique que la définition : URI + plage du nom).
+         */
+        override fun typeDefinition(
+            params: TypeDefinitionParams,
+        ): CompletableFuture<Either<List<org.eclipse.lsp4j.Location>, List<org.eclipse.lsp4j.LocationLink>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyLeft())
+            val decalage = decalageDe(params.position, document.texte)
+            val emplacements =
+                try {
+                    session.definitionsType(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "typeDefinition échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(
+                Either.forLeft(emplacements.mapNotNull { emplacement -> locationLspDe(emplacement, uri) }),
+            )
+        }
+
+        /**
+         * Implémentations (L2) : héritiers PROUVÉS du type en contexte
+         * (preuve par FQCN côté serveur) — Locations LSP.
+         */
+        override fun implementation(
+            params: ImplementationParams,
+        ): CompletableFuture<Either<List<org.eclipse.lsp4j.Location>, List<org.eclipse.lsp4j.LocationLink>>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyLeft())
+            val decalage = decalageDe(params.position, document.texte)
+            val emplacements =
+                try {
+                    session.implementations(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "implementation échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(
+                Either.forLeft(emplacements.mapNotNull { emplacement -> locationLspDe(emplacement, uri) }),
+            )
+        }
+
+        /**
+         * Indices en ligne (L2) : annotations fantômes du moteur
+         * (noms de paramètres, types certains) — libellé PRÊT À
+         * AFFICHER, l'hôte ajoute les séparateurs de rendu selon le
+         * genre (`nom =` / `: Type`), la position LSP est convertie
+         * par ses soins. Liste VIDE pour un document inconnu.
+         */
+        override fun inlayHint(params: InlayHintParams): CompletableFuture<List<InlayHint>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val debut = decalageDe(params.range.start, document.texte)
+            val fin = decalageDe(params.range.end, document.texte)
+            val indices =
+                try {
+                    session.indices(uri, debut, fin)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "inlayHint échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                indices.map { indice ->
+                    val texte =
+                        when (indice.genre) {
+                            GenreIndiceKotlin.PARAMETRE -> indice.libelle + " ="
+                            GenreIndiceKotlin.TYPE -> ": " + indice.libelle
+                        }
+                    val indiceLsp = InlayHint()
+                    indiceLsp.position = document.convertisseur.positionDe(indice.debut)
+                    indiceLsp.label = Either.forLeft(texte)
+                    indiceLsp.kind =
+                        if (indice.genre == GenreIndiceKotlin.PARAMETRE) InlayHintKind.Parameter else InlayHintKind.Type
+                    indiceLsp
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Chaînes de sélection (L2) : pour CHAQUE position demandée,
+         * la chaîne des nœuds englobants (du plus profond au fichier
+         * entier) — SelectionRanges LSP imbriqués (parent = maillon
+         * suivant). L'ordre de la requête est conservé.
+         */
+        override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val chaines =
+                try {
+                    session.selections(uri, params.positions.map { position -> decalageDe(position, document.texte) })
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "selectionRange échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(chaines.map { chaine -> selectionLspDe(chaine, document) })
+        }
+
+        /** Chaîne neutre → SelectionRange LSP (parent = maillon suivant). */
+        private fun selectionLspDe(
+            chaine: ChaineSelectionKotlin,
+            document: DocumentLsp,
+        ): SelectionRange {
+            val plages =
+                chaine.plages.map { plage ->
+                    Range(
+                        document.convertisseur.positionDe(plage.debut),
+                        document.convertisseur.positionDe(plage.fin),
+                    )
+                }
+            var resultat = SelectionRange(plages.last(), null as SelectionRange?)
+            for (index in plages.indices.reversed().drop(1)) {
+                resultat = SelectionRange(plages[index], resultat)
+            }
+            return resultat
+        }
+
+        /**
          * Pré-validation du renommage (S2 — miroir S0-b Java) : la
          * plage EXACTE du nom + le placeholder (nom courant) — le caret
          * AU MILIEU du nom est couvert (plage du jeton, pas heuristique
@@ -986,8 +1189,73 @@ internal class KotlinLanguageServer(
         }
     }
 
-    /** Service d'espace : notifications acceptées, sans effet à K2. */
+    /** Service d'espace : notifications acceptées + symboles (L2). */
     private inner class ServiceEspace : WorkspaceService {
+        /**
+         * Symboles de l'ESPACE de travail (L2, plan 1.3.0) :
+         * `workspace/symbol` — la palette « aller au symbole » de
+         * l'éditeur. Déclarations nommées du projet (documents ouverts
+         * + racines du scan), requête CONTIENT insensible à la casse ;
+         * cibles du classpath NON listées (sans source, rien à ouvrir).
+         * Liste VIDE sans candidat (jamais d'exception).
+         */
+        override fun symbol(
+            params: WorkspaceSymbolParams,
+        ): CompletableFuture<Either<List<SymbolInformation>, List<org.eclipse.lsp4j.WorkspaceSymbol>>> =
+            CompletableFuture.completedFuture(
+                Either.forLeft(
+                    try {
+                        session.symbolesEspace(params.query).mapNotNull { symbole -> symboleInformationDe(symbole) }
+                    } catch (t: Throwable) {
+                        LOGGER.log(Level.WARNING, "workspace/symbol échoué", t)
+                        emptyList()
+                    },
+                ),
+            )
+
+        /**
+         * Symbole neutre → SymbolInformation LSP (plage = nom).
+         *
+         * Exemption detekt ciblée (règle 16) : SwallowedException — la
+         * lecture disque best-effort EST le contrat (miroir
+         * locationLspDe, D3 : fichier illisible = symbole omis).
+         */
+        @Suppress("SwallowedException", "DEPRECATION")
+        private fun symboleInformationDe(symbole: jo.lspkotlin.api.SymboleEspaceKotlin): SymbolInformation? {
+            val texte =
+                try {
+                    File(java.net.URI(symbole.uri)).readText()
+                } catch (t: Throwable) {
+                    null // fichier illisible — symbole omis (D3)
+                } ?: return null
+            val convertisseur = ConvertisseurPositions.pour(texte)
+            val information = SymbolInformation()
+            information.name = symbole.nom
+            information.kind = kindEspaceLspDe(symbole.genre)
+            information.location =
+                Location(
+                    symbole.uri,
+                    Range(
+                        convertisseur.positionDe(symbole.debutNom),
+                        convertisseur.positionDe(symbole.finNom),
+                    ),
+                )
+            symbole.conteneur?.let { conteneur -> information.containerName = conteneur }
+            return information
+        }
+
+        /** Genre neutre → SymbolKind LSP (palette d'espace). */
+        private fun kindEspaceLspDe(genre: GenreSymboleKotlin): SymbolKind =
+            when (genre) {
+                GenreSymboleKotlin.CLASSE -> SymbolKind.Class
+                GenreSymboleKotlin.INTERFACE -> SymbolKind.Interface
+                GenreSymboleKotlin.OBJET -> SymbolKind.Object
+                GenreSymboleKotlin.FONCTION -> SymbolKind.Function
+                GenreSymboleKotlin.PROPRIETE -> SymbolKind.Property
+                GenreSymboleKotlin.ENTREE_ENUM -> SymbolKind.EnumMember
+                GenreSymboleKotlin.ALIAS -> SymbolKind.TypeParameter
+            }
+
         override fun didChangeConfiguration(params: DidChangeConfigurationParams) {
             // K2 : aucune configuration d'espace consommée (documentation
             // future : langage du projet).
@@ -1020,5 +1288,8 @@ internal class KotlinLanguageServer(
 
         /** Correctifs d'import maximum PAR diagnostic (palette bornée). */
         private const val PLAFOND_CORRECTIFS: Int = 8
+
+        /** Indentation par défaut (options du client absentes, miroir XML). */
+        private const val INDENTATION_DEFAUT: Int = 4
     }
 }
