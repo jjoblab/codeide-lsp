@@ -20,6 +20,38 @@ le 2026-10-17** (`git filter-repo`, historique conservé — 339 commits).
 vers un module interne) — pensés comme packs langue téléchargeables (D6,
 SPI ServiceLoader). `host` ne dépend d'aucun `core:*`.
 
+## Capacités par langage (1.3.0)
+
+L'état de référence est la **matrice des capacités**
+([docs/LSP_MATRICE_CAPACITES.md](docs/LSP_MATRICE_CAPACITES.md)) — chaque
+case cite sa preuve (annonce verrouillée par le test de parité, tests
+moteur, aller-retour LSP4J réel ; définition « en service » : ADR 0201).
+Résumé :
+
+- **Java** : complétion, survol, définition, définition de type,
+  implémentations, super-définition (expérimental), source décompilée
+  (expérimental), actions de code, symboles de document et d'espace,
+  surlignage, références, renommage + prepareRename, formatage (document
+  et plage), formatage à la frappe, lentilles de code, hiérarchies
+  d'appels et de types, aide à la signature, indices en ligne, pliage,
+  jetons sémantiques, plage de sélection.
+- **Kotlin** (1.3.0) : complétion, survol, définition, actions de code,
+  symboles de document, pliage, aide à la signature, références,
+  surlignage, renommage + prepareRename, **formatage borné (ADR 0202) et
+  formatage de plage**, **définition de type**, **implémentations**,
+  **indices en ligne**, **symboles d'espace**, **plage de sélection** —
+  jetons sémantiques volontairement non annoncés (D3).
+- **XML** (1.3.0) : complétion, survol, définition, actions de code,
+  symboles de document, pliage, renommage + prepareRename, formatage,
+  **références et surlignage d'occurrences des ressources**, **formatage
+  de plage**, **édition liée**, **plage de sélection**, **couleurs de
+  document**.
+- Les capacités servies mais non consommées par le client actuel sont
+  consignées dans [docs/LSP_ECARTS_CLIENT.md](docs/LSP_ECARTS_CLIENT.md).
+
+Chiffres (21/10/2026) : `:lsp:kotlin` 218 tests, `:lsp:xml` 245,
+`:lsp:java` 400, `:lsp:host` 141 — tous verts ; CI verte sur `main`.
+
 ## Dépendance externe unique
 
 `:lsp:model` dépend de `com.github.jjoblab.codeide-tooling:protocol`

@@ -1,5 +1,84 @@
 # Changelog — codeide-lsp
 
+## 1.3.0 (2026-10-21)
+
+- **Lot L1 — Événements de fichiers aux trois langages** (W1 du plan
+  1.3.0) : les serveurs Kotlin et XML reçoivent enfin
+  `workspace/didChangeWatchedFiles` (le balayage ne bouclait que sur
+  les serveurs Java) — un fichier modifié hors éditeur (build Gradle,
+  terminal) rafraîchit les diagnostics des documents ouverts des TROIS
+  langages, avec la même garde par destinataire (un serveur fautif
+  n'empêche pas les autres) et la désinscription à l'arrêt (W2 vérifié :
+  cycle de vie complet par fabriques, aucune fuite).
+- **Lot L2 — Capacités Kotlin complètes** :
+  - **Formatage BORNÉ** (`formatting` + `rangeFormatting`, ADR 0202) :
+    ré-indentation canonique seule depuis l'arbre — le contenu des
+    lignes N'EST JAMAIS réécrit ; intouchables : document en erreur
+    (liste VIDE), chaînes brutes (le lexer les découpe ligne par ligne
+    — le blanc de tête d'une ligne interne est du CONTENU), KDoc et
+    blocs de commentaire, continuation d'expression libre, ligne
+    vide ; idempotent ; le formatage de plage ne produit des éditions
+    que DANS la plage ; taille d'indentation du client (défaut 4).
+  - **Définition de type** et **implémentations** par PREUVE FQCN : le
+    nom du type résout par les IMPORTS du fichier du curseur (puis
+    unicité projet) — chaque héritier candidat prouve son supertype
+    par les imports de SON PROPRE fichier ; l'incertain rend VIDE.
+  - **Indices en ligne** : noms de paramètres aux appels POSITIONNELS
+    prouvés (même chaîne que l'aide à la signature) ; types CERTAINS
+    des déclarations sans type écrit (littéraux canoniques,
+    constructeurs résolus) — jamais un type inféré deviné ; un
+    argument nommé ne porte jamais d'indice.
+  - **Symboles d'espace** (`workspace/symbol`) : déclarations nommées
+    des documents ouverts + racines du scan, requête contient
+    insensible à la casse, locales/paramètres exclus, plafonné,
+    ordonné par nom.
+  - **Chaînes de sélection** : nœuds englobants du plus profond au
+    fichier entier, strictement croissants (fusion des frontières
+    égales).
+  - **Jetons sémantiques : NON annoncés** (la distinction n'est pas
+    fiable au niveau du parseur — D3, dette consignée dans la matrice).
+  - Réglables : `FORMATAGE` et `INDICES_EN_LIGNE` entrent dans
+    `CAPACITES_KOTLIN` (entrées EXISTANTES de `CapaciteLsp` — aucune
+    rupture du miroir CodeIDE) ; la table complète de parité W4
+    verrouille les annonces (L0).
+  - Correctifs moteur au passage : `fqcnDuNomEcrit` résout les fqcn
+    SANS paquet (rouge→vert), `fqcnDuNomEcrit`/preuve FQCN alignés.
+- **Lot L3 — Capacités XML complètes** :
+  - **Références et surlignage d'occurrences** (`references` +
+    `documentHighlight`) pour `@id/@+id/@string/@color/@dimen/@style/
+    @drawable`, `?attr` — MÊME preuve que le renommage borné :
+    déclarations de l'index (tampon ouvert puis disque, ÉCRITURES),
+    références des documents ouverts (LECTURES, la déclarante `@+id`
+    comptant comme écriture) ; framework `@android:…` : jamais servi.
+  - **Formatage de plage**, **édition liée** (nom d'ouvrante ↔ nom de
+    fermante du même élément, jamais sur auto-fermante), **plage de
+    sélection** (chaîne DOM jusqu'au fichier), **couleurs de
+    document** (`#RGB/#ARGB/#RRGGBB/#AARRGGBB` + `@color/…` résolus
+    par l'index — le client ne les consomme pas encore, voir
+    `docs/LSP_ECARTS_CLIENT.md`).
+  - Réglable : `REFERENCES` entre dans `CAPACITES_XML`.
+- **Lot L4 — Vérification Java de bout en bout** : aucun stub trouvé
+  (les 30 gestionnaires font un vrai travail) ; E2E des capacités non
+  couvertes (formatage document, références, symboles, prepareRename,
+  surlignage, `superDefinition` et `decompiledSource` EXPÉRIMENTALES
+  par le transport réel) ; **correctif d'une dette préexistante** : le
+  classpath de TEST embarque désormais les jars ECJ patchés (la
+  compilation de `:lsp:java:test` échouait depuis toujours — la CI ne
+  lance pas cette tâche, l'échec était invisible) ; suite ENTIÈRE
+  verte (400 tests). Écart moteur consigné : l'appel inter-fichiers
+  d'un `references` Java n'est pas trouvé sans sync complet (matrice).
+- **Lots L0/L5/L6/L7 — Preuve et documentation** : matrice des
+  capacités (`docs/LSP_MATRICE_CAPACITES.md`, chaque case cite sa
+  preuve — ADR 0201) ; test de parité sur la table COMPLÈTE des
+  annonces + garde anti-stubs (W4) ; ADR 0202 (formateur Kotlin
+  borné) ; écarts client (`docs/LSP_ECARTS_CLIENT.md`) ; LSP_KOTLIN/
+  LSP_XML/PLAN_STABILISATION à l'état réel (W3 : les hiérarchies Java
+  sont LIVRÉES, plus « ouvertes ») ; note de passage
+  `docs/MISE-A-JOUR-CODEIDE.md` § 1.3.0.
+- **Comptes de tests** : `:lsp:kotlin` 218, `:lsp:xml` 245, `:lsp:java`
+  400, `:lsp:host` 141 — tous verts ; baselines de parité régénérées
+  pour les AJOUTS VOULUS de fichiers de test au corpus.
+
 ## 1.2.0 (2026-10-20)
 
 - **Lot LSP-1 — API de configuration et de réglages (ADR 0128 §4, revue
