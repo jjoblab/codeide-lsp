@@ -961,12 +961,17 @@ internal class XmlLanguageServer(
          */
         @Suppress("SwallowedException")
         private fun locationLspDe(emplacement: jo.lspxml.api.EmplacementXml): Location? {
+            // Le tampon OUVERT du serveur domine (version vive — un
+            // document ouvert sans fichier réel reste servable), le
+            // disque sert les fichiers fermés ; illisible = emplacement
+            // OMIS (jamais une position fausse — miroir D3).
             val texteCible =
-                try {
-                    java.io.File(java.net.URI(emplacement.uri)).readText()
-                } catch (t: Throwable) {
-                    null
-                }
+                documents[emplacement.uri]?.texte
+                    ?: try {
+                        java.io.File(java.net.URI(emplacement.uri)).readText()
+                    } catch (t: Throwable) {
+                        null
+                    }
             val texte = texteCible ?: return null
             // v0.134.4 — XP15 : convertisseur local au texte cible (une
             // lecture = une construction, le fichier cible n'a pas de
