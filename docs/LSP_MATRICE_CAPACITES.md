@@ -15,8 +15,8 @@
 > parité W4 pour l'annonce, test moteur/session pour l'implémentation, test E2E du
 > serveur pour le transport réel).
 >
-> État au 21/10/2026 (SHA de référence : lot L2 livré ; colonnes Java et XML auditées
-> par le test de parité L0 — les lots L3/L4 compléteront les preuves E2E case par case).
+> État au 21/10/2026 (lots L2 et L3 livrés ; colonnes auditées par le test de parité
+> L0 — la colonne Java sera affinée par le lot L4, ses preuves E2E case par case).
 
 ## Synchronisation et diagnostics
 
@@ -48,10 +48,10 @@
 | Survol (`hover`) | ✅ | ✅ | ✅ | InterrogationsSymboles (tests moteur), XmlLanguageServerTest |
 | Aide à la signature (`signatureHelp`) | ✅ | ✅ | ❌ | SessionLangageKotlinSignatureTest |
 | Actions de code (`codeAction`) | ✅ | ✅ (imports) | ✅ | KotlinLanguageServerTest (quick-fixes), XmlLanguageServerTest |
-| Formatage (`formatting`) | ✅ | ✅ (lot L2, ADR 0202 — ré-indentation seule) | ✅ | FormateurKotlinTest ; KotlinLanguageServerL2Test (E2E) |
-| Formatage de plage (`rangeFormatting`) | ✅ | ⚠️ (servi ; consommation client prévue 3.74.0) | ❌ (lot L3 : prévu) | FormateurKotlinTest (plage) ; KotlinLanguageServerL2Test (E2E) |
+| Formatage (`formatting`) | ✅ | ✅ (lot L2, ADR 0202 — ré-indentation seule) | ✅ | FormateurKotlinTest ; KotlinLanguageServerL2Test (E2E) ; XmlLanguageServerTest |
+| Formatage de plage (`rangeFormatting`) | ✅ | ⚠️ (servi ; consommation client prévue 3.74.0) | ✅ (lot L3) ⚠️ | FormatagePlageSelectionXmlTest ; XmlLanguageServerL3Test (E2E) ; KotlinLanguageServerL2Test |
 | Formatage à la frappe (`onTypeFormatting`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 (annonces) |
-| Édition liée (`linkedEditingRange`) | ✅ | ❌ | ❌ (lot L3 : prévu) | Table de parité W4 |
+| Édition liée (`linkedEditingRange`) | ✅ | ❌ | ✅ (lot L3) ⚠️ | FormatagePlageSelectionXmlTest ; XmlLanguageServerL3Test (E2E) |
 | Renommage préparé : voir Navigation | — | — | — | — |
 
 ## Rendu riche
@@ -64,7 +64,7 @@
 | Lentilles de code (`codeLens`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
 | Hiérarchie d'appels (`callHierarchy`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
 | Hiérarchie de types (`typeHierarchy`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
-| Couleurs de document (`documentColor`) | ✅ ⚠️ | ❌ | ❌ (lot L3 : prévu) | Table de parité W4 |
+| Couleurs de document (`documentColor`) | ✅ ⚠️ | ❌ | ✅ (lot L3) ⚠️ | CouleursDocumentXmlTest ; XmlLanguageServerL3Test (E2E) |
 
 ## Méthodes expérimentales (extensions propres)
 
@@ -93,5 +93,7 @@
 - **Symboles d'espace / plage de sélection Kotlin** : servis côté serveur dès le lot L2 ;
   la consommation par le client (palette, expansion de sélection) est un écart consigné
   (lot L6).
-- **XML** : références/surlignage, formatage de plage, édition liée, couleurs = lot L3
-  (prévu, non annoncé aujourd'hui — la table de parité verrouille l'absence).
+- **XML (lot L3 livré)** : références/surlignage (même preuve que le renommage borné),
+  formatage de plage, édition liée, plage de sélection et couleurs de document sont
+  servis et annoncés — preuves moteur + E2E citées. La consommation client de
+  l'édition liée, de la sélection et des couleurs reste un écart (lot L6).
