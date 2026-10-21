@@ -200,6 +200,9 @@ public object CapacitesAnnoncees {
             CapaciteLsp.SURVOL,
             CapaciteLsp.DIAGNOSTICS,
             CapaciteLsp.DEFINITION,
+            // L3 (plan 1.3.0) : références des ressources projet
+            // (réglable — la table CapacitesAnnoncees l'alimente).
+            CapaciteLsp.REFERENCES,
             CapaciteLsp.RENOMMAGE,
             CapaciteLsp.ACTIONS_RAPIDES,
             CapaciteLsp.FORMATAGE,

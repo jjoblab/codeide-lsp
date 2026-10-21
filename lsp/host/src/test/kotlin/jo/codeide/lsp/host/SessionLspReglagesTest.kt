@@ -222,6 +222,8 @@ class SessionLspReglagesTest {
                 CapaciteLsp.SURVOL,
                 CapaciteLsp.DIAGNOSTICS,
                 CapaciteLsp.DEFINITION,
+                // L3 (plan 1.3.0) : références des ressources projet.
+                CapaciteLsp.REFERENCES,
                 CapaciteLsp.RENOMMAGE,
                 CapaciteLsp.ACTIONS_RAPIDES,
                 CapaciteLsp.FORMATAGE,

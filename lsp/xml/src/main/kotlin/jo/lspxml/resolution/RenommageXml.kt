@@ -157,8 +157,12 @@ import java.io.File
         return plageDeclarante(document, cible, index)
     }
 
-    /** Plage de la VALEUR `name` de la cible DÉCLARANTE dans [document]. */
-    private fun plageDeclarante(
+    /**
+     * Plage de la VALEUR `name` de la cible DÉCLARANTE dans [document].
+     *
+     * Internal (lot L3) : partagée avec le moteur de références.
+     */
+    internal fun plageDeclarante(
         document: DocumentXml,
         cible: Cible,
         index: IndexRessources,
@@ -252,7 +256,7 @@ import java.io.File
             documentsOuverts.keys.sortedBy { if (it == uriDocument) "" else it }
         for (uri in urisTriees) {
             val texteOuvert = documentsOuverts[uri] ?: continue
-            for (occurrence in occurrencesDans(ParseurXml().analyser(texteOuvert), cible)) {
+            for (occurrence in occurrencesDansDocument(ParseurXml().analyser(texteOuvert), cible)) {
                 if (vues.add(uri to occurrence.debut)) {
                     emplacements.add(jo.lspxml.api.EmplacementXml(uri, occurrence.debut, occurrence.fin))
                 }
@@ -308,8 +312,11 @@ import java.io.File
      * valeur d'attribut peut porter PLUSIEURS références (sélecteurs
      * `|`, listes `,` : le terminateur de nom le sait) ; chaque
      * amorçage `@`/`?` de la valeur est sondé, dédoublonné par plage.
+     *
+     * Internal (lot L3) : le moteur de références/surlignage réutilise
+     * CE balayage — une seule source de vérité avec le renommage.
      */
-    private fun occurrencesDans(
+    internal fun occurrencesDansDocument(
         document: DocumentXml,
         cible: Cible,
     ): List<Plage> =

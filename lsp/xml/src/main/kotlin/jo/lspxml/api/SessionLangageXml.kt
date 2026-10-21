@@ -221,6 +221,49 @@ public interface SessionLangageXml : AutoCloseable {
      * Tolérance de version : défaut NO-OP — un pack XE1 face à un hôte
      * L1 dégrade honnêtement (republication seule, jamais d'exception).
      */
+    /**
+     * Références d'une ressource projet (`textDocument/references`,
+     * lot L3 du plan 1.3.0) : le nom de ressource sous le curseur
+     * (`@id/…`, `@+id/…`, `@string/…`, `@color/…`, `@dimen/…`,
+     * `@style/…`, `@drawable/…`, `?attr/…`, ou la DÉCLARANTE `values`
+     * visée) et ses occurrences PRUVÉES — déclarations de l'index
+     * (tampon ouvert puis disque) puis références des documents
+     * OUVERTS (document courant en tête). Même preuve que le renommage
+     * borné (une seule source de vérité) : ce que l'index ne prouve
+     * pas n'apparaît pas.
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document courant.
+     * @param decalage décalage du curseur.
+     * @param inclureDeclaration inclure la/les déclarations en tête.
+     * @return les emplacements ordonnés ; liste VIDE sans cible
+     *         prouvée, pour un document inconnu/fermé ou une
+     *         référence framework (`@android:…`).
+     */
+    public fun references(
+        uri: String,
+        decalage: Int,
+        inclureDeclaration: Boolean,
+    ): List<EmplacementXml> = emptyList()
+
+    /**
+     * Surlignage d'occurrences du document COURANT
+     * (`textDocument/documentHighlight`, lot L3) : les occurrences
+     * prouvées de la ressource sous le curseur dans CE document — la
+     * déclaration `@+id`/`values` en ÉCRITURE, les références en
+     * LECTURE. Même preuve que [references] (cible qualifiée par
+     * l'index) ; sans cible : liste VIDE (rien n'est deviné).
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document courant.
+     * @param decalage décalage du curseur.
+     * @return les plages surlignées, ordonnées ; liste VIDE sans
+     *         cible ou document inconnu/fermé.
+     */
+    public fun surlignagesDocument(uri: String, decalage: Int): List<PlageSurligneeXml> = emptyList()
+
     public fun rafraichirSources() {}
 
     /**

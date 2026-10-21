@@ -26,6 +26,9 @@ import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
 import org.eclipse.lsp4j.DocumentFormattingParams
+import org.eclipse.lsp4j.DocumentHighlight
+import org.eclipse.lsp4j.DocumentHighlightKind
+import org.eclipse.lsp4j.DocumentHighlightParams
 import org.eclipse.lsp4j.DocumentSymbol
 import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.Hover
@@ -39,6 +42,7 @@ import org.eclipse.lsp4j.PrepareRenameParams
 import org.eclipse.lsp4j.PrepareRenameResult
 import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.ReferenceParams
 import org.eclipse.lsp4j.RenameOptions
 import org.eclipse.lsp4j.RenameParams
 import org.eclipse.lsp4j.ServerCapabilities
@@ -161,6 +165,10 @@ internal class XmlLanguageServer(
         // seule (profondeur DOM, contenu des lignes intact — les
         // commentaires/CDATA ne sont pas modélisés : jamais réécrits).
         capacites.setDocumentFormattingProvider(true)
+        // L3 (plan 1.3.0) : RÉFÉRENCES et SURLIGNAGE d'occurrences des
+        // ressources projet (même preuve que le renommage borné).
+        capacites.setReferencesProvider(true)
+        capacites.setDocumentHighlightProvider(true)
         // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
         // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
         // Le client cel-lsp supporte MarkupContent → on l'utilise.
@@ -524,6 +532,64 @@ internal class XmlLanguageServer(
                 return futureEnEchec(sansCible(uri, params.position))
             }
             return CompletableFuture.completedFuture(editionsRenommage(emplacements, params.newName))
+        }
+
+        /**
+         * Références (L3) : occurrences PROUVÉES de la ressource sous
+         * le curseur — déclarations de l'index puis références des
+         * documents ouverts, traduites en Locations LSP (même
+         * mécanique que la définition). Liste VIDE sans cible prouvée
+         * (référence framework, curseur hors ressource).
+         */
+        override fun references(params: ReferenceParams): CompletableFuture<List<Location>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val decalage = document.convertisseur.decalageDe(params.position)
+            val emplacements =
+                try {
+                    session.references(uri, decalage, params.context.isIncludeDeclaration)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "references XML échoué ($uri)", t)
+                    emptyList()
+                }
+            val locations =
+                emplacements.mapNotNull { emplacement ->
+                    locationLspDe(emplacement)
+                }
+            return CompletableFuture.completedFuture(locations)
+        }
+
+        /**
+         * Surlignage d'occurrences (L3) : décalages neutres →
+         * DocumentHighlight LSP (déclarante = Write, références =
+         * Read) du document COURANT seul. Liste VIDE sans cible.
+         */
+        override fun documentHighlight(params: DocumentHighlightParams): CompletableFuture<List<DocumentHighlight>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val decalage = document.convertisseur.decalageDe(params.position)
+            val surlignages =
+                try {
+                    session.surlignagesDocument(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "documentHighlight XML échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                surlignages.map { surlignage ->
+                    DocumentHighlight(
+                        Range(
+                            document.convertisseur.positionDe(surlignage.debut),
+                            document.convertisseur.positionDe(surlignage.fin),
+                        ),
+                        if (surlignage.genre == jo.lspxml.api.GenreSurlignageXml.ECRITURE) {
+                            DocumentHighlightKind.Write
+                        } else {
+                            DocumentHighlightKind.Read
+                        },
+                    )
+                }
+            return CompletableFuture.completedFuture(resultat)
         }
 
         /**

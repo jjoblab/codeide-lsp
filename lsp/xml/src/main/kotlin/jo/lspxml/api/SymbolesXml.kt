@@ -81,6 +81,30 @@ public data class EmplacementXml(
     public val fin: Int,
 )
 
+/** Genre d'un surlignage d'occurrence (→ DocumentHighlightKind LSP). */
+public enum class GenreSurlignageXml {
+    /** LECTURE de la ressource (référence — DocumentHighlightKind.Read). */
+    LECTURE,
+
+    /** ÉCRITURE (déclaration — DocumentHighlightKind.Write). */
+    ECRITURE,
+}
+
+/**
+ * Surlignage d'une occurrence de ressource (`textDocument/
+ * documentHighlight`, lot L3) — décalages dans le texte du document
+ * COURANT.
+ *
+ * @property debut décalage de début de l'occurrence (inclus).
+ * @property fin décalage de fin de l'occurrence (exclusif).
+ * @property genre nature de l'occurrence (lecture / écriture).
+ */
+public data class PlageSurligneeXml(
+    public val debut: Int,
+    public val fin: Int,
+    public val genre: GenreSurlignageXml,
+)
+
 /**
  * Édition texte NEUTRE d'un correctif (XE4 quick-fixes) — l'hôte traduit
  * les décalages en positions LSP (il possède le document), le moteur

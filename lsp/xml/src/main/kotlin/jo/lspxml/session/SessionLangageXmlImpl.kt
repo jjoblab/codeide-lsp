@@ -6,6 +6,7 @@ import jo.lspxml.api.CorrectifXml
 import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
+import jo.lspxml.api.PlageSurligneeXml
 import jo.lspxml.api.EditionXml
 import jo.lspxml.api.PlagePliableXml
 import jo.lspxml.api.PlageRenommableXml
@@ -23,6 +24,7 @@ import jo.lspxml.completion.CompletionMenusXml
 import jo.lspxml.completion.CompletionNavigationXml
 import jo.lspxml.completion.CompletionPolicesXml
 import jo.lspxml.format.FormatXml
+import jo.lspxml.resolution.ReferencesOccurrencesXml
 import jo.lspxml.resolution.RenommageXml
 import jo.lspxml.completion.CompletionTransitionsXml
 import jo.lspxml.completion.CompletionValeursXml
@@ -709,6 +711,53 @@ override fun renommage(uri: String, decalage: Int): List<EmplacementXml> {
             indexRessources,
             documents.mapValues { (_, doc) -> doc.texte },
         )
+    }
+
+    /**
+     * Références d'une ressource projet (lot L3) — le calcul vit dans
+     * [ReferencesOccurrencesXml] (même preuve que le renommage borné :
+     * déclarations de l'index, références des documents ouverts) ; la
+     * session pioche le document courant et file les tampons OUVERTS
+     * en copie. Document inconnu/fermé : liste VIDE.
+     */
+    @Suppress("ReturnCount")
+    override fun references(
+        uri: String,
+        decalage: Int,
+        inclureDeclaration: Boolean,
+    ): List<EmplacementXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        val occurrences =
+            ReferencesOccurrencesXml.occurrences(
+                document.document,
+                uri,
+                decalage,
+                indexRessources,
+                documents.mapValues { (_, doc) -> doc.texte },
+            )
+        return ReferencesOccurrencesXml.emplacements(occurrences, inclureDeclaration)
+    }
+
+    /**
+     * Surlignage d'occurrences du document COURANT (lot L3) — les
+     * occurrences prouvées de CE document (déclarante `@+id` en
+     * écriture, références en lecture). Document inconnu/fermé :
+     * liste VIDE.
+     */
+    @Suppress("ReturnCount")
+    override fun surlignagesDocument(uri: String, decalage: Int): List<PlageSurligneeXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        val occurrences =
+            ReferencesOccurrencesXml.occurrences(
+                document.document,
+                uri,
+                decalage,
+                indexRessources,
+                documents.mapValues { (_, doc) -> doc.texte },
+            )
+        return ReferencesOccurrencesXml.surlignages(occurrences, uri)
     }
 
     /**
