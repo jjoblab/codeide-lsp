@@ -125,6 +125,29 @@ scan paresseux persistant par jar (empreinte de contenu, segments ADR 0111),
 
 ### 4.4 Protocole et complétude des capacités
 
+> **État 1.3.0 (lot L2 du plan 1.3.0, 21/10/2026)** — au-delà de la
+> complétion/survol/définition historiques, le serveur Kotlin annonce et sert
+> désormais : **formatage BORNÉ** (`textDocument/formatting` et
+> `rangeFormatting` — ré-indentation canonique SEULE, ADR 0202 : le contenu des
+> lignes n'est jamais réécrit, refus honnête sur document en erreur, chaînes
+> brutes/KDoc/commentaires intacts, idempotent), **définition de type**
+> (`typeDefinition`) et **implémentations** (`implementation`) par PREUVE FQCN
+> (le nom du type résout par les imports du fichier du curseur ; chaque
+> héritier candidat prouve son supertype par les imports de SON fichier —
+> jamais d'homonymie), **indices en ligne** (`inlayHint` : noms de paramètres
+> aux appels positionnels PROUVÉS par la chaîne de l'aide à la signature,
+> types CERTAINS des déclarations sans type écrit — littéraux canoniques et
+> constructeurs résolus, jamais un type inféré deviné), **symboles d'espace**
+> (`workspace/symbol` : déclarations nommées du projet, requête contient,
+> locales exclues, plafonnées) et **chaînes de sélection** (`selectionRange` :
+> nœuds englobants du plus profond au fichier entier). Les JETONS SÉMANTIQUES
+> ne sont PAS annoncés (la distinction qu'ils portent n'est pas fiable au
+> niveau du parseur — D3, dette consignée dans la matrice des capacités).
+> Réglables : FORMATAGE et INDICES_EN_LIGNE entrent dans `CapacitesAnnoncees`
+> (table `CAPACITES_KOTLIN`, parité verrouillée). Preuves : tests moteur
+> (FormateurKotlinTest, TypesKotlinTest, CapacitesL2KotlinTest) et transport
+> réel (KotlinLanguageServerL2Test).
+
 La session Kotlin expose `textDocument/completion`, `hover`, `definition`,
 `publishDiagnostics` — mêmes formes que la session Java. Le routage v0.106.0
 (`extra jo.codeide.projet_cible`) est réutilisé tel quel. La **compliance par

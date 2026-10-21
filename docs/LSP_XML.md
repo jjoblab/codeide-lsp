@@ -109,6 +109,26 @@ incrémental (même moteur de segments que ADR 0111, clés `res:<type>:<name>`).
 
 ### 4.4 Diagnostics initiaux
 
+> **État 1.3.0 (lot L3 du plan 1.3.0, 21/10/2026)** — le serveur XML annonce et
+> sert désormais, en plus du socle historique (complétion, survol, définition,
+> actions de code, symboles, pliage, renommage borné, formatage) :
+> **références** (`references`) et **surlignage d'occurrences**
+> (`documentHighlight`) pour `@id/…`, `@+id/…`, `@string/…`, `@color/…`,
+> `@dimen/…`, `@style/…`, `@drawable/…`, `?attr/…` — MÊME preuve que le
+> renommage borné (déclarations de l'index, tampon ouvert puis disque, en
+> ÉCRITURE ; références des documents ouverts en LECTURE, la déclarante `@+id`
+> comptant comme écriture) ; **formatage de plage** (`rangeFormatting` —
+> ré-indentation des seules lignes de la plage) ; **édition liée**
+> (`linkedEditingRange` : nom d'ouvrante ↔ nom de fermante du même élément) ;
+> **plage de sélection** (`selectionRange` : chaîne DOM du plus profond —
+> attribut — au fichier entier) ; **couleurs de document** (`documentColor`/
+> `colorPresentation` : littéraux `#RGB`/`#ARGB`/`#RRGGBB`/`#AARRGGBB` et
+> références `@color/…` RÉSOLUES par l'index — le client ne les consomme pas
+> encore, voir docs/LSP_ECARTS_CLIENT.md). Réglable : REFERENCES entre dans
+> `CapacitesAnnoncees`. Preuves : tests moteur (ReferencesXmlTest,
+> FormatagePlageSelectionXmlTest, CouleursDocumentXmlTest) et transport réel
+> (XmlLanguageServerL3Test).
+
 Syntaxe (balise non fermée, attribut dupliqué, `&` non échappé) ;
 `xmlns:android` manquant sur la racine d'un layout ; `layout_width`/`layout_height`
 absents sur un élément de layout (hint, pas error — conservatoire) ;
