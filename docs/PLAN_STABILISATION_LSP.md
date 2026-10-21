@@ -15,8 +15,8 @@
 
 | Module | Santé architecturale | Tests | Bloqueur critique | Faux positifs prouvés |
 |---|---|---|---|---|
-| **XML** | ✅ La plus disciplinée (zéro dépendance, parser tolérant, X4 rigoureux) | 188 module + 17 host, verts | XP1/XP2/XP3 (faux positifs sur références) | Oui (probe B/D/E) |
-| **Kotlin** | ✅ Saine (grammaire officielle vendored, D3 conservateur) | 118 tests, 1 échec (baseline) | KP1 (baseline rouge) + KP8 (faux `kt.unresolved`) | Oui (`ArrayList`, `StringBuilder`) |
+| **XML** | ✅ La plus disciplinée (zéro dépendance, parser tolérant, X4 rigoureux) | 245 module + 134 host, verts | XP1 ✅ (gravité ERREUR, AVERTISSEMENT sous doute AAR — ADR 0120) + XP2 ✅ (filtre tools:/xmlns:) + XP4 ✅ (catalogue attrs.xml) + XP5 ✅ (vues projet en complétion) — vérifiés lot L3, 21/10/2026 | Oui (probe B/D/E) |
+| **Kotlin** | ✅ Saine (grammaire officielle vendored, D3 conservateur) | 218 tests verts (baseline synchronisée) | KP1 ✅ corrigé (baseline verte) + KP8 ✅ corrigé (complément default imports 19/10, re-vérifié 21/10 — sonde : 0 faux `kt.unresolved`) | Oui (`ArrayList`, `StringBuilder`) |
 | **Java** | ✅ Riche (ecj vendored, index disque, completion, diagnostics) | 498 tests, 0 échec, 76 ignorés | D3 — clôturé (ADR 0110/0200) | Non (niveau A réécrit, niveau B attesté) |
 
 ## 2. Synthèse transversale — problèmes communs
@@ -46,13 +46,16 @@
 - `workspace/symbol`
 - Watched-files côté hôte
 
-#### S2 — Confort structurel — ✅ LIVRÉ (audit 19/10 : câblé dans
-`JavaTextDocumentService` — rangeFormatting, selectionRange,
+#### S2 — Confort structurel — ✅ LIVRÉ INTÉGRALEMENT (mise à jour
+21/10/2026, lot L4 du plan 1.3.0 : les hiérarchies call/type SONT
+livrées, annoncées et testées E2E — `callHierarchy/prepare`+
+`incoming`+`outgoing` et `typeHierarchy/prepare`+`supertypes`+
+`subtypes` dans `JavaTextDocumentService`, JavaS2bProtocoleTest ; tout
+le reste était déjà câblé : rangeFormatting, selectionRange,
 onTypeFormatting, codeLens, inlayHint, semanticTokens, highlight,
-references, rename, folding ; les hiérarchies call/type restent le
-seul item S2 ouvert, coût élevé côté ECJ)
+references, rename, folding)
 - `rangeFormatting`, `selectionRange`, `onTypeFormatting`, `codeLens`
-- Hiérarchies call/type (restant — deferred)
+- Hiérarchies call/type — ✅ LIVRÉES (S2b, plus « ouvert »)
 - Hover javadoc, `filterText`
 
 #### S3 — Structurel/deferred
