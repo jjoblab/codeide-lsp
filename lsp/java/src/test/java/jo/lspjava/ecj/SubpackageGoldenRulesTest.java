@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * LES SIX RÈGLES D'OR du filtre subpackage (portage de
- * {@code CandidateCollector.packageChildren} du projet de référence).
+ * {@code CandidateCollector.packageChildren} du projet tiers de référence).
  *
  * <p>Chaque règle est vérifiée sur le contexte exact du bug device
  * ({@code import android.}) :</p>
@@ -225,7 +225,7 @@ class SubpackageGoldenRulesTest {
         }
     }
 
-    // ═══ Parité projet de référence : matching gradué sur les segments ═══
+    // ═══ Parité projet tiers de référence : matching gradué sur les segments ═══
 
     @Test
     void graduatedMatching_onSegments() {

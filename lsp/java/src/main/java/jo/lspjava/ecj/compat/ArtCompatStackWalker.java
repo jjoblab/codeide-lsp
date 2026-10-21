@@ -4,7 +4,7 @@ package jo.lspjava.ecj.compat;
  * Remplaçant ART-safe de {@code java.lang.StackWalker} — réécriture
  * « niveau A » du lot 1 du traitement D3 (ADR 0110 §5.3), depuis la
  * spécification publique (javadoc du JDK), SANS lecture du code
- * projet de référence.
+ * projet tiers de référence.
  *
  * <p><strong>Pourquoi ce shim existe :</strong> {@code java.lang
  * .StackWalker} est absent du runtime Android à notre minSdk (pas dans

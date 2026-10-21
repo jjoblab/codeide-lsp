@@ -2,7 +2,7 @@
 // docs/LSP_XML.md, décision X1).
 //
 // MODULE MAISON in-process : parseur tolérant écrit main (pile de noms
-// ouverts, reprise sur buffer à moitié tapé — leçon projet de référence §2 du
+// ouverts, reprise sur buffer à moitié tapé — leçon projet tiers de référence §2 du
 // cadrage), DOM neutre, règles pures + coutures conservatrices (X4),
 // complétion par contributeurs (catalogue plateforme + index ressources).
 // PAS de Lemminx, PAS de XSD : la sémantique Android ne vient pas d'un

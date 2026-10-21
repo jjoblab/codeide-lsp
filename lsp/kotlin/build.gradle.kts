@@ -29,7 +29,7 @@
 // la grammaire vendorée, cf. VENDOR.md) ; org.jetbrains:annotations
 // (Maven Central). Rien d'autre : pas de compilateur, pas de FIR — le
 // compilateur ne doit jamais être sur le chemin critique de l'édition
-// (leçon projet de référence, LSP_KOTLIN §2).
+// (leçon projet tiers de référence, LSP_KOTLIN §2).
 
 import java.util.zip.ZipInputStream
 

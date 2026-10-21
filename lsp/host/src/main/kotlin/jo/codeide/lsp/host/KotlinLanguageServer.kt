@@ -431,7 +431,7 @@ internal class KotlinLanguageServer(
         /**
          * Survol : signature en PLAINTEXT, ou MARKDOWN quand le moteur
          * a attaché la KDoc de la déclaration (S2 — bloc de code
-         * Kotlin + documentation, même patron que JDT.LS/fwcd).
+         * Kotlin + documentation, même patron que les serveurs tiers de référence).
          */
         override fun hover(params: HoverParams): CompletableFuture<Hover?> {
             val uri = params.textDocument.uri

@@ -29,7 +29,7 @@ import java.util.List;
 
 /**
  * Surlignage sémantique par bindings ecj — l'équivalent de la passe
- * SEMANTIC du daemon éditeur du projet de référence.
+ * SEMANTIC du daemon éditeur du projet tiers de référence.
  *
  * <p><strong>Ce que ça apporte à l'utilisateur :</strong> le coloriseur
  * LEXICAL de l'éditeur devine « à vue » — un appel

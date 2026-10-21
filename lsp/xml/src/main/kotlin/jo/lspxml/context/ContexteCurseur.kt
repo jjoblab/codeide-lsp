@@ -6,7 +6,7 @@ import jo.lspxml.parse.XmlElement
 
 /**
  * Scanner de POSITION du curseur (XE2, LSP_XML.md §4.1 « context » —
- * motif projet de référence : UN scanner décide où est le caret, les
+ * motif projet tiers de référence : UN scanner décide où est le caret, les
  * contributeurs de complétion n'ont plus qu'à consommer) : nom de
  * BALISE (juste après `<`), nom d'ATTRIBUT (dans une balise ouverte),
  * VALEUR (entre guillemets) ou MUET (texte, fermante, hors balise —

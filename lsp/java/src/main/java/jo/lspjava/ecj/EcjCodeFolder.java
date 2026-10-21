@@ -8,12 +8,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Régions de folding Java — portage du {@code EcjCodeFolder} du projet de référence.
+ * Régions de folding Java — portage du {@code EcjCodeFolder} du projet tiers de référence.
  *
- * <p><strong>Parité projet de référence (lang-jdt) :</strong></p>
+ * <p><strong>Parité projet tiers de référence (lang-jdt) :</strong></p>
  * <ul>
  *   <li>le groupe d'imports → {@code import ...} (replié PAR DÉFAUT, comme
- *       IntelliJ/projet de référence) ;</li>
+ *       les IDE de bureau et le projet tiers de référence) ;</li>
  *   <li>les paires d'accolades (corps de type, de méthode, blocs de contrôle
  *       if/for/while/try, lambdas) → la région couvre EXACTEMENT le texte
  *       caché : de juste après {@code {} à la {@code }} fermante (les
@@ -23,15 +23,15 @@ import java.util.List;
  * </ul>
  *
  * <p>Seules les régions couvrant PLUS d'une ligne sont émises (règle
- * {@code addRegion} du projet de référence).</p>
+ * {@code addRegion} du projet tiers de référence).</p>
  *
- * <p><strong>Implémentation :</strong> projet de référence visite l'AST DOM JDT
+ * <p><strong>Implémentation :</strong> projet tiers de référence visite l'AST DOM JDT
  * ({@code Block}, {@code TypeDeclaration}…). L'AST interne ecj utilisé ici
  * n'expose PAS les blocs d'instructions à l'{@code ASTVisitor} ; le pliage des
  * accolades est donc un scan lexical aware chaînes/commentaires/text-blocks
  * (couvre un SUR-ensemble strict des {@code Block} DOM : corps, blocs de
  * contrôle, lambdas — et aussi les initialiseurs de tableaux multi-lignes,
- * qu'IntelliJ plie également). Le groupe d'imports vient de l'AST ecj
+ * que les IDE de bureau plient également). Le groupe d'imports vient de l'AST ecj
  * ({@code CompilationUnitDeclaration.imports}) avec repli lexical si la
  * résolution échoue.</p>
  *
@@ -49,7 +49,7 @@ public final class EcjCodeFolder {
         public final String placeholder;
         /** Type : "imports" | "block" | "comment". */
         public final String kind;
-        /** Repliée par défaut (groupe d'imports — projet de référence/IntelliJ). */
+        /** Repliée par défaut (groupe d'imports — projet tiers de référence et IDE de bureau). */
         public final boolean collapsedByDefault;
 
         Fold(int start, int end, String placeholder, String kind,
@@ -161,7 +161,7 @@ public final class EcjCodeFolder {
             } else if (c == '/' && next == '*') {
                 // Commentaire de bloc (ou Javadoc) — région pliable.
                 // La région couvre TOUT le commentaire, délimiteurs inclus
-                // (projet de référence : c.startPosition .. c.startPosition+c.length).
+                // (projet tiers de référence : c.startPosition .. c.startPosition+c.length).
                 int start = i;
                 int close = text.indexOf("*/", i + 2);
                 if (close < 0) break; // non terminé — on s'arrête (syntaxe cassée)
@@ -189,7 +189,7 @@ public final class EcjCodeFolder {
                 if (!stack.isEmpty()) {
                     int open = stack.pop();
                     // Région = intérieur strict : (open+1 .. close) — les
-                    // accolades restent visibles (projet de référence braces()).
+                    // accolades restent visibles (projet tiers de référence braces()).
                     if (spansMultipleLines(text, open + 1, i)) {
                         out.add(new Fold(open + 1, i, "…", "block", false));
                     }

@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests des quick-fixes à ÉDITS RÉELS ({@link CodeActionService}).
  *
  * <p>Ces tests verrouillent le contrat : chaque action porte des édits
- * concrètes sur le texte courant — portages des quick-fixes du projet de référence
+ * concrètes sur le texte courant — portages des quick-fixes du projet tiers de référence
  * (JavaActions.kt, JavaCompilerFixes.kt) — appliquer « Entourer avec
  * try-catch », « Déclarer throws », « Insérer un cast » ou « Supprimer
  * l'import inutilisé » modifie réellement le texte.</p>
@@ -180,7 +180,7 @@ class CodeActionServiceTest {
 
     @Test
     void multiFragmentDeclarationIsLeftAlone() {
-        // projet de référence : « int a, b; » — risque de variable sœur → pas de fix.
+        // projet tiers de référence : « int a, b; » — risque de variable sœur → pas de fix.
         String src = "public class Main {\n"
                 + "    void m() {\n"
                 + "        int a = 1, b = 2;\n"
@@ -349,7 +349,7 @@ class CodeActionServiceTest {
 
     @Test
     void unresolvedLowercaseNameGetsNoImportFix() {
-        // Règle projet de référence : seuls les noms ressemblant à des TYPES
+        // Règle projet tiers de référence : seuls les noms ressemblant à des TYPES
         // (initiale majuscule) reçoivent des candidats d'import.
         Assumptions.assumeTrue(serviceWithIndex != null, "index indisponible");
         String src = "public class Main {\n"

@@ -21,8 +21,8 @@ import java.util.List;
  * {@link EcjCompletionEngine} quand la plateforme manque (avant la
  * première sync, image jrt absente : {@code isLikelyUsable()} faux).
  *
- * <p><strong>Philosophie — le « dumb mode » d'IntelliJ/Android
- * Studio :</strong> la complétion n'attend pas le classpath pour parler.
+ * <p><strong>Philosophie — le « mode sourd » des IDE de
+ * bureau :</strong> la complétion n'attend pas le classpath pour parler.
  * Le PARSE seul suffit à proposer ce que le fichier DÉCLARE — types,
  * méthodes, constructeurs, champs (de tout le fichier) ; paramètres et
  * locales de la MÉTHODE englobant le caret (déclarés avant lui) ; et

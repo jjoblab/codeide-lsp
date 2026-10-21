@@ -21,13 +21,13 @@ import java.util.function.Function;
  * le premier miss seul paie le sondage.</p>
  *
  * <p>Portage du pattern {@code locateCache} de {@code JdtEnvironmentCache.kt}
- * (projet de référence v3.20) : LRU par ordre d'accès borné à {@link #MAX_ENTRIES},
+ * (projet tiers de référence v3.20) : LRU par ordre d'accès borné à {@link #MAX_ENTRIES},
  * sentinelle {@link #NOT_FOUND} pour les négatifs, invalidation totale sur
  * changement de classpath.</p>
  *
  * <p><strong>Thread-safety :</strong> accès verrouillés par un
  * {@link ReentrantLock} (les lectures complètent sous le verrou, comme le
- * pool LRU du projet de référence, pour qu'un éviction concurrente ne ferme jamais
+ * pool LRU du projet tiers de référence, pour qu'un éviction concurrente ne ferme jamais
  * un handle en cours d'utilisation).</p>
  *
  * @author jo@Dev

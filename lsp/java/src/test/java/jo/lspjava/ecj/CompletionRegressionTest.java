@@ -131,7 +131,7 @@ class CompletionRegressionTest {
             if (typed.isEmpty()) {
                 assertFalse(labels.isEmpty(), "préfixe vide doit lister le paquet");
             } else {
-                // Parité projet de référence : le matching est GRADUÉ
+                // Parité projet tiers de référence : le matching est GRADUÉ
                 // (prefix / prefix-ci / camel-hump / substring >= 3 chars —
                 // portage PrefixMatcher). « EditText » peut donc apparaître
                 // pour « Tex » (substring), MAIS les matches par PRÉFIXE

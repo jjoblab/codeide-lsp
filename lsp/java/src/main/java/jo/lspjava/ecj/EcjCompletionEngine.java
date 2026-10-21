@@ -31,7 +31,7 @@ import jo.lspjava.api.CompletionItem;
 
 /**
  * Moteur de complétion basé sur le compilateur interne ecj — le portage Java
- * du pipeline {@code JdtCompletion} du projet de référence (ContextAnalyzer +
+ * du pipeline {@code JdtCompletion} du projet tiers de référence (ContextAnalyzer +
  * CandidateCollector), sans l'index de workspace.
  *
  * <p>Pipeline : un <strong>marqueur</strong> (identifiant factice) est
@@ -88,7 +88,7 @@ public final class EcjCompletionEngine {
     /**
      * Signal d'arrêt anticipé de la traversée AST — déroulé immédiat dès
      * que le marqueur est capturé (portage du pattern {@code MarkerFound}
-     * de {@code ContextAnalyzer.kt}, projet de référence v3.20). La traversée ecj
+     * de {@code ContextAnalyzer.kt}, projet tiers de référence v3.20). La traversée ecj
      * n'a pas de mécanisme d'arrêt ({@code visit} retourne false = ne
      * descend pas dans les ENFANTS, mais continue les frères) : tout ce
      * qui suit le marqueur dans l'ordre de traversée est POSTÉRIEUR au
@@ -171,7 +171,7 @@ public final class EcjCompletionEngine {
         }
         boolean afterDot = precededByDot(workSource, replaceStart);
 
-        // Portage des spliceVariants du projet de référence : la 5e
+        // Portage des spliceVariants du projet tiers de référence : la 5e
         // forme « balancedTail » ABANDONNE le texte après le caret et
         // synthétise une queue équilibrée en parenthèses terminée par «;».
         // Elle sauve les instructions NON TERMINÉES autour d'une lambda
@@ -193,7 +193,7 @@ public final class EcjCompletionEngine {
         boolean appendParens = !followedByArgList(workSource, replaceEnd);
 
         // Classement des kinds (pattern kindRank de
-        // projet de référence) : un contexte résolu (MEMBER/PACKAGE/IMPORT/TYPE)
+        // projet tiers de référence) : un contexte résolu (MEMBER/PACKAGE/IMPORT/TYPE)
         // est DÉFINITIF ; NAME est faible. Un résultat NON-VIDE de rank
         // supérieur gagne toujours ; un résultat VIDE de rank supérieur ne
         // masque JAMAIS un résultat non-vide inférieur (un mis-parse
@@ -239,7 +239,7 @@ public final class EcjCompletionEngine {
                 items = collectCandidates(ctx, prefix, appendParens,
                         workSource);
                 // Templates DU contexte de CE splice (portage
-                // Live/PostfixTemplates du projet de référence v3.20), AVANT le
+                // Live/PostfixTemplates du projet tiers de référence v3.20), AVANT le
                 // test de vacuité : `sout` (aucun mot-clé/membre ne
                 // matche) et `expr.var` (aucun membre « var ») sont des
                 // complétions 100% template — les ajouter après la boucle
@@ -277,7 +277,7 @@ public final class EcjCompletionEngine {
             }
             // Un contexte résolu NON VIDE est définitif — inutile d'essayer
             // les formes de secours (pattern « break au premier définitif »
-            // du projet de référence) : c'est aussi ce qui rend la complétion
+            // du projet tiers de référence) : c'est aussi ce qui rend la complétion
             // INCREMENTALE rapide à la frappe (1 seul splice le plus souvent).
             if (rank == 2) {
                 break;
@@ -298,7 +298,7 @@ public final class EcjCompletionEngine {
         // après le marqueur : celui-ci devient le TYPE d'une déclaration
         // valide (`private __m__ x;` → FieldDeclaration(type=__m__) ; dans
         // un corps de méthode → LocalDeclaration) → TYPE_REFERENCE →
-        // types + mots-clés. projet de référence teste ce contexte sous la forme
+        // types + mots-clés. projet tiers de référence teste ce contexte sous la forme
         // `Array| f;` (nom DÉJÀ présent) ; notre variante couvre la frappe
         // progressive SANS nom.
         List<CompletionItem> synth = synthDeclarationCompletions(
@@ -334,7 +334,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Ajoute les templates postfixes (portage {@code PostfixTemplates.kt},
-     * projet de référence v3.20) au résultat d'un contexte MEMBER_ACCESS :
+     * projet tiers de référence v3.20) au résultat d'un contexte MEMBER_ACCESS :
      * {@code expr.var} réécrit toute l'expression en
      * {@code Type name = expr;} avec tab stops LSP ; l'édition additionnelle
      * supprime le récepteur — offsets traduits de la source réduite vers
@@ -383,7 +383,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Ajoute les live templates (portage {@code LiveTemplates.kt},
-     * projet de référence v3.20) au résultat d'un contexte NAME_REFERENCE :
+     * projet tiers de référence v3.20) au résultat d'un contexte NAME_REFERENCE :
      * {@code sout}, {@code psvm}, {@code fori}… en syntaxe snippet LSP
      * native ({@code $0}, {@code ${1:défaut}}, index liés). La garde
      * {@link #isStatementPosition} (à vérifier par l'appelant) empêche
@@ -430,7 +430,7 @@ public final class EcjCompletionEngine {
      * templates postfixes) : après le DERNIER import existant, sinon après
      * la déclaration {@code package}, sinon début de fichier — scan
      * textuel de l'en-tête (portage de {@code importOffset()} de
-     * {@code JdtCompletionService.kt}, projet de référence v3.20 ; sémantique
+     * {@code JdtCompletionService.kt}, projet tiers de référence v3.20 ; sémantique
      * identique à CodeActionService.importInsertOffset, sans dépendance
      * croisée couches). L'ancre précède tout corps de méthode : offset
      * IDENTIQUE dans la source réduite et l'originale.
@@ -532,7 +532,7 @@ public final class EcjCompletionEngine {
     // ─── Dispatch par kind (portage CandidateCollector) ───────────────
 
     /**
-     * Rank d'un kind (pattern kindRank du projet de référence) : les contextes
+     * Rank d'un kind (pattern kindRank du projet tiers de référence) : les contextes
      * RÉSOLUS (member/package/import/type) valent 2 — définitifs ; NAME
      * vaut 1 ; NONE 0.
      */
@@ -548,7 +548,7 @@ public final class EcjCompletionEngine {
     /**
      * LA source unique de candidats, choisie par le kind du
      * contexte (portage du {@code CandidateCollector.collect} de
-     * projet de référence) :
+     * projet tiers de référence) :
      * <ul>
      *   <li>MEMBER_ACCESS → membres accessibles du type receveur
      *       (bindings résolus) ;</li>
@@ -601,7 +601,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Sous-paquets + types DIRECTS sous {@code path} — portage
-     * EXACT de {@code packageChildren} du projet de référence
+     * EXACT de {@code packageChildren} du projet tiers de référence
      * (CandidateCollector.kt), les SIX RÈGLES D'OR du filtre subpackage :
      * <ol>
      *   <li><b>Enfants directs uniquement</b> — le PREMIER segment après
@@ -667,7 +667,7 @@ public final class EcjCompletionEngine {
     }
 
     /**
-     * Queue équilibrée (portage balancedTail du projet de référence) :
+     * Queue équilibrée (portage balancedTail du projet tiers de référence) :
      * referme les parenthèses/accolades/crochets OUVERTS dans {@code head}
      * et termine par «;». Sauve les instructions non terminées qu'ecj
      * jette autrement en recovery (marqueur compris).
@@ -868,7 +868,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Nature du contexte de complétion — portage fidèle du
-     * {@code CompletionKind} du projet de référence (ContextAnalyzer.kt).
+     * {@code CompletionKind} du projet tiers de référence (ContextAnalyzer.kt).
      *
      * <p>Chaque kind est capturé par son visiteur dédié :</p>
      * <ul>
@@ -952,7 +952,7 @@ public final class EcjCompletionEngine {
     /**
      * Le flag {@code parameter} distingue paramètres (proximité
      * PARAMETER, kind LSP PARAMETER) et locales (LOCAL) — portage ScopeVar
-     * du projet de référence.
+     * du projet tiers de référence.
      */
     private record LocalVar(String name, TypeBinding type, boolean parameter) {}
 
@@ -991,14 +991,14 @@ public final class EcjCompletionEngine {
         // paquets/types sous le chemin déjà tapé.
         //
         // Détection SIMPLIFIÉE (pattern importContext de
-        // projet de référence) : « l'import dont les TOKENS contiennent le marqueur ».
+        // projet tiers de référence) : « l'import dont les TOKENS contiennent le marqueur ».
         // Exiger en PLUS l'égalité EXACTE de la position source du token
         // ({@code sourcePositions[i] >>> 32 == markerStart}) serait fragile :
         // selon la forme de splice et le recovery ecj, les positions
         // rapportées divergent de quelques octets et la détection raterait
         // SILENCIEUSEMENT (le marqueur retomberait dans un
         // QualifiedNameReference sans qualifier résolu → 0 item). La
-        // tolérance aux positions est le comportement du projet de référence.
+        // tolérance aux positions est le comportement du projet tiers de référence.
         if (trace != null) {
             trace.append("imports=").append(cud.imports == null ? -1 : cud.imports.length);
         }
@@ -1138,7 +1138,7 @@ public final class EcjCompletionEngine {
                  * (types + mots-clés : String, StringBuilder, import…).
                  * Si un TYPE est déjà présent ({@code private String |}),
                  * le marqueur est en position de NOM → rien (parité
-                 * projet de référence : ContextAnalyzer ne capture pas les noms de
+                 * projet tiers de référence : ContextAnalyzer ne capture pas les noms de
                  * déclarations).
                  */
                 void onRecoveredDeclaration(String selectorOrName,
@@ -1474,7 +1474,7 @@ public final class EcjCompletionEngine {
                 }
 
                 // ── Positions de TYPE (pattern ContextAnalyzer
-                //    du projet de référence) : `private Str|`, `new Foo|`, `Foo| x`,
+                //    du projet tiers de référence) : `private Str|`, `new Foo|`, `Foo| x`,
                 //    casts, extends/throws… ecj parse le marqueur en
                 //    TypeReference. ──
 
@@ -1565,7 +1565,7 @@ public final class EcjCompletionEngine {
                             return;
                         }
                         // PACKAGE_REFERENCE (pattern
-                        // onQualifiedName du projet de référence) : un qualifier NON
+                        // onQualifiedName du projet tiers de référence) : un qualifier NON
                         // résolu en type est un CHEMIN DE PAQUET —
                         // {@code android.wid|}, {@code java.util.fun|} HORS
                         // import.
@@ -1682,7 +1682,7 @@ public final class EcjCompletionEngine {
                 /**
                  * Marqueur en position de TYPE SIMPLE
                  * ({@code private Str|}, {@code new Foo|}) → TYPE_REFERENCE
-                 * (portage onTypeRef du projet de référence) : candidats = types de
+                 * (portage onTypeRef du projet tiers de référence) : candidats = types de
                  * l'index matchant le préfixe, avec auto-import, classés par
                  * type attendu quand disponible.
                  */
@@ -1698,7 +1698,7 @@ public final class EcjCompletionEngine {
                 /**
                  * Marqueur en position de TYPE QUALIFIÉ
                  * ({@code java.util.Foo|}) → sous-paquets/types du chemin
-                 * (portage onQualifiedType du projet de référence). Saute le cas où
+                 * (portage onQualifiedType du projet tiers de référence). Saute le cas où
                  * la tête est une locale en portée : c'est un accès membre
                  * mal récupéré par ecj ({@code formatter.x} → « Type var »),
                  * le chemin member-access s'en charge.
@@ -1740,7 +1740,7 @@ public final class EcjCompletionEngine {
 
                 /**
                  * Capture TYPE_REFERENCE (portage
-                 * onTypeRef/capture du projet de référence).
+                 * onTypeRef/capture du projet tiers de référence).
                  */
                 void captureType(Scope scope) {
                     Context ctx = new Context();
@@ -1791,7 +1791,7 @@ public final class EcjCompletionEngine {
 
                 /** Résout le qualifier : d'abord comme TYPE (accès
                  *  statique), sinon variable + marche de champs/membres
-                 *  (pattern resolveQualifier du projet de référence). Le drapeau
+                 *  (pattern resolveQualifier du projet tiers de référence). Le drapeau
                  *  staticQualifier suit la nature du CHEMIN : un type ou un
                  *  membre de type est statique, un champ/variable est une
                  *  valeur d'instance. */
@@ -1898,7 +1898,7 @@ public final class EcjCompletionEngine {
         } catch (MarkerFound found) {
             // Arrêt anticipé voulu — le contexte est capturé : tout le
             // reste de la traversée serait postérieur au caret (calcul
-            // gaspillé, portage ContextAnalyzer du projet de référence v3.20).
+            // gaspillé, portage ContextAnalyzer du projet tiers de référence v3.20).
             if (trace != null) trace.append(";traverse EARLY-STOP (marker found)");
         } catch (Throwable t) {
             if (trace != null) trace.append(";traverse EXCEPTION ")
@@ -2058,7 +2058,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Mots-clés filtrés par le matcher gradué — extension CodeIDE assumée
-     * (projet de référence n'a pas de mots-clés dans son contributeur JDT) : le
+     * (projet tiers de référence n'a pas de mots-clés dans son contributeur JDT) : le
      * boost « préfixe tapé » via {@link #KEYWORD_PREFIX_BONUS} place
      * « import » au-dessus des types quand un préfixe est tapé.
      */
@@ -2110,12 +2110,12 @@ public final class EcjCompletionEngine {
      * Marche le graphe des super-types en collectant méthodes + champs.
      *
      * <p>Proximité par MEMBRE (portage {@code proximity(declaring,
-     * from)} du projet de référence) : OWN_MEMBER si déclaré sur le type courant,
+     * from)} du projet tiers de référence) : OWN_MEMBER si déclaré sur le type courant,
      * INHERITED sinon, OBJECT_MEMBER pour les membres de java.lang.Object ;
      * démotion statique-via-INSTANCE (+200 quand le qualifier est une
      * INSTANCE et le membre STATIC — l'appel de statique via TYPE, le bon
      * style, n'est PAS pénalisé) ; types imbriqués filtrés par
-     * accessibilité (projet de référence cache les types imbriqués privés).</p>
+     * accessibilité (projet tiers de référence cache les types imbriqués privés).</p>
      */
     private static void visitMembers(ReferenceBinding type, ReferenceBinding from,
                                      boolean samePackage, boolean staticQualifier,
@@ -2160,7 +2160,7 @@ public final class EcjCompletionEngine {
                 out.add(fieldItem(f, discouraged, prox, expected, matcher));
             }
             // Types imbriqués : seulement via un qualifier de TYPE (Map.Entry)
-            // — et accessibles seulement (projet de référence cache les types
+            // — et accessibles seulement (projet tiers de référence cache les types
             // imbriqués privés).
             if (staticQualifier) {
                 for (ReferenceBinding nested : type.memberTypes()) {
@@ -2207,7 +2207,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Proximité d'un type déclarant (portage
-     * {@code proximity(declaring, from)} du projet de référence) : OWN_MEMBER sur le
+     * {@code proximity(declaring, from)} du projet tiers de référence) : OWN_MEMBER sur le
      * type courant, OBJECT_MEMBER sur java.lang.Object, INHERITED sinon.
      */
     private static int proximityOf(ReferenceBinding declaring, boolean ownType) {
@@ -2302,7 +2302,7 @@ public final class EcjCompletionEngine {
 
     // ─── Fabriques d'items ─────────────────────────────────────────────
 
-    // ═══ Scoring UNIFIÉ : portage 1:1 du CompletionRanker du projet de référence ═══
+    // ═══ Scoring UNIFIÉ : portage 1:1 du CompletionRanker du projet tiers de référence ═══
     // ═══ (score interne plus bas = mieux ; pertinence publique inversée) ═══
     //
     // Score interne (PLUS BAS = mieux) : s = 1000 - bonusMatch
@@ -2325,7 +2325,7 @@ public final class EcjCompletionEngine {
     private static final int PROX_INHERITED = 55;
     private static final int PROX_OBJECT_MEMBER = 180;
     private static final int PROX_UNIMPORTED_TYPE = 300;
-    /** Extension CodeIDE (projet de référence n'a pas de mots-clés) : sous tout. */
+    /** Extension CodeIDE (projet tiers de référence n'a pas de mots-clés) : sous tout. */
     private static final int PROX_KEYWORD = 350;
     /** Mots-clés boostés quand un préfixe est tapé — « imp » place
      *  « import » au-dessus des types ImportSnippet. */
@@ -2356,7 +2356,7 @@ public final class EcjCompletionEngine {
 
     /**
      * Score interne d'un candidat — portage exact de
-     * {@code CompletionRanker.score} (projet de référence).
+     * {@code CompletionRanker.score} (projet tiers de référence).
      */
     private static int rankScore(EcjPrefixMatcher matcher, String name,
                                  int proximity, TypeBinding candidateType,
@@ -2422,7 +2422,7 @@ public final class EcjCompletionEngine {
      * Comparateur de tri final — portage du
      * {@code compareBy(score, name.length, name)} de CompletionRanker :
      * pertinence décroissante, puis nom le plus court, puis ordre
-     * alphabétique (stabilité totale, parité projet de référence exacte).
+     * alphabétique (stabilité totale, parité projet tiers de référence exacte).
      */
     static final Comparator<CompletionItem> RELEVANCE_ORDER =
             Comparator.comparingInt(CompletionItem::relevance).reversed()
@@ -2487,7 +2487,7 @@ public final class EcjCompletionEngine {
                 detail, null, name, relevance(score));
     }
 
-    // ─── Poids précalculés (pattern projet de référence) ────────────────────────
+    // ─── Poids précalculés (pattern projet tiers de référence) ────────────────────────
 
     /** @return true si le binding est {@code @Deprecated} (best-effort). */
     private static boolean isDeprecated(Object b) {
@@ -2587,7 +2587,7 @@ public final class EcjCompletionEngine {
         }
     }
 
-    /** Matching gradué — portage du PrefixMatcher du projet de référence
+    /** Matching gradué — portage du PrefixMatcher du projet tiers de référence
      *  (prefix / prefix-ci / camel-hump / substring >= 3). */
     private static boolean matches(String name, String prefix) {
         return new EcjPrefixMatcher(prefix).matches(name);

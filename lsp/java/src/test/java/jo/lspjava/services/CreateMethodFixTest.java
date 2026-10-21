@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Tests du quick-fix « Créer la méthode » (UNDEFINED_METHOD) — portage du
- * {@code CreateMethodFromUsageQuickFixProvider} du projet de référence : stub
+ * {@code CreateMethodFromUsageQuickFixProvider} du projet tiers de référence : stub
  * {@code private [static]} après la méthode englobante, types des paramètres
  * depuis les arguments STRUCTURÉS ecj, retour void/Object selon le contexte
  * d'appel, UnsupportedOperationException dans le corps.
@@ -128,7 +128,7 @@ class CreateMethodFixTest {
         var edits = createMethodEdits(file.toString(), source);
         assertNotNull(edits);
         String result = apply(source, edits);
-        // L'appel est une expression (affectation) → Object (projet de référence).
+        // L'appel est une expression (affectation) → Object (projet tiers de référence).
         assertTrue(result.contains("private Object compute(int arg0) {"),
                 "retour Object attendu : " + result);
     }
@@ -158,7 +158,7 @@ class CreateMethodFixTest {
     void qualifiedCallOnOtherTypeNotFixed() throws Throwable {
         Path file = tmp.resolve("src/demo/Other.java");
         Files.createDirectories(file.getParent());
-        // L'appel cible java.lang.String (owner ≠ type englobant) — projet de référence
+        // L'appel cible java.lang.String (owner ≠ type englobant) — projet tiers de référence
         // ne crée PAS la méthode dans un autre fichier/type.
         String source = """
                 package demo;

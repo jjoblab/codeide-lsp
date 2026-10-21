@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * §4.2/§4.3 — symptôme « got 0 items » du banc ; lot F, étape 3).
  *
  * <p><strong>Constat reproduit :</strong> les contextes NON capturés par
- * conception (nom de déclaration — parité projet de référence
+ * conception (nom de déclaration — parité projet tiers de référence
  * « ContextAnalyzer ne capture pas les noms de déclarations » ;
  * annotation en recovery ; position de tableau) faisaient rendre
  * {@code null} par {@link EcjCompletionEngine#complete} — l'appelant
@@ -116,7 +116,7 @@ class NomZeroItemRegressionTest {
     @Test
     void nomDeDeclarationRendVidePasNull() throws Exception {
         // « void autre(int Bund| » — le marqueur est en position de NOM de
-        // paramètre : non capturé PAR CONCEPTION (parité projet de référence).
+        // paramètre : non capturé PAR CONCEPTION (parité projet tiers de référence).
         // L'ancien comportement : complete() → null → NPE côté appelant.
         List<CompletionItem> items = completer("        void autre(int Bund");
         assertNotNull(items, "complete() ne doit JAMAIS rendre null");

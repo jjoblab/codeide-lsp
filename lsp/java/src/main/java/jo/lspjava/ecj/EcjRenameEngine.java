@@ -37,7 +37,7 @@ import java.util.stream.Stream;
 
 /**
  * Moteur de renommage sûr basé sur les <strong>bindings ecj</strong> — le
- * portage Java du {@code JdtRename} du projet de référence, adapté au compilateur
+ * portage Java du {@code JdtRename} du projet tiers de référence, adapté au compilateur
  * interne (l'API DOM n'est pas utilisée ici).
  *
  * <p>Le renommage est <em>structurellement correct</em> : les références
@@ -55,7 +55,7 @@ import java.util.stream.Stream;
  *       constructeurs (leur binding est le constructeur, dont la classe
  *       déclarante est le type renommé) et les imports.</li>
  *   <li><b>Méthode</b> — les redéfinissions ne sont PAS poursuivies
- *       (comportement projet de référence) : renommer une méthode ne renomme pas
+ *       (comportement projet tiers de référence) : renommer une méthode ne renomme pas
  *       ses overrides.</li>
  *   <li><b>Champ</b>, <b>locale</b>, <b>paramètre</b> — les locales et
  *       paramètres sont <em>file-local</em> : le balayage projet est
@@ -221,7 +221,7 @@ public final class EcjRenameEngine {
      * à l'appelant interactif (completion, hover) d'interrompre le balayage
      * projet en arrière-plan — le moteur rend une PARTIE des occurrences
      * plutôt que de bloquer la frappe. Pattern {@code CancelToken} de
-     * projet de référence.</p>
+     * projet tiers de référence.</p>
      */
     public Map<String, List<Occurrence>> renameProject(String filePath, String source,
                                                        RenameTarget target,

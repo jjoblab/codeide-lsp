@@ -18,7 +18,7 @@ import java.util.TreeSet;
  * suppression / tri) pour transformer le bloc d'imports existant.
  *
  * <p>Approche pragmatique et sûre, adaptée de la philosophie
- * {@code JavaImportOrganizer} du projet de référence :</p>
+ * {@code JavaImportOrganizer} du projet tiers de référence :</p>
  * <ul>
  *   <li><b>Collecte</b> — une traversée de l'AST résolu identifie, pour
  *       chaque référence de type ({@code SingleTypeReference} /

@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Verrouille le portage des deux familles de hints manquantes du
- * {@code JdtInlayHintService} du projet de référence :
+ * {@code JdtInlayHintService} du projet tiers de référence :
  *
  * <ul>
  *   <li><b>Chaining hints</b> — sur un chaînage fluent MULTI-LIGNE, le type
@@ -55,7 +55,7 @@ class JdtChainedLambdaHintsTest {
      * Chaînage multi-ligne : « new StringBuilder("a") » en ligne 2, puis
      * .append("b") / .append("c") / .toString() chacun sur sa ligne.
      *
-     * <p>Attendu (parité chainingHint du projet de référence) :</p>
+     * <p>Attendu (parité chainingHint du projet tiers de référence) :</p>
      * <ul>
      *   <li>« .append("b") » → récepteur = constructeur (ClassInstanceCreation)
      *       ⇒ PAS de hint ;</li>

@@ -13,7 +13,7 @@ import java.util.concurrent.FutureTask
 /**
  * Scan des RACINES SOURCES du projet (K3, LSP_KOTLIN.md §4.1
  * « symbols » — « index de déclarations des sources projet » motif
- * projet de référence, ici volontairement SIMPLE : un parcours complet, borné.
+ * projet tiers de référence, ici volontairement SIMPLE : un parcours complet, borné.
  *
  * CORRECTIF 0.134.32 (rapport « l'application buggue quand j'ouvre un
  * fichier .kt ») : le scan paresseux parsait TOUT le corpus de façon

@@ -19,10 +19,10 @@ import java.util.logging.Logger;
  * fichier courant.</p>
  *
  * <p>{@link #findTypeDefinition} est le menu contextuel unifié Go-to de
- * projet de référence — « Type declaration » : le type du symbole au caret.</p>
+ * projet tiers de référence — « Type declaration » : le type du symbole au caret.</p>
  *
  * <p>{@link #findImplementations} et {@link #findSuper} couvrent les deux
- * dernières options GO TO du NavMenu du projet de référence — multi-fichiers, via
+ * dernières options GO TO du NavMenu du projet tiers de référence — multi-fichiers, via
  * le balayage des racines sources du projet (pattern renommage) et
  * l'overlay des tampons ouverts.</p>
  *
@@ -86,7 +86,7 @@ public final class NavigationService {
 
     /**
      * Les héritiers DIRECTS du type en contexte au caret (GO TO
-     * « Implementations » du projet de référence) : une référence de type sous le
+     * « Implementations » du projet tiers de référence) : une référence de type sous le
      * caret, sinon la classe englobante. Cibles dans les SOURCES du projet
      * uniquement.
      *

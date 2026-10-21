@@ -12,7 +12,7 @@ import jo.lspxml.parse.XmlElement
  * Le DOM porte déjà tout : [XmlElement.plageOuvrante] et
  * [XmlElement.plageFermante] — aucune sémantique de genre (layout/
  * values/manifest) : TOUS les genres se plient de la même façon, le
- * XML est le langage naturellement pliable (LemMinX même patron).
+ * XML est le langage naturellement pliable (même patron que les serveurs tiers de référence).
  *
  * Tolérance (X1) : un document vide/malformé rend une liste VIDE
  * (jamais d'exception) ; les auto-fermantes et les éléments en édition

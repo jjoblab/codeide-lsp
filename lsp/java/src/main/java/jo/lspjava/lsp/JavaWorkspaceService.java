@@ -88,7 +88,7 @@ public final class JavaWorkspaceService implements WorkspaceService {
     /**
      * Recherche de symboles dans l'espace de travail
      * ({@code workspace/symbol} — S1-c du plan de stabilisation §3.1,
-     * audit §8.2 « Gap vs JDT.LS : type search ») : les TYPES (classes,
+     * audit §8.2 « écart au serveur tiers de référence : recherche de types ») : les TYPES (classes,
      * interfaces, enums, records) portant la requête en préfixe de nom
      * simple, du SUBSTRAT gradué existant (index disque des jars +
      * types des sources projet en cache TTL + image jrt).
@@ -129,7 +129,7 @@ public final class JavaWorkspaceService implements WorkspaceService {
         }
     }
 
-    /** Plafond de la recherche d'espace (palette bornée, miroir JDT.LS). */
+    /** Plafond de la recherche d'espace (palette bornée, miroir du serveur tiers de référence). */
     private static final int PLAFOND_SYMBOLES = 64;
 
     /**

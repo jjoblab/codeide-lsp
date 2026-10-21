@@ -7,7 +7,7 @@ import jo.lspxml.parse.XmlElement
 
 /**
  * RÈGLES DE STRUCTURE pures sur le DOM (XE1, LSP_XML.md §4.1 « rules »,
- * décision X4 : motif projet de référence) — ORCHESTRATEUR : parcours l'arbre,
+ * décision X4 : motif projet tiers de référence) — ORCHESTRATEUR : parcours l'arbre,
  * accumule les contextes, délègue aux catalogues PAR GENRE
  * ([ReglesGeneriques], [ReglesLayout], [ReglesValues]) ; les
  * diagnostics ne signalent que ce qu'ils SAVENT, la couture absente =

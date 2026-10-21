@@ -280,7 +280,7 @@ class EcjRenameEngineTest {
                 }
                 """;
         EcjRenameEngine rename = new EcjRenameEngine(newEngine());
-        // Cible via le nom du CONSTRUCTEUR (cas spécial projet de référence).
+        // Cible via le nom du CONSTRUCTEUR (cas spécial projet tiers de référence).
         var target = rename.targetAt("/demo/Main.java", source,
                 source.indexOf("Main()"));
         assertNotNull(target, "le constructeur renomme la classe");

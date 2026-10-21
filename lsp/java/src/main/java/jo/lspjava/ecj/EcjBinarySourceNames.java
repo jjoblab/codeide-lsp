@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 
 /**
  * Resolveur de noms de paramètres pour méthodes BINAIRES — portage Java du
- * pattern {@code SourceMethodResolver} du projet de référence.
+ * pattern {@code SourceMethodResolver} du projet tiers de référence.
  *
  * <p><strong>Problème :</strong> pour les méthodes
  * binaires (jars du classpath — android.jar, libs AndroidX, JDK), ecj ne
@@ -274,14 +274,14 @@ final class EcjBinarySourceNames {
 
     /**
      * ZÉRO handle persistant : pas de pool LRU de
-     * {@code NoCloseZipFile} (pattern projet de référence délibérément abandonné : le
+     * {@code NoCloseZipFile} (pattern projet tiers de référence délibérément abandonné : le
      * no-op {@code close()} n'empêche PAS le CloseGuard interne de libcore
      * d'émettre « A resource failed to call ZipFile.close. » quand un handle
      * est finalisé sans fermeture réelle — rafales observées en prod au swap
      * d'index). À la place : CACHE DE NOMS D'ENTRÉES uniquement (strings,
      * aucun fd), peuplé par une ouverture TRANSITOIRE du jar refermée aussitôt.
      *
-     * <p>Portage du besoin projet de référence ({@code JdtEnvironmentCache}) avec une
+     * <p>Portage du besoin projet tiers de référence ({@code JdtEnvironmentCache}) avec une
      * ressource strictement Java : LinkedHashMap access-order bornée à
      * {@value #MAX_CACHED_ENTRY_SETS}; chaque valeur est un Set&lt;String&gt;
      * des entrées du jar — les lookups de présence (la grande majorité des

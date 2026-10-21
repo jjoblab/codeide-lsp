@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests du calcul des régions de folding ({@link EcjCodeFolder}) —
- * parité {@code EcjCodeFolder} du projet de référence : groupe d'imports replié
+ * parité {@code EcjCodeFolder} du projet tiers de référence : groupe d'imports replié
  * par défaut, intérieur des accolades (les {}/() restent visibles),
  * commentaires de bloc multi-lignes, RIEN pour les paires sur une seule
  * ligne ni les accolades dans chaînes/commentaires/text-blocks.
@@ -64,7 +64,7 @@ class EcjCodeFolderTest {
         EcjCodeFolder.Fold imports = find(folds, "imports", "import ...");
         assertNotNull(imports, "groupe d'imports attendu : " + folds);
         assertTrue(imports.collapsedByDefault,
-                "le groupe d'imports est replié PAR DÉFAUT (projet de référence)");
+                "le groupe d'imports est replié PAR DÉFAUT (projet tiers de référence)");
         // La région démarre au « import » du premier et se termine JUSTE
         // APRÈS le « ; » du DERNIER import.
         int lastImportSemi = source.indexOf(";",

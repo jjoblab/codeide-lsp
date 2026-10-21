@@ -1,7 +1,7 @@
 # LSP XML — cadrage de mission (v0.109.0)
 
 > Document de cadrage. Mission démarrée sur « GO » du propriétaire. Étude
-> comparative préalable : **projet de référence** `lang-xml` (2 858 lignes) — enseignements
+> comparative préalable : **projet tiers de référence** `lang-xml` (2 858 lignes) — enseignements
 > d'architecture uniquement (GPL), aucune réutilisation de code.
 >
 > Versions cibles ORIGINELLES décalées d'un cran après l'exécution (K5 a
@@ -26,9 +26,9 @@ et des ressources du **projet**. C'est ce qui rend les serveurs génériques
 peu adaptés, et ce qui oblige à brancher le LSP sur notre modèle de
 ressources existant (ADR 0113, modèle AGP v2).
 
-## 2. Enseignements de l'étudu projet de référence
+## 2. Enseignements de l'étudu projet tiers de référence
 
-`lang-xml` du projet de référence (2 858 lignes, aucune dépendance Eclipse) :
+`lang-xml` du projet tiers de référence (2 858 lignes, aucune dépendance Eclipse) :
 
 - **Parseur tolérant écrit main** : ne lève jamais sur un buffer à moitié
   tapé ; les balises non fermées/incohérentes se rétablissent par une pile de
@@ -57,10 +57,10 @@ ressources existant (ADR 0113, modèle AGP v2).
 
 | # | Décision | Motif |
 |---|----------|-------|
-| X1 | **Moteur maison in-process**, module `:lsp:xml`, parseur tolérant écrit main (~1 200–1 800 lignes attendues). Pas de Lemminx, pas de XSD. | projet de référence le prouve à échelle réduite ; sémantique Android non schématisable ; poids Eclipse inutile. |
+| X1 | **Moteur maison in-process**, module `:lsp:xml`, parseur tolérant écrit main (~1 200–1 800 lignes attendues). Pas de Lemminx, pas de XSD. | projet tiers de référence le prouve à échelle réduite ; sémantique Android non schématisable ; poids Eclipse inutile. |
 | X2 | **DOM neutre partagé** avec les sessions Java/Kotlin (même forme de contrat de session : parse → diagnostics → services), branché sur SessionProjet/RegistreFermeture/LSP4J. | D4 de LSP_KOTLIN (réutilisation du socle) ; un seul cycle de vie à tester. |
 | X3 | **Complétion par contributeurs** : catalogue Android (balises, attributs, formats) dérivé des **données de plateforme installées** (`data/res/values/attrs.xml` + `public.txt` de `platforms/android-*`, déjà téléchargées par l'installateur) ; index des ressources du **projet** (strings/colors/dimens/ids/styles) construit depuis le modèle v2. | Connaissance Android = données, pas code ; zéro durcissement de version SDK. |
-| X4 | **Règles pures + coutures conservatrices** (motif projet de référence) : les diagnostics ne signalent que ce qu'ils savent ; « classe de balise inconnue » seulement si le SDK + le classpath du projet + l'index sont tous d'accord pour dire qu'elle n'existe pas, jamais à chaud. | Anti faux-positif ; cohérent avec la philosophie W de LSP_JAVA. |
+| X4 | **Règles pures + coutures conservatrices** (motif projet tiers de référence) : les diagnostics ne signalent que ce qu'ils savent ; « classe de balise inconnue » seulement si le SDK + le classpath du projet + l'index sont tous d'accord pour dire qu'elle n'existe pas, jamais à chaud. | Anti faux-positif ; cohérent avec la philosophie W de LSP_JAVA. |
 | X5 | **Résolution de références** `@type/name` et `?attr/` dans le hover/definition/complétion via l'index ressources (X3) ; `definition` saute au `res/values` déclarant. | L'attente n°1 après la complétion. |
 
 ## 4. Architecture
@@ -135,7 +135,7 @@ absents sur un élément de layout (hint, pas error — conservatoire) ;
 `@+id` dupliqué dans le fichier ; `<include>` sans `layout` ; `<merge>` non
 racine ; entrée `res/values` sans `name` ou `name` dupliqué ; référence
 `@color/…`/`@string/…` non résolue (projet + framework, jamais pendant que
-l'index est froid — même garde « dumb mode » que projet de référence).
+l'index est froid — même garde « dumb mode » que projet tiers de référence).
 
 ## 5. Étapes de livraison
 

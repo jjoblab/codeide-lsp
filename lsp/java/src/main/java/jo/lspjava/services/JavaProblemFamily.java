@@ -6,13 +6,13 @@ import java.util.Locale;
 
 /**
  * Familles sémantiques de problèmes ecj — le pattern {@code JavaProblemCodes}
- * du projet de référence porté en Java.
+ * du projet tiers de référence porté en Java.
  *
  * <p>Piége évité : brancher les quick-fixes sur des {@code contains()} du
  * MESSAGE localisé (« cannot be resolved », « Unused », « must be
  * caught »…) est fragile — ce message varie avec la Locale de
  * l'utilisateur : sur une VM française, « cannot be resolved » devient
- * « ne peut pas être résolu » et le quick-fix disparaît. projet de référence fait
+ * « ne peut pas être résolu » et le quick-fix disparaît. projet tiers de référence fait
  * l'inverse : chaque {@link IProblem#getID()} est mappé à une famille
  * sémantique STABLE, et le quick-fix lit les arguments STRUCTURÉS
  * ({@code IProblem.getArguments()} : le FQN manquant, le type introuvable)
@@ -40,7 +40,7 @@ public enum JavaProblemFamily {
 
     /** Méthode non résolue sur CE type ({@code foo(args)} /
      *  {@code this.foo(args)}) — créer le stub de méthode (portage
-     *  {@code CreateMethodFromUsageQuickFixProvider} du projet de référence).
+     *  {@code CreateMethodFromUsageQuickFixProvider} du projet tiers de référence).
      *  {@code getArguments()} = [FQN du propriétaire, nom, typeP0,
      *  typeP1, …] (types séparés — calibré empiriquement sur ecj 3.40). */
     UNDEFINED_METHOD,
@@ -99,7 +99,7 @@ public enum JavaProblemFamily {
         // quand la plage est ambiguë.
         // UndefinedMethod est détaché de UNRESOLVED_REFERENCE : le fix
         // d'import ne s'applique pas (un nom de méthode n'est pas un type)
-        // et le portage CreateMethodFromUsage du projet de référence prend le
+        // et le portage CreateMethodFromUsage du projet tiers de référence prend le
         // relais (stub private/private static dans le type englobant).
         if (problemId == IProblem.UndefinedMethod) return UNDEFINED_METHOD;
         if (isUnresolved(problemId)) return UNRESOLVED_REFERENCE;

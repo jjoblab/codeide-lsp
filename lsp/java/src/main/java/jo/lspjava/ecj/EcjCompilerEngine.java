@@ -71,7 +71,7 @@ import jo.lspjava.engine.OperationCanceledException;
 /**
  * Moteur de diagnostics Java basé sur le <strong>compilateur interne ecj</strong>
  * ({@code org.eclipse.jdt.internal.compiler.Compiler}), en processus —
- * l'approche du projet de référence ({@code JdtResolver}), adaptée à :lspjava.
+ * l'approche du projet tiers de référence ({@code JdtResolver}), adaptée à :lspjava.
  *
  * <p>Contrairement au parseur JavaParser historique de :lspjava, ecj apporte
  * la <b>vraie</b> sémantique du compilateur : résolution de types contre le
@@ -251,7 +251,7 @@ public final class EcjCompilerEngine {
      * <p>Une même frappe déclenche typiquement diagnostics + highlight +
      * inlay hints + signature help sur le MÊME fichier — sans cache, le
      * fichier est re-parsé et re-résolu à chaque appel. Ce cache
-     * (pattern {@code EcjParseCache} du projet de référence) mutualise un seul
+     * (pattern {@code EcjParseCache} du projet tiers de référence) mutualise un seul
      * arbre résolu pour toutes les features successives d'une même frappe,
      * invalidé à la première édition.</p>
      */
@@ -989,7 +989,7 @@ public final class EcjCompilerEngine {
      * null (aucune déclaration dans l'unité).
      *
      * <p>Portage de {@code typeDeclarationTargets} du KotlinSourceAnalyzer de
-     * projet de référence ({@code symbol.type.qualifiedName → sourceOrLibrary}),
+     * projet tiers de référence ({@code symbol.type.qualifiedName → sourceOrLibrary}),
      * restreint au même fichier : le moteur ecj ne connaît pas les offsets
      * des déclarations des AUTRES fichiers.</p>
      *
@@ -1331,7 +1331,7 @@ public final class EcjCompilerEngine {
      *
      * <p>API publique pour les quick-fixes « Importer X » du
      * {@code CodeActionService} (référence non résolue) — le portage du
-     * {@code AddImportQuickFixProvider} du projet de référence qui consulte
+     * {@code AddImportQuickFixProvider} du projet tiers de référence qui consulte
      * l'index de noms de classes depuis la lumière du diagnostic.</p>
      *
      * @param simpleName le nom simple exact (ex: {@code "List"})
@@ -1642,7 +1642,7 @@ public final class EcjCompilerEngine {
      * Wrapper INameEnvironment fin par appel : porte uniquement l'exclusion
      * du type focal (évite la définition dupliquée) au-dessus de l'index
      * partagé — le pattern JdtNameEnvironment/JdtEnvironmentCache de
-     * projet de référence. {@code cleanup()} est un no-op : ecj l'appelle entre les
+     * projet tiers de référence. {@code cleanup()} est un no-op : ecj l'appelle entre les
      * phases de résolution, les handles partagés doivent survivre.
      */
     private INameEnvironment wrapEnvironment(Set<String> excludedFqcns) {
@@ -1778,7 +1778,7 @@ public final class EcjCompilerEngine {
 
         // Arguments STRUCTURÉS du problème ecj — transportés jusqu'aux
         // quick-fixes pour qu'ils branchent sur l'ID et les arguments
-        // (pattern JavaProblemCodes du projet de référence), PAS sur le message
+        // (pattern JavaProblemCodes du projet tiers de référence), PAS sur le message
         // localisé qui peut varier avec la Locale de l'utilisateur.
         String[] rawArgs = p.getArguments();
         java.util.List<String> args = rawArgs == null || rawArgs.length == 0
@@ -1809,7 +1809,7 @@ public final class EcjCompilerEngine {
 
     // ── P5 (v1.4.0) : diagnostics de hiérarchie enrichis ─────────────
     //
-    // Portage de enrichHierarchyProblems (JdtResolver.kt, projet de référence) :
+    // Portage de enrichHierarchyProblems (JdtResolver.kt, projet tiers de référence) :
     // « The hierarchy of the type X is inconsistent » n'est pas actionnable
     // (quel ancêtre manque ? quelle dépendance ajouter ?). L'arbre résolu
     // est en main au moment du diagnose : pour chaque type source dont la
@@ -1906,7 +1906,7 @@ public final class EcjCompilerEngine {
     /**
      * Visite chaque binding de type source de {@code types}, y compris les
      * types membres imbriqués (portage exact de la traversée récursive de
-     * projet de référence — les types imbriqués cassés produisent leur propre
+     * projet tiers de référence — les types imbriqués cassés produisent leur propre
      * problème à leur propre position).
      */
     private static void forEachSourceType(TypeDeclaration[] types,
@@ -2021,7 +2021,7 @@ public final class EcjCompilerEngine {
     /**
      * Traverse l'AST résolu : collecte toutes les déclarations (pour la
      * navigation) et capture le nœud le plus interne couvrant l'offset
-     * (pour le hover). Pattern ContextAnalyzer du projet de référence, adapté.
+     * (pour le hover). Pattern ContextAnalyzer du projet tiers de référence, adapté.
      */
     private static UnitScan scanUnit(CompilationUnitDeclaration cud,
                                      String source, int offset) {

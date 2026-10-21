@@ -133,7 +133,7 @@ public final class EcjInlayHints {
 
     /**
      * Hints de TYPE des déclarations {@code var} par BINDINGS ecj
-     * (portage {@code JdtInlayHintService} du projet de référence :
+     * (portage {@code JdtInlayHintService} du projet tiers de référence :
      * {@code node.type.isVar → frag.resolveBinding()?.type}).
      *
      * <p>Remplace l'inférence TEXTUELLE historique (littéraux simples
@@ -173,7 +173,7 @@ public final class EcjInlayHints {
     }
 
     /**
-     * Portage {@code JdtInlayHintService} du projet de référence (les deux
+     * Portage {@code JdtInlayHintService} du projet tiers de référence (les deux
      * familles qui manquaient) :
      * <ul>
      *   <li><b>Chaining hints</b> — sur un chaînage FLUENT MULTI-LIGNE, le
@@ -192,7 +192,7 @@ public final class EcjInlayHints {
      *
      * <p>Types par bindings ecj ({@code Expression.resolvedType} du
      * récepteur, {@code Argument.binding.type} du paramètre lambda) — un
-     * binding non résolu ne reçoit JAMAIS de hint (parité projet de référence : pas
+     * binding non résolu ne reçoit JAMAIS de hint (parité projet tiers de référence : pas
      * de faux type).</p>
      *
      * @return les hints des deux familles (ordre de traversal)
@@ -238,7 +238,7 @@ public final class EcjInlayHints {
         int recvEnd = recv.sourceEnd + 1; // fin du récepteur (offset exclusif)
         int nameStart = ms.nameSourceStart();
         if (nameStart < 0) return;
-        // Même ligne ⇒ pas de hint (projet de référence : « otherwise it's just
+        // Même ligne ⇒ pas de hint (projet tiers de référence : « otherwise it's just
         // noise » — seuil binaire ligne/ligne, pas un seuil configurable).
         if (lineOf(lineStarts, recvEnd) == lineOf(lineStarts, nameStart)) return;
         TypeBinding t = recv.resolvedType;
@@ -258,7 +258,7 @@ public final class EcjInlayHints {
     /**
      * Les hints « : Type » des paramètres lambda au type implicite — les
      * paramètres typés explicitement portent un TypeReference non-null et
-     * sont ignorés (parité projet de référence VariableDeclarationFragment).
+     * sont ignorés (parité projet tiers de référence VariableDeclarationFragment).
      */
     private static void collectLambdaParamHints(LambdaExpression lambda,
                                                 List<Hint> out) {

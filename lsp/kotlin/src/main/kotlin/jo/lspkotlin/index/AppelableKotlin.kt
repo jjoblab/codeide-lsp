@@ -4,7 +4,7 @@ package jo.lspkotlin.index
  * Appelable de premier niveau d'une bibliothèque Kotlin du classpath
  * (K3, LSP_KOTLIN.md §4.1 « index ») — fonction ou propriété, simple ou
  * EXTENSION, décodée de l'annotation `@Metadata` (façade de fichier :
- * `XxxKt` — motif projet de référence « KotlinCallableIndex à clés taggées »).
+ * `XxxKt` — motif projet tiers de référence « KotlinCallableIndex à clés taggées »).
  *
  * Le périmètre est VOLONTAIREMENT restreint aux appelables de premier
  * niveau : les MEMBRES de classes restent dans la vue JVM de l'hôte
@@ -56,7 +56,7 @@ public data class ParametreAppelable(
     public val type: String?,
 )
 
-/** Clés taggées de l'index des appelables (motif projet de référence, ADR 0111). */
+/** Clés taggées de l'index des appelables (motif projet tiers de référence, ADR 0111). */
 public object ClesAppelables {
     /** Préfixe des clés d'appelables de premier niveau. */
     public const val PREFIXE_TOP: String = "top:"

@@ -39,9 +39,9 @@ import java.util.stream.Stream;
 /**
  * Moteur de navigation GO TO « Implementations » et « Super »
  * (portage des {@code implementationTargets} / {@code superTargets} du
- * KotlinSourceAnalyzer du projet de référence, adapté au moteur ecj de CodeIDE).
+ * KotlinSourceAnalyzer du projet tiers de référence, adapté au moteur ecj de CodeIDE).
  *
- * <h2>Sémantique (parité projet de référence)</h2>
+ * <h2>Sémantique (parité projet tiers de référence)</h2>
  * <ul>
  *   <li><b>Implementations</b> — les héritiers DIRECTS du type en contexte
  *       (une référence de type au caret, sinon la classe englobante). Chaque
@@ -55,7 +55,7 @@ import java.util.stream.Stream;
  * </ul>
  *
  * <h2>Index de sous-types</h2>
- * Là où projet de référence interroge son {@code SubtypeIndex} (producteurs binaire
+ * Là où projet tiers de référence interroge son {@code SubtypeIndex} (producteurs binaire
  * + Java + Kotlin), le moteur ecj ne connaît que l'unité courante : on
  * BALAIE donc les racines sources du projet (pattern
  * {@link EcjRenameEngine#renameProject} — pré-filtre textuel sur le nom
@@ -87,7 +87,7 @@ public final class EcjNavigationEngine {
     /**
      * Les héritiers DIRECTS du type en contexte au caret — une référence de
      * type sous le caret, sinon la classe englobante (sémantique
-     * {@code contextTypeFqn} du projet de référence : le type d'une VARIABLE ne
+     * {@code contextTypeFqn} du projet tiers de référence : le type d'une VARIABLE ne
      * compte PAS, seule une référence/une déclaration de type compte).
      *
      * @param filePath chemin du fichier courant
@@ -238,7 +238,7 @@ public final class EcjNavigationEngine {
     /**
      * Le même-nommé (même sélecteur, même arité) dans chaque supertype
      * transitif de la classe déclarante — les cibles « member super » de
-     * projet de référence (label {@code "name  ·  Super"}).
+     * projet tiers de référence (label {@code "name  ·  Super"}).
      */
     private List<jo.lspjava.api.NavigationTarget> superMethodHits(MethodBinding m, Map<String, String> overlay) {
         List<jo.lspjava.api.NavigationTarget> out = new ArrayList<>();
@@ -332,7 +332,7 @@ public final class EcjNavigationEngine {
 
         /**
          * Le TYPE EN CONTEXTE (portage {@code typeRefFqnAt} +
-         * {@code contextTypeFqn} du projet de référence) : le type sous le caret
+         * {@code contextTypeFqn} du projet tiers de référence) : le type sous le caret
          * (référence ou déclaration) ; sinon la classe ENGLOBANTE — le type
          * d'une variable/méthode ne compte PAS.
          */
@@ -603,7 +603,7 @@ public final class EcjNavigationEngine {
     }
 
     /**
-     * Portage de {@code declarationLocation} du projet de référence : le fichier
+     * Portage de {@code declarationLocation} du projet tiers de référence : le fichier
      * déclarant le type {@code fqn} (les types IMBRIQUÉS vivent dans le
      * fichier de leur classe EXTERIEURE — remontée progressive des
      * segments), puis la déclaration correspondante par comparaison du
@@ -752,7 +752,7 @@ public final class EcjNavigationEngine {
     }
 
     /** « Simple  ·  pkg » (ou juste le nom simple au paquet par défaut) —
-     *  le libellé picker du projet de référence ({@code navLabel}). */
+     *  le libellé picker du projet tiers de référence ({@code navLabel}). */
     static String navLabel(String fqn) {
         String simple = simpleName(fqn);
         int lastDot = fqn.lastIndexOf('.');

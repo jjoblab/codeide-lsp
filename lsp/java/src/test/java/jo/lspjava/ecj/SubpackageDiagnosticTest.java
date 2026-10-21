@@ -19,7 +19,7 @@ import jo.lspjava.api.CompletionItem;
  *
  * <p>Dump EXACT de ce que propose le moteur pour taper {@code import android.},
  * {@code import android.c}, {@code import j}, {@code import java.util.f}…
- * afin de comparer aux règles d'or de packageChildren (projet de référence) :</p>
+ * afin de comparer aux règles d'or de packageChildren (projet tiers de référence) :</p>
  * <ol>
  *   <li>enfants DIRECTS uniquement (premier segment après q.)</li>
  *   <li>dédoublonnés par segment</li>

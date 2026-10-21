@@ -226,9 +226,9 @@ ce contexte, indépendant des performances — à corriger à l'étape 3.
 
 ### 5.1 Méthode
 
-projet de référence (auteur tiers, GPL-3.0) cloné en lecture seule (depth 1) ;
+projet tiers de référence (auteur tiers, GPL-3.0) cloné en lecture seule (depth 1) ;
 comparaison automatique des 48 fichiers main du module vendored contre
-l'index des fichiers projet de référence (appariement par nom, manuel pour les
+l'index des fichiers projet tiers de référence (appariement par nom, manuel pour les
 ratés) ; métriques : **lignes identiques normalisées** (trim, non
 vides, commentaires inclus — les en-têtes de licence comptent) et
 **Jaccard des jetons** du corps de code (commentaires exclus).
@@ -240,7 +240,7 @@ Rejouable : `audit_provenance.py` (§11.1).
   `StackWalker` 40 % / 0,89 ; `InputStreamCompat` 60 % / 0,57
   (sous-ensemble). (L'audit absent annonçait « 61/61 » — écart de
   méthode, même conclusion.)
-- **Niveau B** : 31 fichiers mentionnent projet de référence ; ressemblance
+- **Niveau B** : 31 fichiers mentionnent projet tiers de référence ; ressemblance
   textuelle faible (0,08–0,26 lignes, Jaccard 0,01–0,46) MAIS
   dérivation démontrée : commentaires citant les classes d'origine
   (`JdtRename`, `JdtEnvironmentCache`, `JavaProblemCodes`,
@@ -248,13 +248,13 @@ Rejouable : `audit_provenance.py` (§11.1).
   identiques** (score : 1000/500/200/120/300/200/400 entre
   `CompletionRanker.kt` et `JdtCompletionEngine`).
 - **ecj-art** : passes d'origine retrouvées dans le build-logic de
-  projet de référence (`RelocateTypesInJar.kt`, `EclipseStreamArtPass.kt`) ;
+  projet tiers de référence (`RelocateTypesInJar.kt`, `EclipseStreamArtPass.kt`) ;
   recoupement textuel faible, dicté par l'API ASM.
 - **Six noms de fichiers identiques** : `JdtCodeFolder`,
   `JdtSemanticHighlighter`, `JdtSourceUnit`, `RuntimeVersion`,
   `StackWalker`, `InputStreamCompat`.
 - **Contre-exemple utile** : `JdtLocateCache` (LRU exact) n'est PAS la
-  `LruMap` du projet de référence (CLOCK) — même idée, implémentations
+  `LruMap` du projet tiers de référence (CLOCK) — même idée, implémentations
   distinctes : la frontière « idée non protégeable / expression
   protégée » passe bien là.
 
@@ -325,7 +325,7 @@ versionnée de `lsp:model`), `WorkspaceModel` (→ snapshots typés).
 Exécution **après** le traitement D3 lot par lot (prompt §3), par
 refactoring, compilation et tests verts à chaque lot. Le préfixe
 retenu est **`Ecj`** (honnête : ces classes adaptent ecj/JDT) — il
-évite par construction les noms identiques au projet de référence
+évite par construction les noms identiques au projet tiers de référence
 (`CompletionEngine`, `PrefixMatcher`, `ImportOrganizer`,
 `SignatureHelp`, `LiveTemplates`, `PostfixTemplates`,
 `JdtEnvironmentCache`…). Les shims deviennent `ArtCompat*`.
@@ -333,32 +333,32 @@ retenu est **`Ecj`** (honnête : ces classes adaptent ecj/JDT) — il
 | Ancien | Nouveau | Motif |
 |---|---|---|
 | package `jo.lspjava.jdt` | `jo.lspjava.ecj` | retrait de la référence JDT du nom de package |
-| `JdtCompletionEngine` | `EcjCompletionEngine` | ≠ `CompletionEngine` (projet de référence ide-core) |
+| `JdtCompletionEngine` | `EcjCompletionEngine` | ≠ `CompletionEngine` (projet tiers de référence ide-core) |
 | `JdtCompilerEngine` | `EcjCompilerEngine` | préfixe |
 | `JdtCompilerEnvironment` | `EcjCompilerEnvironment` | préfixe |
 | `JdtEngineScheduler` | `EcjEngineScheduler` | préfixe |
-| `JdtRenameEngine` | `EcjRenameEngine` | ≠ `JdtRename` (projet de référence) |
+| `JdtRenameEngine` | `EcjRenameEngine` | ≠ `JdtRename` (projet tiers de référence) |
 | `JdtNavigationEngine` | `EcjNavigationEngine` | préfixe |
 | `JdtFastDiagnose` | `EcjFastDiagnose` | préfixe |
-| `JdtSignatureHelp` | `EcjSignatureHelp` | ≠ `SignatureHelp` (projet de référence api) |
+| `JdtSignatureHelp` | `EcjSignatureHelp` | ≠ `SignatureHelp` (projet tiers de référence api) |
 | `JdtInlayHints` | `EcjInlayHints` | ≠ `JdtInlayHintService` |
-| `JdtSemanticHighlighter` | `EcjSemanticHighlighter` | **nom de fichier identique au projet de référence** |
-| `JdtCodeFolder` | `EcjCodeFolder` | **nom de fichier identique au projet de référence** |
-| `JdtSourceUnit` | `EcjSourceUnit` | **nom de fichier identique au projet de référence** |
-| `JdtPostfixTemplates` | `EcjPostfixTemplates` | ≠ `PostfixTemplates` (projet de référence) |
-| `JdtLiveTemplates` | `EcjLiveTemplates` | ≠ `LiveTemplates` (projet de référence) |
+| `JdtSemanticHighlighter` | `EcjSemanticHighlighter` | **nom de fichier identique au projet tiers de référence** |
+| `JdtCodeFolder` | `EcjCodeFolder` | **nom de fichier identique au projet tiers de référence** |
+| `JdtSourceUnit` | `EcjSourceUnit` | **nom de fichier identique au projet tiers de référence** |
+| `JdtPostfixTemplates` | `EcjPostfixTemplates` | ≠ `PostfixTemplates` (projet tiers de référence) |
+| `JdtLiveTemplates` | `EcjLiveTemplates` | ≠ `LiveTemplates` (projet tiers de référence) |
 | `JdtFormatter` | `EcjFormatter` | ≠ `JdtFormattingService` |
-| `JdtImportOrganizer` | `EcjImportOrganizer` | ≠ `ImportOrganizer` (projet de référence api) |
+| `JdtImportOrganizer` | `EcjImportOrganizer` | ≠ `ImportOrganizer` (projet tiers de référence api) |
 | `JdtBinarySourceNames` | `EcjBinarySourceNames` | préfixe |
 | `JdtLocateCache` | `EcjLocateCache` | préfixe |
 | `JdtAst` | `EcjAst` | préfixe |
 | `compat/RuntimeVersion` | `ArtCompatVersion` | **réécrit de toute façon (niveau A)** |
 | `compat/StackWalker` | `ArtCompatStackWalker` | **réécrit de toute façon (niveau A)** |
 | `compat/InputStreamCompat` | `ArtCompatInputStream` | **réécrit de toute façon (niveau A)** |
-| `CompletionPrefixMatcher` | `EcjPrefixMatcher` | cohérence, ≠ `PrefixMatcher` (projet de référence) |
+| `CompletionPrefixMatcher` | `EcjPrefixMatcher` | cohérence, ≠ `PrefixMatcher` (projet tiers de référence) |
 | `BindingParseCache` | `EcjParseCache` | réécrit lot 2, précise « parse » |
 
-Sans changement (aucun préfixe Jdt, aucun nom identique au projet de référence) :
+Sans changement (aucun préfixe Jdt, aucun nom identique au projet tiers de référence) :
 `RawZipReader`, `SourceFocuser`, `ClassFileStubBuilder`, `CancelToken`,
 `OperationCanceledException`, `CompilationEnvironment` (supprimé à
 terme), `JavaLanguageServer`, `JavaTextDocumentService`,
@@ -463,7 +463,7 @@ adossés à l'index).
    `-Xmx2g -XX:+UseSerialGC`, itérations 30) →
    `resultats/banc-<jeu>.json` + `banc-complet.log`.
 4. Audit de provenance rejouable : `scripts/audit_provenance.py` (clone
-   projet de référence depth 1 requis).
+   projet tiers de référence depth 1 requis).
 5. Génération des jeux : `scripts/construire_jeux.py` (rapport
    `dependencies` + localisation cache Gradle) et
    `scripts/construire_jeux_fichiers.py` (liste de fichiers résolus) ;
@@ -561,7 +561,7 @@ Le jar « +1 dépendance » du banc (`datasets/extra/extra-banc.jar`,
   sur les dépôts officiels), `patchEclipseForArt` en classe de tâche
   **compatible configuration cache** + ProcessBuilder (Gradle 9),
   `JO_TEST_JDK_HOME` fourni par le build, README d'exemption (règle 8)
-  et crédits projet de référence. Suite vendored : **246 tests verts** (les
+  et crédits projet tiers de référence. Suite vendored : **246 tests verts** (les
   6 tests JDK échouaient sans `JO_TEST_JDK_HOME` — les sondes du module
   attrapaient le JRE système sans `src.zip`).
 - **`ModelesAndroidV2`** : conversion par bibliothèque (ANDROID_LIBRARY →
@@ -893,7 +893,7 @@ textuellement mis à jour. Vérifications : plus AUCUNE occurrence de
 `jo.lspjava.jdt` dans le code (l'étiquette source des diagnostics
 suit : `"jo.lspjava.ecj"`) ; `invalidateJdtEngine`/`isJdtInitialized`
 deviennent `invalidateEcjEngine`/`isEcjInitialized` ; les mentions
-provenance projet de référence (`{@code JdtResolver}`…) restent VOLONTAIREMENT
+provenance projet tiers de référence (`{@code JdtResolver}`…) restent VOLONTAIREMENT
 (elles documentent l'audit D3). `:lsp:java` 277 tests verts.
 
 ### 15.4 Lot C — branchement de l'index (v0.96.0, livré)
@@ -1588,7 +1588,7 @@ liste VIDE (pas même la syntaxe), la complétion sautait le moteur
 entièrement. Un `.java` ouvert avant la première sync (ou sans JDK du
 terminal installé) était branché mais MUET.
 
-**Le mode instantané** (le « dumb mode » d'IntelliJ/Android Studio) —
+**Le mode instantané** (le « mode sourd » des IDE de bureau) —
 deux régimes de repli qui montent automatiquement :
 
 1. **Diagnostics de syntaxe immédiats** : `parseSeul` (nouveau point
@@ -1873,7 +1873,7 @@ et clarifie la provenance :
 
 - **La quasi-totalité des fichiers du module sont les SIENS** — écrits à
   sa manière ;
-- la référence au projet de référence faite lors des recherches de solution d'erreurs
+- la référence au projet tiers de référence faite lors des recherches de solution d'erreurs
   de test fut une **consultation d'approche parmi d'autres projets** —
   « pas au mot près mais la compréhension pour le faire à ma manière » ;
 - conséquence opérationnelle : la réécriture cloisonnée (option 1 de
@@ -1888,7 +1888,7 @@ et clarifie la provenance :
 Le volet « protocole de mesure appareil » du S0-c reste réservé (séance
 dédiée à venir) ; l'ADR 0110 porte la trace formelle de la décision.
 
-## 19. Journal de stabilisation — lot S1 « parité utile JDT.LS »
+## 19. Journal de stabilisation — lot S1 « parité utile avec le serveur tiers de référence »
 
 ### 19.1 v0.134.16 — S1-b « diagnostics riches » + S1-c « workspace/symbol » + S1-d « watched files côté hôte »
 
@@ -2040,7 +2040,7 @@ Kotlin (v0.134.9).
   dépréciée `MarkedString`-string — signature seule →
   `MarkupContent` PLAINTEXT (sans clôtures) ; signature + javadoc →
   MARKDOWN (` ```java ` + `\n\n` + documentation), même patron que le
-  serveur Kotlin et JDT.LS. Périmètre honnête : les symboles binaires
+  serveur Kotlin et le serveur tiers de référence. Périmètre honnête : les symboles binaires
   (classpath, android.jar, jrt) et les déclarations d'AUTRES fichiers
   n'ont pas de javadoc ici — signature seule.
 - **Tests** : `EcjHoverJavadocTest` (9 — méthode/champ/type via référence

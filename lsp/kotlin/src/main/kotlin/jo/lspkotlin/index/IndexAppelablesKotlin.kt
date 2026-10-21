@@ -11,7 +11,7 @@ import java.security.MessageDigest
 
 /**
  * Index des APPELABLES Kotlin du classpath (K3, LSP_KOTLIN.md §4.1
- * « index » — homologue Kotlin du `KotlinCallableIndex` du projet de référence,
+ * « index » — homologue Kotlin du `KotlinCallableIndex` du projet tiers de référence,
  * clés taggées `top:`/`ext:`).
  *
  * PARTAGÉ PAR LE MOTEUR (toutes les sessions d'un projet) : les

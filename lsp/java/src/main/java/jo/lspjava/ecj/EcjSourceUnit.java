@@ -5,7 +5,7 @@ import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 /**
  * Unité de compilation JDT sur un contenu en mémoire, identifiée par son
  * FQCN — le pattern de {@code dev.ide.lang.jdt.env.EcjSourceUnit} de
- * projet de référence, porté en Java.
+ * projet tiers de référence, porté en Java.
  *
  * <p>Le nom de fichier est dérivé du FQCN ({@code com/foo/Bar.java}) et le
  * nom du paquet est explicitement fourni : ecj n'a donc pas besoin de lire

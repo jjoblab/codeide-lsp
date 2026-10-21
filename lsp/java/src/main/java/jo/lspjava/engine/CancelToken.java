@@ -1,7 +1,7 @@
 package jo.lspjava.engine;
 
 /**
- * Token d'annulation coopératif — pattern {@code CancelToken} du projet de référence,
+ * Token d'annulation coopératif — pattern {@code CancelToken} du projet tiers de référence,
  * porté en Java.
  *
  * <p>Le moteur synchronisé de {@link EcjCompilerEngine} est un point de
@@ -10,7 +10,7 @@ package jo.lspjava.engine;
  * multi-fichiers, potentiellement des secondes), la complétion de
  * l'utilisateur attend derrière.</p>
  *
- * <p>Le pattern projet de référence ({@code EngineScheduler} à trois lanes
+ * <p>Le pattern projet tiers de référence ({@code EngineScheduler} à trois lanes
  * interactive/background/preview sur un unique worker sérialisé, avec
  * annulation coopérative par thread-local entre les nœuds AST) est trop
  * large pour une itération initiale. On introduit ici la brique élémentaire

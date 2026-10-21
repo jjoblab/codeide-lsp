@@ -8,7 +8,7 @@
 >
 > Chaque module a été audité avec la même méthodologie : lecture du
 > framing doc, lecture du code, tests, comparaison avec les LSP de
-> référence (JDT.LS / fwcd+JetBrains / LemMinX), et sonde SPI empirique
+> référence (les serveurs de langage Java, Kotlin et XML de l'écosystème externe), et sonde SPI empirique
 > (harness Java hors dépôt驱动ant le moteur via son SPI public).
 
 ## 1. État global
@@ -40,7 +40,7 @@
 - **S0-b** : `prepareRename` honnête (range + placeholder, error typée, `documentChanges` versionné)
 - **S0-c** : **décision D3** — CLÔTURÉE (niveau A réécrit v0.94.0, niveau B attesté, ADR 0110/0200) ; protocole appareil §11.2 toujours applicable
 
-#### S1 — Parité utile avec JDT.LS (3-4 lots)
+#### S1 — Parité utile avec le serveur tiers de référence (3-4 lots)
 - Conformité par-projet (`sourceCompatibility`/`targetCompatibility` dans `ClasspathModule`)
 - Diagnostics riches (tags `Unnecessary`/`Deprecated`, `relatedInformation`)
 - `workspace/symbol`

@@ -31,7 +31,7 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *  - **MEMBRE** après `.`/`?.` : membres déclarés de la chaîne de
  *    supertypes du récepteur résolu (vue JVM de l'hôte) ∪ EXTENSIONS
  *    applicables (index des appelables — récepteur ET ses
- *    supertypes, motif projet de référence) ;
+ *    supertypes, motif projet tiers de référence) ;
  *  - **NOM** : locales en portée, membres de l'englobante, premier
  *    niveau du fichier, déclarations du PROJET (auto-import si hors
  *    portée), types du CLASSPATH (auto-import), appelables de

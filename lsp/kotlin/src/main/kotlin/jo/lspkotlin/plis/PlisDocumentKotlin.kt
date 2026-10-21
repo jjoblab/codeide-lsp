@@ -24,7 +24,7 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *   couvre les mêmes accolades, dédupliqué).
  * - [KtNodeTypes.WHEN] — le bloc d'un `when` (accolades seules).
  * - [KtNodeTypes.IMPORT_LIST] — le bloc d'imports ENTIER (du premier
- *   `import` au dernier, patron JDT.LS/IntelliJ).
+ *   `import` au dernier, patron des serveurs tiers de référence).
  * Règle pour les jetons : un commentaire multi-ligne ([KtTokens.DOC_COMMENT]
  * KDoc ou [KtTokens.BLOCK_COMMENT]) est pliable — les EOL isolées et
  * les commentaires mono-ligne ne le sont PAS (l'hôte filtre les plis

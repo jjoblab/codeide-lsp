@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests P5 (v1.4.0) — diagnostics de hiérarchie enrichis
- * (portage de {@code HierarchyDiagnosticsTest.kt}, projet de référence v3.20).
+ * (portage de {@code HierarchyDiagnosticsTest.kt}, projet tiers de référence v3.20).
  *
  * <p>« La hiérarchie du type X est incohérente »
  * ({@code IProblem.HierarchyHasProblems}) ne nomme que le sous-type cassé —

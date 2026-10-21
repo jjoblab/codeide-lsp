@@ -135,7 +135,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         this.navigationService = new NavigationService(environment);
         // Le service d'actions reçoit l'ENVIRONNEMENT — les fixes
         // « Importer X » interrogent l'index de noms de classes (portage
-        // AddImportQuickFixProvider du projet de référence).
+        // AddImportQuickFixProvider du projet tiers de référence).
         this.codeActionService = new CodeActionService(environment);
     }
 
@@ -488,7 +488,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                 // MarkedString-string est dépréciée — KP14, miroir Kotlin
                 // v0.134.9) ; signature + javadoc de la déclaration →
                 // MARKDOWN (bloc de code + documentation, même patron que
-                // JDT.LS).
+                // le serveur tiers de référence).
                 EcjCompilerEngine.SurvolRiche riche =
                         hoverService.survolRicheAt(filePath, source, offset);
                 if (riche != null) {
@@ -550,7 +550,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     /**
      * {@code textDocument/typeDefinition} : la déclaration du TYPE du symbole
      * au caret ({@code Foo x = …} → {@code class Foo}). Nourrit la section
-     * GO TO du menu contextuel unifié (portage du NavMenu du projet de référence).
+     * GO TO du menu contextuel unifié (portage du NavMenu du projet tiers de référence).
      */
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> typeDefinition(TypeDefinitionParams params) {
@@ -587,7 +587,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     /**
      * {@code textDocument/implementation} : les héritiers directs du type en
      * contexte au caret (section GO TO « Implementations » du menu contextuel
-     * unifié — portage des {@code implementationTargets} du projet de référence).
+     * unifié — portage des {@code implementationTargets} du projet tiers de référence).
      * Multi-fichiers : chaque cible est une Location dans le fichier déclarant
      * (plage du NOM convertie via le TEXTE de ce fichier, pas celui du
      * document courant) — le balayage consulte l'overlay des tampons ouverts
@@ -1123,7 +1123,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // champ data du diagnostic LSP. L'éditeur les renvoie tels quels
         // dans la requête codeAction suivante — ce qui permet au
         // CodeActionService de brancher sur l'ID + args plutôt que sur le
-        // message localisé (pattern JavaProblemCodes du projet de référence).
+        // message localisé (pattern JavaProblemCodes du projet tiers de référence).
         if (!d.arguments().isEmpty()) {
             lspDiag.setData(new ArrayList<>(d.arguments()));
         }
@@ -1895,7 +1895,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     /**
      * {@code textDocument/foldingRange} : régions de folding Java (portage
-     * {@code EcjCodeFolder} du projet de référence). Le groupe d'imports est
+     * {@code EcjCodeFolder} du projet tiers de référence). Le groupe d'imports est
      * replié PAR DÉFAUT ({@code kind="imports"}) ; corps/blocs → région =
      * intérieur des accolades, {@code kind="block"} ; commentaires de bloc
      * multi-lignes → {@code kind="comment"}. Précision CARACTÈRE
@@ -1990,7 +1990,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                     hints.add(h);
                 }
 
-                // Portage JdtInlayHintService du projet de référence : chaining
+                // Portage JdtInlayHintService du projet tiers de référence : chaining
                 // hints multi-lignes (type du récepteur en fin de sa ligne)
                 // + types des paramètres lambda implicites (« : Type »).
                 for (var hint : inlayEngine.chainedAndLambdaHintsFor(uriToPath(uri), source)) {
@@ -2026,7 +2026,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                             toPosition(source, hint.offset),
                             org.eclipse.lsp4j.jsonrpc.messages.Either.forLeft(hint.label));
                     h.setKind(org.eclipse.lsp4j.InlayHintKind.Type);
-                    // Pas de padding gauche — parité projet de référence
+                    // Pas de padding gauche — parité projet tiers de référence
                     // typeHint() : le « : Type » est collé au nom
                     // (« s: String »), comme le rend buildInlayAnnotated.
                     hints.add(h);
@@ -2711,7 +2711,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // ANNOTATION : le protocole LSP n'a pas de kind dédié ;
         // elle voyage en Class mais le champ data transporte le tag
         // "annotation" — le client en déduit le badge « @ » (motif KindBadge
-        // du projet de référence, leur UiCompletionKind.AnnotationType). PACKAGE
+        // du projet tiers de référence, leur UiCompletionKind.AnnotationType). PACKAGE
         // voyage en Module (convention Eclipse JDT.ls) → badge « p ».
         if (item.kind() == jo.lspjava.api.CompletionItem.Kind.ANNOTATION) {
             lsp.setKind(CompletionItemKind.Class);

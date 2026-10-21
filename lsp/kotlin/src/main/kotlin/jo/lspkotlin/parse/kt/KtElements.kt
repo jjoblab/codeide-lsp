@@ -10,7 +10,7 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * Façade `Kt*` sur l'arbre syntaxique reconstruit — les noms de types et
  * d'accesseurs épient le vocabulaire du compilateur/PSI (`KtFile`,
  * `KtClass`, `nom()`, `declarations()`, …) : un contributeur qui connaît
- * le PSI de Kotlin se retrouve chez lui (leçon projet de référence, reprise par
+ * le PSI de Kotlin se retrouve chez lui (leçon projet tiers de référence, reprise par
  * LSP_KOTLIN.md D2). Périmètre K1 compact : fichier, déclarations nommées,
  * imports, package ; K2 y ajoute la session, K3 les ACCESSEURS DE
  * SYMBOLES (jeton de nom, types, supertypes, récepteurs d'extension,

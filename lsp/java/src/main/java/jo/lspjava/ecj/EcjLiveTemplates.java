@@ -10,7 +10,7 @@ import java.util.Locale;
  * {@code System.out.println();} avec le curseur à l'intérieur.
  *
  * <p>Contrepartie Java des postfix templates ({@link EcjPostfixTemplates}),
- * dans le style IntelliJ. Émise en position de nom/instruction (contexte
+ * dans le style des IDE de bureau. Émise en position de nom/instruction (contexte
  * {@code NAME} du moteur de complétion), chaque abréviation devient un
  * candidat {@code SNIPPET} dont le texte inséré utilise la <strong>syntaxe
  * snippet LSP</strong> ({@code $0} = position finale du curseur,
@@ -21,10 +21,10 @@ import java.util.Locale;
  * <p>Pertinence : une clé pas encore entièrement tapée reste SOUS les
  * vrais symboles ({@link #RELEVANCE_TEMPLATE_PARTIEL}) ; une clé
  * entièrement tapée remonte en tête ({@link #RELEVANCE_TEMPLATE_EXACT})
- * — convention de signe inspirée du tier weigher du projet de référence, adaptée
+ * — convention de signe inspirée du tier weigher du projet tiers de référence, adaptée
  * à l'échelle de pertinence de lspjava (plus HAUTE = mieux).</p>
  *
- * <p>Portage de {@code LiveTemplates.kt} (projet de référence v3.20, module
+ * <p>Portage de {@code LiveTemplates.kt} (projet tiers de référence v3.20, module
  * lang-jdt) en syntaxe snippet LSP native.</p>
  *
  * @author jo@Dev

@@ -8,7 +8,7 @@ import jo.lspxml.parse.XmlElement
 
 /**
  * Complétion par CONTRIBUTEURS (XE2, LSP_XML.md §4.1 « completion », §4.3
- * — motif projet de référence : la connaissance Android vit dans le catalogue
+ * — motif projet tiers de référence : la connaissance Android vit dans le catalogue
  * plateforme, pas dans le scanner) — le scanner de contexte a déjà
  * tranché LA zone ; ici on fusionne les candidats et on CLASSE
  * (contexte + fréquence SDK + préfixe, risque §7 « complétion bruyante »

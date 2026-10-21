@@ -23,7 +23,7 @@ import jo.lspjava.ecj.compat.ArtCompatInputStream;
 
 /**
  * Index de classpath PARTAGÉ pour le compilateur ecj — le portage Java du
- * pattern {@code JdtEnvironmentCache} du projet de référence.
+ * pattern {@code JdtEnvironmentCache} du projet tiers de référence.
  *
  * <p>L'état coûteux (ensembles des paquets binaires, index de complétion,
  * paquets du jrt) est construit UNE fois et mutualisé entre tous les appels
@@ -92,7 +92,7 @@ final class EcjCompilerEnvironment {
     /**
      * Nombre MAXIMAL de handles {@link RawZipReader} ouverts simultanément
      * (pattern {@code MAX_OPEN_JARS} de {@code JdtEnvironmentCache.kt},
-     * projet de référence v3.20). Au-delà, le handle le moins récemment utilisé est
+     * projet tiers de référence v3.20). Au-delà, le handle le moins récemment utilisé est
      * refermé — les handles sont rouverts à la demande (coût d'un open ZIP,
      * ~quelques ms) au lieu d'empiler des descripteurs de fichiers sur les
      * gros classpaths (Android ~200 jars).
@@ -104,7 +104,7 @@ final class EcjCompilerEnvironment {
 
     /**
      * Cache de localisation fqcn → jar (portage {@code locateCache} de
-     * {@code JdtEnvironmentCache.kt}, projet de référence v3.20) : sans lui, chaque
+     * {@code JdtEnvironmentCache.kt}, projet tiers de référence v3.20) : sans lui, chaque
      * {@link #find} SONDE les N sets d'entrées de jars — O(N) lookups par
      * type résolu, multiplié par les centaines de types qu'ecj résout par
      * frappe. Avec la sentinelle négative, un type ABSENT du classpath
@@ -138,7 +138,7 @@ final class EcjCompilerEnvironment {
      * n'a pas d'image modules ; on pointe alors vers le JDK installé par le
      * terminal (Termux) et on charge son {@code lib/jrt-fs.jar} (fournisseur
      * de système de fichiers jrt pur-Java — pattern {@code JrtImage} de
-     * projet de référence).
+     * projet tiers de référence).
      */
     private final java.nio.file.Path jdkHome;
 
@@ -184,7 +184,7 @@ final class EcjCompilerEnvironment {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Index jrt (FQCN → chemin .class) + paquets — scannés
-     *  paresseusement, desktop seulement (pattern JrtImage du projet de référence). */
+     *  paresseusement, desktop seulement (pattern JrtImage du projet tiers de référence). */
     private java.util.Map<String, Path> jrtIndex = null;
     private Set<String> jrtPackages = null;
 
@@ -327,7 +327,7 @@ final class EcjCompilerEnvironment {
 
         // 2. Jars du classpath — via le CACHE de localisation (O(1) après
         //    échauffement, négatifs mémorisés ; portage locateCache de
-        //    projet de référence v3.20). Le premier miss seul paie la sonde O(N)
+        //    projet tiers de référence v3.20). Le premier miss seul paie la sonde O(N)
         //    sur les sets d'entrées ; un type absent ne re-sonde plus JAMAIS
         //    les N jars à chaque résolution.
         String entryName = fqcn.replace('.', '/') + ".class";
@@ -500,7 +500,7 @@ final class EcjCompilerEnvironment {
      * dédié (jrt-fs.jar externe) et son ClassLoader sont fermés ici — sauf
      * s'il s'agit du singleton shared du runtime courant
      * ({@link #jrtFileSystemShared}) : le fermer casserait toute la JVM
-     * desktop (cf. pattern JrtImage du projet de référence).</p>
+     * desktop (cf. pattern JrtImage du projet tiers de référence).</p>
      */
     void dispose() {
         // Referme les handles RawZipReader persistants (UN RandomAccessFile
@@ -682,7 +682,7 @@ final class EcjCompilerEnvironment {
 
     /**
      * Handles RawZipReader persistants (chemin → handle), en LRU d'accès
-     * borné à {@link #MAX_OPEN_JARS} (pool du projet de référence) : l'entrée la
+     * borné à {@link #MAX_OPEN_JARS} (pool du projet tiers de référence) : l'entrée la
      * moins récemment utilisée est fermée et retirée dès dépassement.
      *
      * <p>Clé par CHEMIN (étape 3 lot C) : les lectures de l'index disque
@@ -708,9 +708,9 @@ final class EcjCompilerEnvironment {
         if (snap != null) return snap.get(entryName);
         // 2. Jar volumineux (android.jar…) — handle paresseux réutilisé
         //    PAR CHEMIN, depuis un POOL LRU borné à MAX_OPEN_JARS (portage
-        //    du pool de JdtEnvironmentCache.kt, projet de référence v3.20) : le
+        //    du pool de JdtEnvironmentCache.kt, projet tiers de référence v3.20) : le
         //    handle le moins récemment utilisé est refermé dès dépassement.
-        //    Les lectures COMPLÈTENT SOUS LE VERROU (comme projet de référence) :
+        //    Les lectures COMPLÈTENT SOUS LE VERROU (comme projet tiers de référence) :
         //    une éviction concurrente ne peut jamais refermer un handle
         //    en cours de lecture — le coût est une serialisation des
         //    lectures de gros jars, acceptable au regard d'un handle fermé
@@ -854,7 +854,7 @@ final class EcjCompilerEnvironment {
      *       paresseux » : set gardé en mémoire, octets lus au premier besoin
      *       via {@link #classBytes}).</li>
      * </ul>
-     * Toute exception = jar ignoré (best-effort, pattern projet de référence) — le
+     * Toute exception = jar ignoré (best-effort, pattern projet tiers de référence) — le
      * try-with-resources referme systématiquement le RandomAccessFile.</p>
      */
     private void buildJarIndex() {
@@ -1109,7 +1109,7 @@ final class EcjCompilerEnvironment {
      * @return les sous-paquets DIRECTS de {@code path} (max 200 segments),
      *         NON filtrés par préfixe — le filtrage (matcher gradué :
      *         prefix/camel-hump/substring) remonte à l'appelant
-     *         (packageChildren), pattern projet de référence où l'index pré-filtre
+     *         (packageChildren), pattern projet tiers de référence où l'index pré-filtre
      *         mais où le matcher fait foi.
      *
      *         <p>Le test s'effectue sur la FRONTIÈRE DE POINT
@@ -1118,7 +1118,7 @@ final class EcjCompilerEnvironment {
      *         LUI-MÊME ({@code "android".startsWith("android")}) et rendrait
      *         le {@code substring(dotPath.length() + 1)} invalide ; il
      *         exclut AUSSI le faux-positif « androidx est un sous-paquet de
-     *         android ». projet de référence filtre les segments avec son
+     *         android ». projet tiers de référence filtre les segments avec son
      *         PrefixMatcher gradué (camel-hump « cV » → « contentView »),
      *         d'où le filtrage remonté dans packageChildren qui construit
      *         le matcher.</p>
@@ -1165,7 +1165,7 @@ final class EcjCompilerEnvironment {
     /**
      * Les types DIRECTEMENT dans le paquet {@code pkg} — portage
      * exact de {@code index.exactAll<ClassNameValue>(PACKAGE_TYPES, q)} de
-     * projet de référence (CandidateCollector.packageChildren, règle d'or n°4).
+     * projet tiers de référence (CandidateCollector.packageChildren, règle d'or n°4).
      *
      * <p>La requête est EXACTE : le paquet du FQN est {@code q}, ni un
      * sous-paquet ni un type imbriqué. Une requête
@@ -1180,7 +1180,7 @@ final class EcjCompilerEnvironment {
      *
      * @return les FQN des types de premier niveau dont le paquet est
      *         EXACTEMENT {@code pkg}, triés, sans cap arbitraire (borne de
-     *         sécurité 1000 jamais atteinte en pratique — projet de référence
+     *         sécurité 1000 jamais atteinte en pratique — projet tiers de référence
      *         exactAll est non borné).
      */
     java.util.List<String> directTypesInPackage(String pkg) {
@@ -1194,7 +1194,7 @@ final class EcjCompilerEnvironment {
             // (sous-paquet exclu) ni '$' (classe interne/imbriquée exclue —
             // le jrt indexe Map$Entry sous « java.util.Map$Entry », la
             // règle d'or n°1 de packageChildren ne propose QUE les types
-            // de premier niveau, comme le PACKAGE_TYPES du projet de référence).
+            // de premier niveau, comme le PACKAGE_TYPES du projet tiers de référence).
             if (fqn.indexOf('.', pref.length()) >= 0) return;
             if (fqn.indexOf('$') >= 0) return;
             out.add(fqn);
@@ -1233,7 +1233,7 @@ final class EcjCompilerEnvironment {
      * dédoublonnés et triés (plus courts d'abord).
      *
      * <p>Sert au quick-fix « Importer X » sur référence non résolue — le
-     * portage du {@code AddImportQuickFixProvider} du projet de référence
+     * portage du {@code AddImportQuickFixProvider} du projet tiers de référence
      * ({@code index.fuzzyAll<ClassNameValue>(CLASS_NAMES, name, 50)
      * .filter { it.value.fqn.substringAfterLast('.') == name }}) : les
      * candidats d'import viennent de l'index de noms de classes.</p>
@@ -1287,7 +1287,7 @@ final class EcjCompilerEnvironment {
     /**
      * Recherche de types par matcher GRADUÉ (portage
      * {@code index.fuzzyAll<ClassNameValue>(CLASS_NAMES, prefix, n)} de
-     * projet de référence) : le simple name peut matcher par préfixe sensible,
+     * projet tiers de référence) : le simple name peut matcher par préfixe sensible,
      * préfixe insensible, camel-hump ou substring (requêtes >= 3
      * caractères) — un simple startsWith insensible raterait
      * systématiquement les humps.
@@ -1557,7 +1557,7 @@ final class EcjCompilerEnvironment {
      * NE LE FERME PAS — le fermer casserait toute la JVM
      * ({@code FileSystems.getFileSystem("jrt:/")} est un singleton global).
      *
-     * <p>Pattern <strong>JrtImage</strong> du projet de référence
+     * <p>Pattern <strong>JrtImage</strong> du projet tiers de référence
      * ({@code dev.ide.lang.jdt.env.JrtImage.kt:271-275}) : le jrt du runtime
      * courant est délibérément jamais fermé.</p>
      */
@@ -1577,7 +1577,7 @@ final class EcjCompilerEnvironment {
      *   <li>home externe (JDK Termux depuis l'app ART, autre JDK en test) →
      *       chargement de {@code <home>/lib/jrt-fs.jar} dans un
      *       URLClassLoader et instanciation de son fournisseur jrt avec
-     *       {@code java.home = <home>} — la façon dont IntelliJ/projet de référence
+     *       {@code java.home = <home>} — la façon dont les IDE de bureau et le projet tiers de référence
      *       lisent un JDK externe. Pur Java : fonctionne sur ART.</li>
      * </ul>
      */
@@ -1667,7 +1667,7 @@ final class EcjCompilerEnvironment {
             // Le chemin jrt est /modules/<MODULE>/<pkg>/<Type>.class — le nom
             // du module varie (java.base, java.xml, jdk.crypto.ec, …) : on
             // construit l'index FQCN → Path en UN seul walk (pattern JrtImage
-            // du projet de référence — ~40k entrées, desktop seulement).
+            // du projet tiers de référence — ~40k entrées, desktop seulement).
             java.util.Map<String, Path> index = new java.util.HashMap<>(65_536);
             Set<String> pkgs = new HashSet<>(8192);
             try (var walk = Files.walk(modules)) {
@@ -1681,8 +1681,8 @@ final class EcjCompilerEnvironment {
                     if (fqcn.endsWith(".module-info") || fqcn.endsWith(".package-info")) {
                         return;
                     }
-                    // Parité publicBytecodeKind du projet de référence : le
-                    // ClassNameIndex/PackageTypesIndex du projet de référence n'indexe
+                    // Parité publicBytecodeKind du projet tiers de référence : le
+                    // ClassNameIndex/PackageTypesIndex du projet tiers de référence n'indexe
                     // que les types PUBLICS des SDK/libs (access flag ASM).
                     // Lire les 40k bytecode du jrt serait prohibitif — le
                     // filtre équivalent à coût zéro exclut les packages du

@@ -17,7 +17,7 @@ import java.util.*;
  * classes… Une action sans édition n'est tout simplement pas proposée
  * (une action muette est pire que pas d'action).</p>
  *
- * <p>Portage des quick-fixes du projet de référence ({@code JavaActions.kt} +
+ * <p>Portage des quick-fixes du projet tiers de référence ({@code JavaActions.kt} +
  * {@code JavaCompilerFixes.kt}).</p>
  *
  * <p>Le dispatch reste ID-FIRST ({@code "ecj:<ID>"} →
@@ -114,7 +114,7 @@ public final class CodeActionService {
             case UNDEFINED_METHOD -> out.addAll(createMethodFixes(args, diagnostic,
                     source, filePath));
             case UNUSED_IMPORT -> {
-                // Portage RemoveUnusedImportQuickFixProvider (projet de référence) :
+                // Portage RemoveUnusedImportQuickFixProvider (projet tiers de référence) :
                 // supprimer la LIGNE d'import entière.
                 int[] line = fullLineRange(source, range.startOffset(), range.endOffset());
                 String lineText = source.substring(line[0], Math.min(line[1], source.length()));
@@ -147,9 +147,9 @@ public final class CodeActionService {
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Portage du {@code AddImportQuickFixProvider} du projet de référence : sur un
+     * Portage du {@code AddImportQuickFixProvider} du projet tiers de référence : sur un
      * symbole non résolu dont le texte ressemble à un NOM DE TYPE
-     * (initiale majuscule — projet de référence écarte explicitement les variables
+     * (initiale majuscule — projet tiers de référence écarte explicitement les variables
      * et méthodes non résolues), proposer « Importer X » pour chaque FQN
      * de l'index de noms de classes dont le nom simple correspond
      * exactement — même édition d'auto-import que la complétion, mais
@@ -160,7 +160,7 @@ public final class CodeActionService {
         if (args.isEmpty() || environment == null) return out;
         String name = args.get(0);
         if (name == null || name.isEmpty()) return out;
-        // Un plausible nom de type uniquement (règle projet de référence).
+        // Un plausible nom de type uniquement (règle projet tiers de référence).
         char c0 = name.charAt(0);
         if (!Character.isJavaIdentifierStart(c0) || !Character.isUpperCase(c0)) return out;
         for (char c : name.toCharArray()) {
@@ -175,7 +175,7 @@ public final class CodeActionService {
         }
         int offered = 0;
         for (String fqn : candidates) {
-            if (offered >= 8) break; // projet de référence : take(8)
+            if (offered >= 8) break; // projet tiers de référence : take(8)
             int dot = fqn.lastIndexOf('.');
             if (dot <= 0) continue;                       // pas de paquet
             String pkg = fqn.substring(0, dot);
@@ -198,8 +198,8 @@ public final class CodeActionService {
 
     /**
      * Portage {@code RemoveUnusedLocalQuickFixProvider} /
-     * {@code RemoveUnusedMemberQuickFixProvider} du projet de référence : supprimer
-     * l'instruction de déclaration ENTIÈRE. Comme projet de référence écarte les
+     * {@code RemoveUnusedMemberQuickFixProvider} du projet tiers de référence : supprimer
+     * l'instruction de déclaration ENTIÈRE. Comme projet tiers de référence écarte les
      * groupes multi-fragments ({@code int a, b;} — risque de variables
      * sœurs) et les paramètres de méthode, on fait de même par heuristique
      * textuelle : déclaration multi-fragments (virgule de premier niveau
@@ -214,13 +214,13 @@ public final class CodeActionService {
         if (stmtText.isEmpty()) return out;
 
         // Paramètre de méthode / argument d'appel : la plage est à
-        // l'intérieur d'une liste de parenthèses → abandon (projet de référence
+        // l'intérieur d'une liste de parenthèses → abandon (projet tiers de référence
         // laisse les SingleVariableDeclaration tranquilles).
         if (insideParenList(source, range.startOffset())) return out;
 
         // Déclaration multi-fragments ({@code int a, b;} ou
         // {@code int a = 1, b = 2;}) : virgule de premier niveau → abandon
-        // (projet de référence : « sibling-var risk »).
+        // (projet tiers de référence : « sibling-var risk »).
         if (indexOfTopLevel(stmtText, ',') >= 0) return out;
 
         // Étendre à la ligne complète (-indentation incluse) : de stmt[0]
@@ -263,7 +263,7 @@ public final class CodeActionService {
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Portage du {@code CreateMethodFromUsageQuickFixProvider} du projet de référence :
+     * Portage du {@code CreateMethodFromUsageQuickFixProvider} du projet tiers de référence :
      * sur un appel non résolu qui cible CE type ({@code foo(args)} /
      * {@code this.foo(args)}), créer le stub de méthode dans le type
      * englobant.
@@ -274,7 +274,7 @@ public final class CodeActionService {
      *       raccourcis en noms simples avec imports collectés (ou qualifiés
      *       en cas de collision) ;</li>
      *   <li><b>Retour</b> — {@code void} quand l'appel EST l'instruction
-     *       (ExpressionStatement chez le projet de référence), sinon {@code Object} ;</li>
+     *       (ExpressionStatement chez le projet tiers de référence), sinon {@code Object} ;</li>
      *   <li><b>Visibilité</b> — {@code private}, plus {@code static} quand
      *       le site d'appel est statique ;</li>
      *   <li><b>Corps</b> — {@code throw new UnsupportedOperationException(
@@ -295,7 +295,7 @@ public final class CodeActionService {
 
         // Types des paramètres : ecj 3.40 les sépare en args[2..] ; certaines
         // versions les regroupent en UNE chaîne « int, java.lang.String »
-        // (projet de référence splitTopLevel) — les deux formes sont acceptées.
+        // (projet tiers de référence splitTopLevel) — les deux formes sont acceptées.
         List<String> paramTypes = new ArrayList<>();
         if (args.size() == 3) {
             paramTypes.addAll(splitTopLevel(args.get(2)));
@@ -310,7 +310,7 @@ public final class CodeActionService {
         EnclosingDecl encl = enclosingDecl(source, filePath,
                 diagnostic.range().startOffset());
         if (encl == null || encl.typeName == null) return out;
-        // Créer uniquement dans le type COURANT (projet de référence : « creating in
+        // Créer uniquement dans le type COURANT (projet tiers de référence : « creating in
         // another file is a separate, larger fix »).
         if (!ownerSimple.equals(encl.typeName)) return out;
         // Le site d'appel doit vivre dans une MÉTHODE (un initialiseur de
@@ -329,7 +329,7 @@ public final class CodeActionService {
         String indent = lineIndent(source, Math.max(0, encl.methodStart));
         String modifiers = encl.methodStatic ? "private static" : "private";
 
-        // Paramètres : types raccourcis + imports nécessaires (projet de référence
+        // Paramètres : types raccourcis + imports nécessaires (projet tiers de référence
         // renderTypeName : simple + import, FQN en cas de collision).
         String filePackage = filePackage(source);
         java.util.LinkedHashSet<String> imports = new java.util.LinkedHashSet<>();
@@ -478,7 +478,7 @@ public final class CodeActionService {
     /**
      * Raccourcit les FQN d'une signature de type : nom simple + import
      * collecté (ou FQN conservé en cas de collision d'import — portage
-     * {@code shortenType} du projet de référence).
+     * {@code shortenType} du projet tiers de référence).
      */
     private static String renderTypeName(String type, String source,
                                           String filePackage,
@@ -552,7 +552,7 @@ public final class CodeActionService {
 
     /**
      * Portage {@code SurroundWithTryCatchForExceptionQuickFixProvider} et
-     * {@code AddExceptionToThrowsQuickFixProvider} du projet de référence :
+     * {@code AddExceptionToThrowsQuickFixProvider} du projet tiers de référence :
      * l'argument STRUCTURÉ du problème ({@code getArguments()[0]} = FQN de
      * l'exception vérifiée) fournit le type exact du catch/throws — jamais
      * le message localisé.
@@ -703,14 +703,14 @@ public final class CodeActionService {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Aides plages textuelles (portages projet de référence fullLineRange /
+    // Aides plages textuelles (portages projet tiers de référence fullLineRange /
     // lineIndent / enclosingStatement)
     // ─────────────────────────────────────────────────────────────────────
 
     /**
      * Étend [{@code start}, {@code end}) aux lignes COMPLÈTES : recule au
      * début de ligne, avance jusqu'au retour à la ligne INCLUS (portage
-     * {@code fullLineRange} du projet de référence).
+     * {@code fullLineRange} du projet tiers de référence).
      */
     static int[] fullLineRange(String text, int start, int end) {
         int s = clamp(start, 0, text.length());
@@ -745,7 +745,7 @@ public final class CodeActionService {
      * L'instruction englobante de la plage : recule au début de ligne ou
      * après le délimiteur précédent ({@code ; { }}), avance jusqu'au
      * {@code ;} de premier niveau (ou la fermeture de bloc) — version
-     * textuelle du {@code enclosingStatement} DOM du projet de référence.
+     * textuelle du {@code enclosingStatement} DOM du projet tiers de référence.
      */
     static int[] statementRange(String text, int rangeStart, int rangeEnd) {
         int n = text.length();

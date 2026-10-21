@@ -6,7 +6,7 @@ package jo.lspjava.api;
  * déclaration, et le libellé du picker.
  *
  * <p>Transportée par la méthode LSP personnalisée
- * {@code textDocument/superDefinition} (paires projet de référence
+ * {@code textDocument/superDefinition} (paires projet tiers de référence
  * {@code NavTarget(file, offset, label, kind)}). Les champs sont PUBLICS :
  * la sérialisation Gson de LSP4J mappe les champs un à un (le client
  * {@code :cel-lsp} possède son miroir exact).</p>

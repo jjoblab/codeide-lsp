@@ -20,7 +20,7 @@ import java.util.Map;
  * Formateur Java sur le <strong>formateur Eclipse JDT</strong>
  * ({@code org.eclipse.jdt.core.ToolFactory} / {@code DefaultCodeFormatter})
  * — le moteur qu'utilise Eclipse lui-même, exécuté in-process dans l'app
- * (approche projet de référence {@code JdtFormattingService}).
+ * (approche projet tiers de référence {@code JdtFormattingService}).
  *
  * <p>Le formatage est <em>purement syntaxique</em> : aucun classpath ni
  * environnement de noms n'est nécessaire, contrairement aux diagnostics.
@@ -31,7 +31,7 @@ import java.util.Map;
  * <p>Sur un tampon que le formateur ne peut pas parser (erreur de syntaxe
  * irrécupérable), {@code ToolFactory} retourne {@code null} : on retourne
  * alors {@code null} — l'appelant traitera cela comme un no-op plutôt que
- * de massacrer la source (comportement projet de référence).</p>
+ * de massacrer la source (comportement projet tiers de référence).</p>
  *
  * <p>Le {@link TextEdit} retourné (un arbre MultiTextEdit de feuilles) est
  * aplatit en éditions (offset, longueur, texte) puis appliqué <strong>en

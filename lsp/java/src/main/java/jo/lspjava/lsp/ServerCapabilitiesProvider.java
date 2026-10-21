@@ -158,7 +158,7 @@ public final class ServerCapabilitiesProvider {
         caps.setInlayHintProvider(true);
 
         // Folding — régions Java (imports repliés par défaut, corps/blocs/
-        // commentaires multi-lignes), portage EcjCodeFolder du projet de référence.
+        // commentaires multi-lignes), portage EcjCodeFolder du projet tiers de référence.
         // Le client tire un foldingRange après chaque publication de
         // diagnostics (même cadencement que semanticTokens).
         caps.setFoldingRangeProvider(true);

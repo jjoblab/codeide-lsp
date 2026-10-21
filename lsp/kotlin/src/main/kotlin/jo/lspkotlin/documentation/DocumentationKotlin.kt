@@ -37,7 +37,7 @@ import org.jetbrains.kotlin.kmp.parser.KDocParser
  *
  * Le rendu reste du TEXTE (pas du markdown) : la traduction hôte
  * décide de l'enveloppe (bloc de code Kotlin + documentation — même
- * patron que JDT.LS/fwcd), le moteur n'expose jamais LSP4J (D6).
+ * patron que les serveurs tiers de référence), le moteur n'expose jamais LSP4J (D6).
  *
  * Tolérance (D3) : un commentaire vide, dégénéré ou incompris rend
  * `null` (survol signature seule) — JAMAIS d'exception, une doc

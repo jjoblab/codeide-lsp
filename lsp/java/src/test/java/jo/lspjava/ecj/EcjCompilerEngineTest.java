@@ -142,7 +142,7 @@ class EcjCompilerEngineTest {
     @Test
     void crossFileResolutionFromSourceRoot() throws Throwable {
         // Une racine source contenant un Helper — la résolution doit le voir
-        // SANS build préalable (pattern ModuleCompilationContext du projet de référence).
+        // SANS build préalable (pattern ModuleCompilationContext du projet tiers de référence).
         Path root = Files.createTempDirectory("lspjava-src");
         Path pkgDir = root.resolve("demo");
         Files.createDirectories(pkgDir);

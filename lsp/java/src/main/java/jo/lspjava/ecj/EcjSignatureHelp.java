@@ -15,7 +15,7 @@ import java.util.Map;
 
 /**
  * Aide de signature (popup de paramètres) basée sur les bindings ecj —
- * portage de l'approche {@code EcjSignatureHelpService} du projet de référence,
+ * portage de l'approche {@code EcjSignatureHelpService} du projet tiers de référence,
  * simplifié.
  *
  * <p><strong>Fast-path (v1.6.0) :</strong> l'aide de signature est une
@@ -45,8 +45,8 @@ import java.util.Map;
  *   <li><b>Documentation</b> — la javadoc de la déclaration
  *       source de la signature ACTIVE (commentaire de documentation qui
  *       précède la méthode, extrait via l'AST ecj du fichier déclarant) ;
- *       le popup la rend sous la liste des surcharges (motif IntelliJ /
- *       projet de référence). Vide pour les méthodes binaires sans source.</li>
+ *       le popup la rend sous la liste des surcharges (motif des IDE de
+ *       projet tiers de référence). Vide pour les méthodes binaires sans source.</li>
  * </ul>
  *
  * @author jo@Dev

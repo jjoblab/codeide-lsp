@@ -2,7 +2,7 @@ package jo.lspjava.ecj;
 
 /**
  * Portage Java du {@code dev.ide.lang.completion.PrefixMatcher}
- * du projet de référence : matching de préfixe gradué, partagé par toutes les sources
+ * du projet tiers de référence : matching de préfixe gradué, partagé par toutes les sources
  * de candidats du moteur de complétion.
  *
  * <p>Un nom matche à exactement UNE qualité (la meilleure applicable) :</p>

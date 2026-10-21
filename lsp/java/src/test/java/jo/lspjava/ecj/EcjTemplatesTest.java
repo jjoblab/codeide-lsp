@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Tests des templates de complétion v1.3.0 — live templates
  * ({@link EcjLiveTemplates}), postfixes ({@link EcjPostfixTemplates}) et
  * leur intégration dans le pipeline {@link EcjCompletionEngine} (portage
- * Live/PostfixTemplates.kt du projet de référence v3.20).
+ * Live/PostfixTemplates.kt du projet tiers de référence v3.20).
  *
  * <p>Trois niveaux :</p>
  * <ol>

@@ -3,7 +3,7 @@ package jo.lspjava.engine;
 /**
  * Levée aux checkpoints d'annulation du moteur ecj (inspirée du pattern
  * {@code CancelChecker} de java-language-server et du {@code CancelToken}
- * du projet de référence).
+ * du projet tiers de référence).
  *
  * <p><strong>Motivation :</strong> un diagnose ecj en cours retient le verrou
  * {@code resolveUnit} jusqu'à sa fin — une complétion interactive arrive
@@ -27,7 +27,7 @@ package jo.lspjava.engine;
  *
  * <p>C'est exactement le pattern {@code CancelChecker} injecté dans
  * l'environnement de nommage par java-language-server, et le pendant Java du
- * {@code CancelToken.checkCancelled()} du projet de référence entre les nœuds AST.
+ * {@code CancelToken.checkCancelled()} du projet tiers de référence entre les nœuds AST.
  * Les traversées AST POST-résolution (complétion, hover) disposent déjà de
  * leur try/catch global « traverse partielle » : elles tolèrent naturellement
  * cette exception si elle apparaît là.</p>

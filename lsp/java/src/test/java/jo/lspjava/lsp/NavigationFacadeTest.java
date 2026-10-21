@@ -283,7 +283,7 @@ class NavigationFacadeTest {
         String base = open("demo/Base.java", BASE);
 
         // Caret sur le champ « counter » DANS Base → contexte = classe
-        // englobante Base (parité contextTypeFqn du projet de référence).
+        // englobante Base (parité contextTypeFqn du projet tiers de référence).
         int offset = offsetOf(BASE, "counter;", 0);
         List<Location> targets = implementation(base, BASE, offset);
         assertEquals(2, targets.size(), "les sous-classes de la classe englobante : "
@@ -348,7 +348,7 @@ class NavigationFacadeTest {
         assertTrue(hit.path.endsWith("Base.java"), "cible dans Base.java : " + hit.path);
         assertEquals("run", BASE.substring(hit.start, hit.end),
                 "la plage désigne le NOM run dans Base.java");
-        assertEquals("run  ·  Base", hit.label, "libellé picker projet de référence");
+        assertEquals("run  ·  Base", hit.label, "libellé picker projet tiers de référence");
     }
 
     @Test

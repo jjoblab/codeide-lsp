@@ -34,7 +34,7 @@ class JavaProblemFamilyTest {
     /**
      * UndefinedMethod est détaché de UNRESOLVED_REFERENCE — le quick-fix
      * « Importer X » ne s'applique pas (un nom de méthode n'est pas un type)
-     * et le portage CreateMethodFromUsage du projet de référence prend le relais
+     * et le portage CreateMethodFromUsage du projet tiers de référence prend le relais
      * (stub private/private static dans le type englobant).
      */
     @Test

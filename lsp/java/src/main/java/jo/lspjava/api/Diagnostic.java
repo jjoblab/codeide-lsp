@@ -11,7 +11,7 @@ import java.util.Objects;
  * du compilateur jusqu'au service de quick-fixes. C'est la
  * condition pour brancher les quick-fixes sur l'IDENTIFIANT du problème
  * (pas son message localisé) — pattern {@code JavaProblemCodes} de
- * projet de référence.</p>
+ * projet tiers de référence.</p>
  *
  * @author jo@Dev
  */

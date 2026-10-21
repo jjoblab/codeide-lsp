@@ -51,7 +51,7 @@ import java.util.zip.ZipFile;
  *       et le packaging APK sont retirées : {@code module-info.class},
  *       entrées multi-release ({@code META-INF/versions/**}), signatures
  *       JAR, méta-données OSGi et documentation embarquée (liste calquée
- *       sur les excludes packaging du projet de référence).</li>
+ *       sur les excludes packaging du projet tiers de référence).</li>
  * </ol>
  *
  * <p>Les renommages sont <em>inoffensifs quand la référence est absente</em>
@@ -119,7 +119,7 @@ public final class EcjArtPatcher {
                 // Les classes IMBRIQUÉES suivent leur type englobant :
                 // java/lang/StackWalker$Option suit le renommage de
                 // java/lang/StackWalker (pattern préfixe de RelocateTypesInJar
-                // chez le projet de référence). Sans ça, les descripteurs resteraient
+                // chez le projet tiers de référence). Sans ça, les descripteurs resteraient
                 // mitigés → NoSuchMethodError au premier <clinit>.
                 int dollar = internalName.lastIndexOf('$');
                 while (dollar > 0) {
@@ -165,7 +165,7 @@ public final class EcjArtPatcher {
     /**
      * Réécrit une classe : renommages (toutes les classes) + call-sites
      * InputStream (classes {@code org.eclipse.*} seulement — le scope du
-     * pattern {@code EcjInputStreamArtPass} du projet de référence).
+     * pattern {@code EcjInputStreamArtPass} du projet tiers de référence).
      */
     static byte[] rewrite(byte[] classBytes, Remapper remapper, String classFqn) {
         ClassReader reader = new ClassReader(classBytes);
@@ -217,7 +217,7 @@ public final class EcjArtPatcher {
     /**
      * @return true pour les entrées retirées du jar patché — méta-données
      * OSGi/Eclipse, signatures, multi-release, doc embarquée (liste calquée
-     * sur les excludes packaging du projet de référence ; évite les collisions de
+     * sur les excludes packaging du projet tiers de référence ; évite les collisions de
      * ressources au merge APK et allège le dexing).
      */
     private static boolean isStripped(String name) {

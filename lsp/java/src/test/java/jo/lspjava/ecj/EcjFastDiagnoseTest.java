@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests P6 (v1.5.0) — diagnostics incrémentaux par corps de méthode
- * (portage du commit projet de référence 4b9b880 « skip the file parse entirely
+ * (portage du commit projet tiers de référence 4b9b880 « skip the file parse entirely
  * when a keystroke stays inside one body », adapté ecj : re-diagnostic
  * du seul corps édité, autres corps remplacés par un synthétique
  * isomorphe, problèmes portés du diagnostic précédent).

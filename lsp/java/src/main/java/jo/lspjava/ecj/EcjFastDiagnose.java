@@ -16,7 +16,7 @@ import jo.lspjava.api.TextRange;
 
 /**
  * Diagnostics incrémentaux par corps de méthode (P6, v1.5.0) — portage du
- * commit projet de référence <em>« skip the file parse entirely when a keystroke
+ * commit projet tiers de référence <em>« skip the file parse entirely when a keystroke
  * stays inside one body »</em> (4b9b880), adapté à l'architecture ecj de
  * lsp-java.
  *
@@ -39,7 +39,7 @@ import jo.lspjava.api.TextRange;
  * portés depuis le diagnostic précédent : leur texte n'a pas changé,
  * leurs problèmes non plus.</p>
  *
- * <p><strong>Preuve d'obligation</strong> (reprise du projet de référence) :
+ * <p><strong>Preuve d'obligation</strong> (reprise du projet tiers de référence) :
  * réutiliser la structure environnante n'est sain que si le corps édité
  * se termine ENCORE là où il se terminait. Taper {@code }} le ferme
  * plus tôt et tout ce qui suit appartient à autre chose. Le nouveau
@@ -160,7 +160,7 @@ final class EcjFastDiagnose {
 
     /**
      * Calcule la région d'édition minimale contiguë entre deux sources
-     * (préfixe commun + suffixe commun) — technique du commit projet de référence :
+     * (préfixe commun + suffixe commun) — technique du commit projet tiers de référence :
      * « The changed region is recovered by matching the two buffers from
      * both ends ». Couvre insertion, suppression, remplacement ET les
      * éditions multiples d'un même {@code didChange} (la région couvre

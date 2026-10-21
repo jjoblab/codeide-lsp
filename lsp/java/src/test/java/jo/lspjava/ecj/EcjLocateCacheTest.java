@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests du cache de localisation fqcn → jar (P1 v1.3.0, portage
- * {@code locateCache} de {@code JdtEnvironmentCache.kt}, projet de référence v3.20)
+ * {@code locateCache} de {@code JdtEnvironmentCache.kt}, projet tiers de référence v3.20)
  * intégré à {@link EcjCompilerEnvironment#find} :
  *
  * <ul>

@@ -18,7 +18,7 @@ import java.security.MessageDigest
  * base (toute dérive de grammaire — re-sync amont ou régression locale —
  * se voit immédiatement).
  *
- * Équivalent, côté projet de référence : son sweep « 2381/2381 sur son propre dépôt ».
+ * Équivalent, côté projet tiers de référence : son sweep « 2381/2381 sur son propre dépôt ».
  * La baseline (`src/test/resources/parite/digeste-corpus.txt`) se met à
  * jour DÉLIBÉRÉMENT : `./gradlew :lsp:kotlin:test
  * -Dparite.majBase=true` — le diff de baseline fait alors partie de la

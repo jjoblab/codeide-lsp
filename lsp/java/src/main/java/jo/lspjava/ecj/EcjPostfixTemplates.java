@@ -30,7 +30,7 @@ import java.util.Set;
  * proposés, donc une template ne peut pas se proposer là où elle ne
  * compile pas.</p>
  *
- * <p>Portage de {@code PostfixTemplates.kt} (projet de référence v3.20, module
+ * <p>Portage de {@code PostfixTemplates.kt} (projet tiers de référence v3.20, module
  * lang-jdt) en syntaxe snippet LSP native.</p>
  *
  * @author jo@Dev
