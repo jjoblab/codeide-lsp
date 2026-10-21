@@ -9,7 +9,7 @@
 
 ### 1. État
 
-- `main` de codeide-lsp : **5d488b5** (à la rédaction — voir le SHA réel au
+- `main` de codeide-lsp : **6735890** (à la rédaction — voir le SHA réel au
   moment de la publication), CI **verte** sur `main` (chaque lot poussé a
   été validé par un run CI vert ; l'historique des runs est public).
 - **Non publié** : lancer `scripts/bump-frere.sh lsp minor` **depuis
