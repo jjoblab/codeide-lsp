@@ -455,8 +455,11 @@ class CapacitesLspPariteTest {
                 "pliage" to "oui",
                 "renommage" to "prépare",
                 "formatage" to "oui",
+                "formatage de plage" to "oui",
                 "références" to "oui",
                 "surlignage" to "oui",
+                "édition liée" to "oui",
+                "plage de sélection" to "oui",
             )
 
         /** Capacité → méthodes LSP4J qui doivent être surchargées. */

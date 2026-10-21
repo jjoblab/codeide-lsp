@@ -49,10 +49,27 @@ internal fun editer(
         document: DocumentXml,
         texte: CharSequence,
         tailleIndentation: Int,
+    ): List<EditionXml> = editer(document, texte, tailleIndentation, 0, texte.length)
+
+    /**
+     * Éditions de ré-indentation BORNÉES à la PLAGE [debutPlage, finPlage)
+     * (lot L3 — `textDocument/rangeFormatting`) : mêmes règles que le
+     * document entier (refus sur arbre cassé, contenu jamais touché,
+     * idempotence), seules les lignes qui INTERSECTENT la plage sont
+     * candidates — toute édition reste DANS la plage (une édition hors
+     * plage décalerait le buffer du client).
+     */
+    @Suppress("ReturnCount")
+    internal fun editer(
+        document: DocumentXml,
+        texte: CharSequence,
+        tailleIndentation: Int,
+        debutPlage: Int,
+        finPlage: Int,
     ): List<EditionXml> {
         // Refus honnête : arbre incomplet ou réparé — profondeur non
-        // prouvable.
-        if (document.recuperations.isNotEmpty()) return emptyList()
+        // prouvable. Plage vide : rien à servir.
+        if (document.recuperations.isNotEmpty() || debutPlage >= finPlage) return emptyList()
         val elements = elementsDe(document)
         if (elements.any { !it.estFermee }) return emptyList()
 
@@ -63,9 +80,14 @@ internal fun editer(
         while (debutLigne < longueur) {
             val finLigne =
                 texte.indexOf('\n', debutLigne).let { if (it < 0) longueur else it }
-            val cible = analyse.niveauDe(texte, debutLigne, finLigne)
-            if (cible != null) {
-                ajouterEditionSiDecalee(texte, debutLigne, cible, tailleIndentation, editions)
+            // La ligne INTERSECTE la plage demandée ? (le client
+            // sélectionne par lignes — une ligne à cheval sur une
+            // borne est candidate.)
+            if (debutLigne < finPlage && finLigne > debutPlage) {
+                val cible = analyse.niveauDe(texte, debutLigne, finLigne)
+                if (cible != null) {
+                    ajouterEditionSiDecalee(texte, debutLigne, cible, tailleIndentation, editions)
+                }
             }
             debutLigne = finLigne + 1
         }

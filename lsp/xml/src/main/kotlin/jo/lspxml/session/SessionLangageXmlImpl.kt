@@ -6,6 +6,8 @@ import jo.lspxml.api.CorrectifXml
 import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
+import jo.lspxml.api.ChaineSelectionXml
+import jo.lspxml.api.PlageLieeXml
 import jo.lspxml.api.PlageSurligneeXml
 import jo.lspxml.api.EditionXml
 import jo.lspxml.api.PlagePliableXml
@@ -24,6 +26,7 @@ import jo.lspxml.completion.CompletionMenusXml
 import jo.lspxml.completion.CompletionNavigationXml
 import jo.lspxml.completion.CompletionPolicesXml
 import jo.lspxml.format.FormatXml
+import jo.lspxml.resolution.EditionLieeSelectionXml
 import jo.lspxml.resolution.ReferencesOccurrencesXml
 import jo.lspxml.resolution.RenommageXml
 import jo.lspxml.completion.CompletionTransitionsXml
@@ -770,6 +773,48 @@ override fun formatter(uri: String, tailleIndentation: Int): List<EditionXml> {
         if (fermee) return emptyList()
         val document = documents[uri] ?: return emptyList()
         return FormatXml.editer(document.document, document.texte, tailleIndentation)
+    }
+
+    /**
+     * Formatage BORNÉ d'une PLAGE (lot L3) — le calcul vit dans
+     * [FormatXml.editer] (variante plage) ; seules les lignes qui
+     * intersectent la plage sont candidates. Document inconnu/fermé :
+     * liste VIDE.
+     */
+    @Suppress("ReturnCount")
+    override fun formatter(
+        uri: String,
+        debutPlage: Int,
+        finPlage: Int,
+        tailleIndentation: Int,
+    ): List<EditionXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        return FormatXml.editer(document.document, document.texte, tailleIndentation, debutPlage, finPlage)
+    }
+
+    /**
+     * Plages LIÉES de la balise sous le curseur (lot L3) — le calcul
+     * vit dans [EditionLieeSelectionXml] ; `null` hors nom de balise
+     * fermée (jamais de liaison inventée).
+     */
+    @Suppress("ReturnCount")
+    override fun plagesLiees(uri: String, decalage: Int): PlageLieeXml? {
+        if (fermee) return null
+        val document = documents[uri] ?: return null
+        return EditionLieeSelectionXml.plageLiee(document.document, decalage)
+    }
+
+    /**
+     * Chaînes de sélection (lot L3) — le calcul (chaîne des nœuds
+     * englobants, fusion des plages égales) vit dans
+     * [EditionLieeSelectionXml].
+     */
+    @Suppress("ReturnCount")
+    override fun selections(uri: String, decalages: List<Int>): List<ChaineSelectionXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        return decalages.map { decalage -> EditionLieeSelectionXml.chaine(document.document, decalage) }
     }
 
     /**

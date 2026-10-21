@@ -106,6 +106,44 @@ public data class PlageSurligneeXml(
 )
 
 /**
+ * Plages LIÉES d'une balise (`textDocument/linkedEditingRange`, lot L3
+ * du plan 1.3.0) : le nom de l'ouvrante et le nom de la fermante du
+ * MÊME élément — l'édition de l'une entraîne celle de l'autre côté
+ * client.
+ *
+ * @property ouvrante plage du nom dans la balise ouvrante.
+ * @property fermante plage du nom dans la balise fermante.
+ */
+public data class PlageLieeXml(
+    public val ouvrante: PlageSelectionXml,
+    public val fermante: PlageSelectionXml,
+)
+
+/**
+ * Plage d'un maillon de la chaîne de sélection (lot L3).
+ *
+ * @property debut décalage de début du maillon (inclus).
+ * @property fin décalage de fin du maillon (exclusif).
+ */
+public data class PlageSelectionXml(
+    public val debut: Int,
+    public val fin: Int,
+)
+
+/**
+ * Chaîne des nœuds englobants d'une position (`textDocument/
+ * selectionRange`, lot L3) : l'expansion progressive de la sélection —
+ * chaque maillon STRICTEMENT plus grand que le précédent (le plus
+ * profond d'abord, le fichier entier en dernier).
+ *
+ * @property plages les maillons du plus profond au plus englobant,
+ *           STRICTEMENT croissants.
+ */
+public data class ChaineSelectionXml(
+    public val plages: List<PlageSelectionXml>,
+)
+
+/**
  * Édition texte NEUTRE d'un correctif (XE4 quick-fixes) — l'hôte traduit
  * les décalages en positions LSP (il possède le document), le moteur
  * reste maître de la SÉMANTIQUE de la correction.

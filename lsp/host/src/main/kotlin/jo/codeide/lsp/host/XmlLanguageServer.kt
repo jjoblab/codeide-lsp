@@ -29,12 +29,15 @@ import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.DocumentHighlightParams
+import org.eclipse.lsp4j.DocumentRangeFormattingParams
 import org.eclipse.lsp4j.DocumentSymbol
 import org.eclipse.lsp4j.DocumentSymbolParams
 import org.eclipse.lsp4j.Hover
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
+import org.eclipse.lsp4j.LinkedEditingRangeParams
+import org.eclipse.lsp4j.LinkedEditingRanges
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.PrepareRenameDefaultBehavior
@@ -45,6 +48,8 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ReferenceParams
 import org.eclipse.lsp4j.RenameOptions
 import org.eclipse.lsp4j.RenameParams
+import org.eclipse.lsp4j.SelectionRange
+import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ServerInfo
 import org.eclipse.lsp4j.SymbolInformation
@@ -169,6 +174,12 @@ internal class XmlLanguageServer(
         // ressources projet (même preuve que le renommage borné).
         capacites.setReferencesProvider(true)
         capacites.setDocumentHighlightProvider(true)
+        // L3 (suite) : formatage de PLAGE (ré-indentation bornée),
+        // ÉDITION LIÉE des balises (ouvrante ↔ fermante) et PLAGE DE
+        // SÉLECTION (chaîne DOM).
+        capacites.setDocumentRangeFormattingProvider(true)
+        capacites.setLinkedEditingRangeProvider(true)
+        capacites.setSelectionRangeProvider(true)
         // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
         // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
         // Le client cel-lsp supporte MarkupContent → on l'utilise.
@@ -590,6 +601,112 @@ internal class XmlLanguageServer(
                     )
                 }
             return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Formatage de PLAGE (L3) : mêmes règles que [formatting],
+         * restreintes aux lignes qui INTERSECTENT la plage — les
+         * éditions ne sortent JAMAIS de la plage demandée (une édition
+         * hors plage décalerait le buffer du client). Document cassé :
+         * liste VIDE (succès sans édition, jamais d'exception).
+         */
+        override fun rangeFormatting(params: DocumentRangeFormattingParams): CompletableFuture<List<TextEdit>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val taille = params.options?.takeIf { it.tabSize > 0 }?.tabSize ?: INDENTATION_DEFAUT
+            val debut = document.convertisseur.decalageDe(params.range.start)
+            val fin = document.convertisseur.decalageDe(params.range.end)
+            val editions =
+                try {
+                    session.formatter(uri, debut, fin, taille)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "rangeFormatting XML échoué ($uri)", t)
+                    emptyList()
+                }
+            val edits =
+                editions.map { edition ->
+                    TextEdit(
+                        Range(
+                            document.convertisseur.positionDe(edition.debut),
+                            document.convertisseur.positionDe(edition.fin),
+                        ),
+                        edition.texte,
+                    )
+                }
+            return CompletableFuture.completedFuture(edits)
+        }
+
+        /**
+         * Édition liée des balises (L3) : le nom de l'ouvrante ↔ le nom
+         * de la fermante du même élément. `null` hors nom de balise
+         * fermée (la spec : réponse null = pas de liaison — jamais
+         * d'invention).
+         */
+        @Suppress("ReturnCount")
+        override fun linkedEditingRange(params: LinkedEditingRangeParams): CompletableFuture<LinkedEditingRanges> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(null)
+            val decalage = document.convertisseur.decalageDe(params.position)
+            val plages =
+                try {
+                    session.plagesLiees(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "linkedEditingRange échoué ($uri)", t)
+                    null
+                } ?: return CompletableFuture.completedFuture(null)
+            val plagesLieesLsp =
+                LinkedEditingRanges(
+                    listOf(
+                        Range(
+                            document.convertisseur.positionDe(plages.ouvrante.debut),
+                            document.convertisseur.positionDe(plages.ouvrante.fin),
+                        ),
+                        Range(
+                            document.convertisseur.positionDe(plages.fermante.debut),
+                            document.convertisseur.positionDe(plages.fermante.fin),
+                        ),
+                    ),
+                )
+            return CompletableFuture.completedFuture(plagesLieesLsp)
+        }
+
+        /**
+         * Chaînes de sélection (L3) : pour CHAQUE position demandée,
+         * la chaîne des nœuds englobants (du plus profond — attribut —
+         * au fichier entier), SelectionRanges LSP imbriqués. L'ordre
+         * de la requête est conservé.
+         */
+        override fun selectionRange(params: SelectionRangeParams): CompletableFuture<List<SelectionRange>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val chaines =
+                try {
+                    session.selections(
+                        uri,
+                        params.positions.map { position ->
+                            document.convertisseur.decalageDe(position)
+                        },
+                    )
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "selectionRange XML échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(
+                chaines.map { chaine ->
+                    val plages =
+                        chaine.plages.map { plage ->
+                            Range(
+                                document.convertisseur.positionDe(plage.debut),
+                                document.convertisseur.positionDe(plage.fin),
+                            )
+                        }
+                    var resultat = SelectionRange(plages.last(), null as SelectionRange?)
+                    for (indice in plages.indices.reversed().drop(1)) {
+                        resultat = SelectionRange(plages[indice], resultat)
+                    }
+                    resultat
+                },
+            )
         }
 
         /**

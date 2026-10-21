@@ -210,6 +210,61 @@ public interface SessionLangageXml : AutoCloseable {
     public fun formatter(uri: String, tailleIndentation: Int = 4): List<EditionXml> = emptyList()
 
     /**
+     * Formatage BORNÉ d'une PLAGE (`textDocument/rangeFormatting`,
+     * lot L3 du plan 1.3.0) : ré-indentation des seules lignes qui
+     * INTERSECTENT la plage [debutPlage, finPlage) — le contenu des
+     * lignes n'est jamais réécrit, toute édition reste DANS la plage
+     * (une édition hors plage décalerait le buffer du client).
+     * Document cassé (récupérations, balises non fermées) : liste
+     * VIDE (mêmes refus que le formatage du document entier).
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @param debutPlage décalage de début de la plage (inclus).
+     * @param finPlage décalage de fin de la plage (exclusif).
+     * @param tailleIndentation espaces par niveau (défaut 4).
+     * @return les éditions ordonnées, DANS la plage ; liste VIDE
+     *         pour un document inconnu/fermé ou refusé.
+     */
+    public fun formatter(
+        uri: String,
+        debutPlage: Int,
+        finPlage: Int,
+        tailleIndentation: Int = 4,
+    ): List<EditionXml> = emptyList()
+
+    /**
+     * Plages LIÉES de la balise sous le curseur
+     * (`textDocument/linkedEditingRange`, lot L3) : le nom de
+     * l'OUVRANTE et le nom de la FERMANTE du même élément — renommer
+     * l'une renomme l'autre. `null` hors nom de balise fermée
+     * (attribut, texte, auto-fermante) : jamais de liaison inventée.
+     *
+     * Tolérance de version : défaut `null`.
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return les deux plages liées ; `null` sans cible.
+     */
+    public fun plagesLiees(uri: String, decalage: Int): PlageLieeXml? = null
+
+    /**
+     * Chaînes de sélection (`textDocument/selectionRange`, lot L3) :
+     * pour CHAQUE position demandée, la chaîne des nœuds englobants
+     * (du plus profond — attribut — au FICHIER ENTIER), strictement
+     * croissante ; l'ordre de la requête est conservé.
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @param decalages les positions demandées.
+     * @return une chaîne par position ; liste VIDE pour un document
+     *         inconnu/fermé.
+     */
+    public fun selections(uri: String, decalages: List<Int>): List<ChaineSelectionXml> = emptyList()
+
+    /**
      * Signale des modifications de fichiers EXTERNES (lot L1 du plan
      * 1.3.0 — le surveillant de l'hôte pousse `didChangeWatchedFiles`
      * au serveur, qui rafraîchit SON index avant de republier les
