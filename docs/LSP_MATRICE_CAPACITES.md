@@ -23,20 +23,20 @@
 | Capacité | Java | Kotlin | XML | Preuves |
 |---|---|---|---|---|
 | Synchronisation de document (didOpen/Change/Save/Close) | ✅ incrémentale | ✅ complète | ✅ complète | CapacitesLspPariteTest (tables) ; *LanguageServerTest par langage |
-| Diagnostics poussés (publishDiagnostics) | ✅ | ✅ | ✅ | KotlinLanguageServerTest, XmlLanguageServerTest, tests Java |
+| Diagnostics poussés (publishDiagnostics) | ✅ | ✅ | ✅ | KotlinLanguageServerTest, XmlLanguageServerTest, JavaS1RicheTest |
 | didChangeWatchedFiles (événements de fichiers externes) | ✅ | ✅ | ✅ (lot L1) | SurveillanceFichiersLangagesTest |
 
 ## Navigation
 
 | Capacité | Java | Kotlin | XML | Preuves |
 |---|---|---|---|---|
-| Définition (`textDocument/definition`) | ✅ | ✅ | ✅ | SessionLangageKotlin*Test, XmlLanguageServerTest |
+| Définition (`textDocument/definition`) | ✅ | ✅ | ✅ | JdtHoverDefinitionCompletionTest ; SessionLangageKotlin*Test, XmlLanguageServerTest |
 | Définition de type (`typeDocument/typeDefinition`) | ✅ | ✅ (lot L2) | ❌ | TypesKotlinTest (moteur) ; KotlinLanguageServerL2Test (E2E) |
 | Implémentations (`textDocument/implementation`) | ✅ | ✅ (lot L2) | ❌ | TypesKotlinTest (moteur, preuve FQCN) ; KotlinLanguageServerL2Test (E2E) |
 | Références (`textDocument/references`) | ✅ | ✅ | ❌ (lot L3 : prévu) | SessionLangageKotlinOccurrencesTest |
 | Surlignage d'occurrences (`documentHighlight`) | ✅ | ✅ | ❌ (lot L3 : prévu) | SessionLangageKotlinOccurrencesTest |
-| Renommage + prepareRename | ✅ | ✅ | ✅ | SessionLangageKotlinOccurrencesTest, XmlLanguageServerTest |
-| Symboles de document (`documentSymbol`) | ✅ | ✅ | ✅ | KotlinLanguageServerTest, XmlLanguageServerTest |
+| Renommage + prepareRename | ✅ | ✅ | ✅ | RenameHonneteTest, JavaL4BoutEnBoutTest (E2E) ; SessionLangageKotlinOccurrencesTest, XmlLanguageServerTest |
+| Symboles de document (`documentSymbol`) | ✅ | ✅ | ✅ | JavaL4BoutEnBoutTest (E2E) ; KotlinLanguageServerTest, XmlLanguageServerTest |
 | Symboles d'espace (`workspace/symbol`) | ✅ | ✅ (lot L2) ⚠️ | ❌ | SymbolesEspace via CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
 | Plage de sélection (`selectionRange`) | ✅ | ✅ (lot L2) ⚠️ | ❌ (lot L3 : prévu) | CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
 
@@ -48,7 +48,7 @@
 | Survol (`hover`) | ✅ | ✅ | ✅ | InterrogationsSymboles (tests moteur), XmlLanguageServerTest |
 | Aide à la signature (`signatureHelp`) | ✅ | ✅ | ❌ | SessionLangageKotlinSignatureTest |
 | Actions de code (`codeAction`) | ✅ | ✅ (imports) | ✅ | KotlinLanguageServerTest (quick-fixes), XmlLanguageServerTest |
-| Formatage (`formatting`) | ✅ | ✅ (lot L2, ADR 0202 — ré-indentation seule) | ✅ | FormateurKotlinTest ; KotlinLanguageServerL2Test (E2E) ; XmlLanguageServerTest |
+| Formatage (`formatting`) | ✅ | ✅ (lot L2, ADR 0202 — ré-indentation seule) | ✅ | EcjFormatterTest, JavaL4BoutEnBoutTest (E2E) ; FormateurKotlinTest ; KotlinLanguageServerL2Test ; XmlLanguageServerTest |
 | Formatage de plage (`rangeFormatting`) | ✅ | ⚠️ (servi ; consommation client prévue 3.74.0) | ✅ (lot L3) ⚠️ | FormatagePlageSelectionXmlTest ; XmlLanguageServerL3Test (E2E) ; KotlinLanguageServerL2Test |
 | Formatage à la frappe (`onTypeFormatting`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 (annonces) |
 | Édition liée (`linkedEditingRange`) | ✅ | ❌ | ✅ (lot L3) ⚠️ | FormatagePlageSelectionXmlTest ; XmlLanguageServerL3Test (E2E) |
@@ -82,6 +82,21 @@
 | INDICES_EN_LIGNE | ✅ | ✅ (lot L2) | ❌ | SessionLspReglagesTest |
 
 ## Dettes et écarts consignés
+
+- **Inventaire L5 (chaque case non vide ↔ preuve E2E)** : les capacités annoncées des
+  trois serveurs ont toutes un aller-retour LSP4J réel — Java (JavaL4BoutEnBoutTest,
+  JavaS2bProtocoleTest, JavaS1RicheTest, JavaS2ConfortTest, LifecycleHygieneTest,
+  RenameHonneteTest, InlayHintTest), Kotlin (KotlinLanguageServerL2Test + suites
+  K3/K4/K5/Occurrences/Signature/Parse), XML (XmlLanguageServerL3Test + XmlLanguageServerTest).
+  Dettes E2E résiduelles (capacités Java couvertes par les tests MOTEUR mais sans
+  aller-retour serveur dédié dans les suites actuelles, preuve moteur citée) :
+  typeDefinition/implementation côté serveur (NavigationFacadeTest, moteur), survol
+  (EcjHoverJavadocTest, moteur), complétion (JdtTemplatesTest/Ecj*, moteur ; filtre
+  filterText couvert S2b), signatureHelp (JdtInlayAndSignatureTest, moteur), inlayHint
+  (InlayHintTest, moteur), pliage (FoldingRangeFacadeTest, moteur), jetons sémantiques
+  (LifecycleHygieneTest E2E ✓), symboles d'espace (JavaS1RicheTest E2E ✓),
+  formatage de plage (JavaS2ConfortTest E2E ✓), formatage à la frappe (S2b E2E ✓),
+  lentilles (S2b E2E ✓), hiérarchies appels/types (S2b E2E ✓).
 
 - **Jetons sémantiques Kotlin** : non annoncés — la distinction types/fonctions/propriétés
   n'est pas fiable au niveau du parseur vendoré sans résolution complète (D3 : mieux vaut
