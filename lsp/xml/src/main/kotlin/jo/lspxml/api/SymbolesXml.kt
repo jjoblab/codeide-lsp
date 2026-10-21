@@ -106,6 +106,59 @@ public data class PlageSurligneeXml(
 )
 
 /**
+ * Une couleur de document (`textDocument/documentColor`, lot L3 du
+ * plan 1.3.0) : littéral `#RGB`/`#ARGB`/`#RRGGBB`/`#AARRGGBB` ou
+ * référence `@color/…` RÉSOLUE par l'index — canaux 0..1 (contrat LSP).
+ *
+ * @property debut décalage de début (inclus) — après le « # » pour un
+ *           littéral, sur le nom pour une référence.
+ * @property fin décalage de fin (exclusif).
+ * @property rouge canal rouge 0..1.
+ * @property vert canal vert 0..1.
+ * @property bleu canal bleu 0..1.
+ * @property alpha canal alpha 0..1 (1 = opaque).
+ */
+public data class CouleurDocumentXml(
+    public val debut: Int,
+    public val fin: Int,
+    public val rouge: Double,
+    public val vert: Double,
+    public val bleu: Double,
+    public val alpha: Double,
+)
+
+/**
+ * Présentation d'une couleur (`textDocument/colorPresentation`, lot
+ * L3) : le libellé canonique (`#RRGGBB` opaque, `#AARRGGBB` sinon) et
+ * l'édition de remplacement de la plage d'origine par CE libellé.
+ *
+ * @property debut décalage de début du remplacement (inclus).
+ * @property fin décalage de fin du remplacement (exclusif).
+ * @property libelle le libellé canonique.
+ */
+public data class PresentationCouleurXml(
+    public val debut: Int,
+    public val fin: Int,
+    public val libelle: String,
+)
+
+/**
+ * Canaux d'une couleur choisie dans le sélecteur de l'éditeur (lot L3)
+ * — 0..1 chacun (contrat LSP `Color`).
+ *
+ * @property rouge canal rouge 0..1.
+ * @property vert canal vert 0..1.
+ * @property bleu canal bleu 0..1.
+ * @property alpha canal alpha 0..1 (1 = opaque).
+ */
+public data class CanauxCouleurXml(
+    public val rouge: Double,
+    public val vert: Double,
+    public val bleu: Double,
+    public val alpha: Double,
+)
+
+/**
  * Plages LIÉES d'une balise (`textDocument/linkedEditingRange`, lot L3
  * du plan 1.3.0) : le nom de l'ouvrante et le nom de la fermante du
  * MÊME élément — l'édition de l'une entraîne celle de l'autre côté

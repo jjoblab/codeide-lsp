@@ -6,7 +6,10 @@ import jo.lspxml.api.CorrectifXml
 import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.EmplacementXml
+import jo.lspxml.api.CanauxCouleurXml
 import jo.lspxml.api.ChaineSelectionXml
+import jo.lspxml.api.CouleurDocumentXml
+import jo.lspxml.api.PresentationCouleurXml
 import jo.lspxml.api.PlageLieeXml
 import jo.lspxml.api.PlageSurligneeXml
 import jo.lspxml.api.EditionXml
@@ -26,6 +29,7 @@ import jo.lspxml.completion.CompletionMenusXml
 import jo.lspxml.completion.CompletionNavigationXml
 import jo.lspxml.completion.CompletionPolicesXml
 import jo.lspxml.format.FormatXml
+import jo.lspxml.resolution.CouleursDocumentXml
 import jo.lspxml.resolution.EditionLieeSelectionXml
 import jo.lspxml.resolution.ReferencesOccurrencesXml
 import jo.lspxml.resolution.RenommageXml
@@ -815,6 +819,41 @@ override fun formatter(uri: String, tailleIndentation: Int): List<EditionXml> {
         if (fermee) return emptyList()
         val document = documents[uri] ?: return emptyList()
         return decalages.map { decalage -> EditionLieeSelectionXml.chaine(document.document, decalage) }
+    }
+
+    /**
+     * Couleurs du document (lot L3) — le calcul vit dans
+     * [CouleursDocumentXml] (littéraux + références @color résolues
+     * par l'index). Document inconnu/fermé : liste VIDE.
+     */
+    @Suppress("ReturnCount")
+    override fun couleurs(uri: String): List<CouleurDocumentXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        return CouleursDocumentXml.couleurs(document.document, indexRessources)
+    }
+
+    /**
+     * Présentation d'une couleur (lot L3) : le libellé canonique de la
+     * couleur de la PLAGE d'origine (littéral ou référence) et son
+     * édition de remplacement. Sans couleur sur la plage : liste VIDE
+     * (l'éditeur garde sa forme — jamais d'invention).
+     */
+    @Suppress("ReturnCount")
+    override fun presentationCouleur(
+        uri: String,
+        debut: Int,
+        fin: Int,
+        canaux: CanauxCouleurXml,
+    ): List<PresentationCouleurXml> {
+        if (fermee) return emptyList()
+        val document = documents[uri] ?: return emptyList()
+        val couleurs = CouleursDocumentXml.couleurs(document.document, indexRessources)
+        val couleur =
+            couleurs.firstOrNull { couleur -> couleur.debut == debut && couleur.fin == fin }
+                ?: couleurs.firstOrNull { couleur -> debut < couleur.fin && fin > couleur.debut }
+                ?: return emptyList()
+        return listOf(CouleursDocumentXml.presentation(couleur))
     }
 
     /**

@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.lspxml.api.CanauxCouleurXml
 import jo.lspxml.api.DiagnosticXml
 import jo.lspxml.api.GenreCompletionXml
 import jo.lspxml.api.GenreSymboleXml
@@ -10,6 +11,10 @@ import jo.lspxml.api.SymboleDocumentXml
 import org.eclipse.lsp4j.CodeAction
 import org.eclipse.lsp4j.CodeActionKind
 import org.eclipse.lsp4j.CodeActionParams
+import org.eclipse.lsp4j.Color
+import org.eclipse.lsp4j.ColorInformation
+import org.eclipse.lsp4j.ColorPresentation
+import org.eclipse.lsp4j.ColorPresentationParams
 import org.eclipse.lsp4j.Command
 import org.eclipse.lsp4j.CompletionItem
 import org.eclipse.lsp4j.CompletionItemKind
@@ -25,6 +30,7 @@ import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.DidSaveTextDocumentParams
+import org.eclipse.lsp4j.DocumentColorParams
 import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
@@ -180,6 +186,9 @@ internal class XmlLanguageServer(
         capacites.setDocumentRangeFormattingProvider(true)
         capacites.setLinkedEditingRangeProvider(true)
         capacites.setSelectionRangeProvider(true)
+        // L3 (suite) : COULEURS de document (littéraux + @color résolus)
+        // — le client ne les consomme pas encore (écart consigné).
+        capacites.setColorProvider(true)
         // KP14 (v0.129.20) : hover en MarkupContent si le client supporte
         // le MarkupContent, sinon MarkedString (déprécié LSP 3.0).
         // Le client cel-lsp supporte MarkupContent → on l'utilise.
@@ -707,6 +716,78 @@ internal class XmlLanguageServer(
                     resultat
                 },
             )
+        }
+
+        /**
+         * Couleurs du document (L3) : littéraux `#RGB`/`#ARGB`/
+         * `#RRGGBB`/`#AARRGGBB` et références `@color/…` résolues —
+         * ColorInformation LSP (plage + canaux 0..1). Liste VIDE
+         * pour un document inconnu (jamais d'exception).
+         */
+        override fun documentColor(params: DocumentColorParams): CompletableFuture<List<ColorInformation>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val couleurs =
+                try {
+                    session.couleurs(uri)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "documentColor échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                couleurs.map { couleur ->
+                    ColorInformation(
+                        Range(
+                            document.convertisseur.positionDe(couleur.debut),
+                            document.convertisseur.positionDe(couleur.fin),
+                        ),
+                        Color(couleur.rouge, couleur.vert, couleur.bleu, couleur.alpha),
+                    )
+                }
+            return CompletableFuture.completedFuture(resultat)
+        }
+
+        /**
+         * Présentation d'une couleur (L3) : le libellé canonique et
+         * l'édition de remplacement de la plage d'origine. Liste VIDE
+         * sans couleur sur la plage (l'éditeur garde sa forme).
+         */
+        override fun colorPresentation(params: ColorPresentationParams): CompletableFuture<List<ColorPresentation>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val debut = document.convertisseur.decalageDe(params.range.start)
+            val fin = document.convertisseur.decalageDe(params.range.end)
+            val presentations =
+                try {
+                    session.presentationCouleur(
+                        uri,
+                        debut,
+                        fin,
+                        CanauxCouleurXml(
+                            rouge = params.color.red,
+                            vert = params.color.green,
+                            bleu = params.color.blue,
+                            alpha = params.color.alpha,
+                        ),
+                    )
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "colorPresentation échoué ($uri)", t)
+                    emptyList()
+                }
+            val resultat =
+                presentations.map { presentation ->
+                    val rendu = ColorPresentation(presentation.libelle)
+                    rendu.textEdit =
+                        TextEdit(
+                            Range(
+                                document.convertisseur.positionDe(presentation.debut),
+                                document.convertisseur.positionDe(presentation.fin),
+                            ),
+                            presentation.libelle,
+                        )
+                    rendu
+                }
+            return CompletableFuture.completedFuture(resultat)
         }
 
         /**

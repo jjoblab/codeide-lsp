@@ -460,6 +460,7 @@ class CapacitesLspPariteTest {
                 "surlignage" to "oui",
                 "édition liée" to "oui",
                 "plage de sélection" to "oui",
+                "couleurs de document" to "oui",
             )
 
         /** Capacité → méthodes LSP4J qui doivent être surchargées. */

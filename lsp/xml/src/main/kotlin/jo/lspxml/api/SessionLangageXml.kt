@@ -265,6 +265,42 @@ public interface SessionLangageXml : AutoCloseable {
     public fun selections(uri: String, decalages: List<Int>): List<ChaineSelectionXml> = emptyList()
 
     /**
+     * Couleurs du document (`textDocument/documentColor`, lot L3) :
+     * littéraux `#RGB`/`#ARGB`/`#RRGGBB`/`#AARRGGBB` et références
+     * `@color/…` RÉSOLUES par l'index (valeur du déclarant) — canaux
+     * 0..1. Une référence non résolue ne rend RIEN (D3).
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @return les couleurs ordonnées par position ; liste VIDE pour
+     *         un document inconnu/fermé.
+     */
+    public fun couleurs(uri: String): List<CouleurDocumentXml> = emptyList()
+
+    /**
+     * Présentation d'une couleur (`textDocument/colorPresentation`,
+     * lot L3) : le libellé canonique `#RRGGBB`/`#AARRGGBB` de la
+     * couleur de la plage [debut, finPlage) et l'édition de
+     * remplacement.
+     *
+     * Tolérance de version : défaut VIDE.
+     *
+     * @param uri identité du document.
+     * @param debut début de la plage d'origine (inclus).
+     * @param fin fin de la plage d'origine (exclusif).
+     * @param canaux canaux 0..1 choisis dans le sélecteur.
+     * @return la présentation (libellé + édition) ; liste VIDE sans
+     *         couleur sur la plage (l'éditeur garde sa forme).
+     */
+    public fun presentationCouleur(
+        uri: String,
+        debut: Int,
+        fin: Int,
+        canaux: CanauxCouleurXml,
+    ): List<PresentationCouleurXml> = emptyList()
+
+    /**
      * Signale des modifications de fichiers EXTERNES (lot L1 du plan
      * 1.3.0 — le surveillant de l'hôte pousse `didChangeWatchedFiles`
      * au serveur, qui rafraîchit SON index avant de republier les
