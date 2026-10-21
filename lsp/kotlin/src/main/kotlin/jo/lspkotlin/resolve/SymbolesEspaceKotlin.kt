@@ -30,7 +30,10 @@ internal object SymbolesEspaceKotlin {
         val aiguille = requete.trim().lowercase()
         return declarations
             .asSequence()
-            .filter { declaration -> declaration.genre != GenreDeclaration.PARAMETRE && declaration.genre != GenreDeclaration.LOCALE }
+            .filter { declaration ->
+                declaration.genre != GenreDeclaration.PARAMETRE &&
+                    declaration.genre != GenreDeclaration.LOCALE
+            }
             .filter { declaration -> declaration.uri.isNotBlank() }
             .mapNotNull { declaration ->
                 val genre = genreDe(declaration.genre) ?: return@mapNotNull null

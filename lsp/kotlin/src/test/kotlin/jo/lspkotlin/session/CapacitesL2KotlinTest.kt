@@ -238,7 +238,10 @@ class CapacitesL2KotlinTest {
         assertEquals(texte.length, plages.last().fin)
         // STRICTEMENT croissant, du plus profond au fichier.
         plages.zipWithNext { courant, suivant ->
-            assertTrue("maillons non croissants : $plages", suivant.debut <= courant.debut && suivant.fin >= courant.fin)
+            assertTrue(
+                "maillons non croissants : $plages",
+                suivant.debut <= courant.debut && suivant.fin >= courant.fin,
+            )
         }
         assertTrue(plages.first().fin - plages.first().debut < plages.last().fin - plages.last().debut)
         // Le maillon le plus profond est le littéral `1`.

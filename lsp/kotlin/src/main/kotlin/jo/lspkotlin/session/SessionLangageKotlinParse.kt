@@ -496,19 +496,23 @@ internal class SessionLangageKotlinParse(
                 uri,
                 debutPlage,
                 finPlage,
-                SignaturesAppels.Contexte(
-                    contexteNom = contexteNom,
-                    resolution = resolution,
-                    declarationsProjet = declarations,
-                    index = indexAppelables,
-                    vue = classpath?.vue,
-                ),
-                InterrogationsSymboles.Contexte(
-                    contexteNom = contexteNom,
-                    resolution = resolution,
-                    declarationsProjet = declarations,
-                    index = indexAppelables,
-                    vue = classpath?.vue,
+                IndicesKotlin.Contexte(
+                    signatures =
+                        SignaturesAppels.Contexte(
+                            contexteNom = contexteNom,
+                            resolution = resolution,
+                            declarationsProjet = declarations,
+                            index = indexAppelables,
+                            vue = classpath?.vue,
+                        ),
+                    interrogations =
+                        InterrogationsSymboles.Contexte(
+                            contexteNom = contexteNom,
+                            resolution = resolution,
+                            declarationsProjet = declarations,
+                            index = indexAppelables,
+                            vue = classpath?.vue,
+                        ),
                 ),
             )
         }

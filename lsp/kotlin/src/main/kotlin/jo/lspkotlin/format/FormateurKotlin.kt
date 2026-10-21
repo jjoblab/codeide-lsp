@@ -58,10 +58,10 @@ internal object FormateurKotlin {
         debutPlage: Int = 0,
         finPlage: Int = texte.length,
     ): List<EditionSourceKotlin> {
-        // Refus honnête : marqueur d'erreur dans l'arbre — la structure
-        // n'est pas prouvée, la profondeur serait une invention.
-        if (arbre.nombreErreurs > 0) return emptyList()
-        if (debutPlage >= finPlage) return emptyList()
+        // Refus honnête : marqueur d'erreur dans l'arbre (la structure
+        // n'est pas prouvée, la profondeur serait une invention) ou
+        // plage vide — rien à servir.
+        if (arbre.nombreErreurs > 0 || debutPlage >= finPlage) return emptyList()
 
         val jetons = arbre.racine.jetonsDescendants()
         val editions = mutableListOf<EditionSourceKotlin>()
@@ -76,7 +76,7 @@ internal object FormateurKotlin {
             // plage : le client sélectionne par lignes, une ligne à
             // cheval sur une borne est candidate.)
             if (debutLigne < finPlage && finLigne > debutPlage) {
-                val cible = analyse.profondeurDe(texte, debutLigne, finLigne)
+                val cible = analyse.profondeurDe(debutLigne, finLigne)
                 if (cible != null) {
                     ajouterEditionSiDecalee(texte, debutLigne, cible, tailleIndentation, editions)
                 }
@@ -183,6 +183,52 @@ internal object FormateurKotlin {
         }
 
         /**
+         * Tête de ligne analysée : premiers jetons SIGNIFICATIFS —
+         * fermantes d'accolades, fermeture de liste, premier jeton.
+         */
+        private data class TeteLigne(
+            val fermantes: Int,
+            val fermeListe: Boolean,
+            val premier: JetonSyntaxique?,
+        )
+
+        /**
+         * Tête significative de la ligne [debutLigne, finLigne) : les
+         * `}` ouvrant la ligne et la fermeture de liste `)`/`]` en
+         * tête, avec le premier jeton significatif.
+         */
+        private fun teteSignificative(
+            finLigne: Int,
+        ): TeteLigne {
+            var fermantes = 0
+            var fermeListe = false
+            var enTete = true
+            var premier: JetonSyntaxique? = null
+            var position = index
+            // Les significatifs de la ligne commencent au plus tôt au
+            // PREMIER caractère de la ligne (un jeton qui la précède
+            // et la chevauche est un BLANC fusionné, sans contenu).
+            while (position < jetons.size && jetons[position].debut < finLigne) {
+                val jeton = jetons[position]
+                if (estBlanc(jeton)) {
+                    position += 1
+                    continue
+                }
+                if (premier == null) premier = jeton
+                if (enTete) {
+                    if (jeton.type == KtTokens.RBRACE) {
+                        fermantes += 1
+                    } else {
+                        enTete = false
+                        fermeListe = jeton.type == KtTokens.RPAR || jeton.type == KtTokens.RBRACKET
+                    }
+                }
+                position += 1
+            }
+            return TeteLigne(fermantes, fermeListe, premier)
+        }
+
+        /**
          * Profondeur cible de la ligne [debutLigne, finLigne) — `null`
          * pour une ligne intouchable (vide, dans un jeton multi-ligne,
          * continuation d'expression libre).
@@ -193,7 +239,6 @@ internal object FormateurKotlin {
          */
         @Suppress("ReturnCount")
         fun profondeurDe(
-            texte: CharSequence,
             debutLigne: Int,
             finLigne: Int,
         ): Int? {
@@ -220,54 +265,22 @@ internal object FormateurKotlin {
                 return null
             }
 
-            // Premiers jetons SIGNIFICATIFS de la ligne : fermantes en
-            // tête (accolades) et fermeture de liste (parenthèse/crochet).
-            var fermantesEnTete = 0
-            var fermeListeEnTete = false
-            var enTete = true
-            var premierSignificatif: JetonSyntaxique? = null
-            var position = index
-            // Les significatifs de la ligne commencent au plus tôt au
-            // PREMIER caractère de la ligne (un jeton qui la précède
-            // et la chevauche est un BLANC fusionné, sans contenu).
-            while (position < jetons.size && jetons[position].debut < finLigne) {
-                val jeton = jetons[position]
-                if (estBlanc(jeton)) {
-                    position += 1
-                    continue
-                }
-                if (premierSignificatif == null) premierSignificatif = jeton
-                if (enTete) {
-                    when (jeton.type) {
-                        KtTokens.RBRACE -> fermantesEnTete += 1
-                        else -> {
-                            enTete = false
-                            if (jeton.type == KtTokens.RPAR || jeton.type == KtTokens.RBRACKET) {
-                                fermeListeEnTete = true
-                            }
-                        }
-                    }
-                }
-                position += 1
-            }
+            val tete = teteSignificative(finLigne)
 
             // Continuation LIBRE (hors liste ouverte) : opérateur, appel
             // chaîné ou flèche en tête — un choix de style, pas une
             // structure prouvable (le formateur borné s'abstient).
             val listeOuverte = parenthesesOuvertes > 0 || crochetsOuverts > 0
-            if (!listeOuverte &&
-                premierSignificatif != null &&
-                premierSignificatif.type in continuationsLibres
-            ) {
+            if (!listeOuverte && tete.premier != null && tete.premier.type in continuationsLibres) {
                 return null
             }
 
-            val base = accoladesOuvertes - fermantesEnTete
+            val base = accoladesOuvertes - tete.fermantes
             return if (listeOuverte) {
                 // Continuation de liste : les éléments vivent UN niveau
                 // sous l'ouvrante ; la ligne qui FERME la liste revient
                 // à la base de l'ouvrante.
-                if (fermeListeEnTete) base else base + 1
+                if (tete.fermeListe) base else base + 1
             } else {
                 base
             }

@@ -43,6 +43,14 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * Les sources JAVA du scan ne portent pas de supertypes extraits :
  * jamais candidates (sous-rapport D3, jamais de faux héritier).
  */
+/**
+ * Exemption detekt ciblée (règle 16) : TooManyFunctions — chaque
+ * méthode est une ÉTAPE distincte de la chaîne de preuve (cible en
+ * contexte, définitions, candidates d'héritage, supertypes, preuve
+ * FQCN, déclaration au curseur, identifiant) : le compte épouse le
+ * CONTRAT de navigation de types, pas une dérive.
+ */
+@Suppress("TooManyFunctions")
 internal object TypesKotlin {
     /** Genres de déclaration qui SONT des types. */
     private val GENRES_TYPES =
@@ -52,7 +60,14 @@ internal object TypesKotlin {
      * Le TYPE visé à [decalage] (cible commune typeDefinition/
      * implementations) : la DÉCLARATION de type projet visée par la
      * chaîne du KDoc de classe, ou `null` si rien n'est prouvé.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount/
+     * CyclomaticComplexMethod — chaque étape de la chaîne (référence
+     * de type, constructeur, nom déclaré, référence typée) est une
+     * ISSUE distincte du conservatisme D3 (miroir
+     * InterrogationsSymboles.definitions).
      */
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
     internal fun typeEnContexte(
         racine: NoeudSyntaxique,
         decalage: Int,
@@ -205,7 +220,12 @@ internal object TypesKotlin {
      * résout-il vers [fqcnCible] ? Le texte est NETTOYÉ (arguments de
      * construction, génériques, nullabilité), puis résolu par les
      * imports du fichier — preuve par FQCN, jamais par homonymie.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * du nettoyage (parenthèses, génériques, nullabilité, vide) est
+     * une ISSUE distincte.
      */
+    @Suppress("ReturnCount")
     private fun supertypeResoutVers(
         supertype: String,
         fqcnCible: String,
@@ -259,7 +279,12 @@ internal object TypesKotlin {
      * Déclaration (projet) dont le NOM est sous le curseur — miroir du
      * [InterrogationsSymboles] privé du même nom : la plus profonde
      * gagne (locale avant membre avant premier niveau).
+     *
+     * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
+     * — les continue des étapes non concluantes par PROFONDEUR sont le
+     * contrat même du balayage (miroir identifiantA).
      */
+    @Suppress("LoopWithTooManyJumpStatements")
     private fun declarationAuCurseur(
         racine: NoeudSyntaxique,
         decalage: Int,

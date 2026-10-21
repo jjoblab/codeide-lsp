@@ -36,6 +36,17 @@ internal object IndicesKotlin {
         setOf(KtTokens.WHITE_SPACE, KtTokens.EOL_OR_SEMICOLON, KtTokens.SEMICOLON)
 
     /**
+     * Contexte d'indices : les DEUX contextes de résolution du moteur
+     * (signatures pour les appels, interrogations pour les types) —
+     * la session les construit sur le MÊME état (nommage, résolveur,
+     * déclarations projet, index, vue).
+     */
+    internal data class Contexte(
+        val signatures: SignaturesAppels.Contexte,
+        val interrogations: InterrogationsSymboles.Contexte,
+    )
+
+    /**
      * Indices de la plage [debutPlage, finPlage) — ordonnés par
      * position ; liste VIDE pour une plage vide.
      */
@@ -44,8 +55,7 @@ internal object IndicesKotlin {
         uri: String,
         debutPlage: Int,
         finPlage: Int,
-        contexteSignatures: SignaturesAppels.Contexte,
-        contexteInterrogations: InterrogationsSymboles.Contexte,
+        contexte: Contexte,
     ): List<IndiceEnLigneKotlin> {
         if (debutPlage >= finPlage) return emptyList()
         val resultat = mutableListOf<IndiceEnLigneKotlin>()
@@ -53,9 +63,9 @@ internal object IndicesKotlin {
             if (noeud.debut < finPlage && noeud.fin > debutPlage) {
                 when (noeud.type) {
                     KtNodeTypes.CALL_EXPRESSION ->
-                        resultat.addAll(indicesAppel(racine, noeud, contexteSignatures))
+                        resultat.addAll(indicesAppel(racine, noeud, contexte.signatures))
                     KtNodeTypes.PROPERTY ->
-                        resultat.addAll(indiceType(racine, noeud, uri, contexteInterrogations))
+                        resultat.addAll(indiceType(racine, noeud, uri, contexte.interrogations))
                     else -> {}
                 }
             }
@@ -72,7 +82,14 @@ internal object IndicesKotlin {
         noeud.sousNoeuds.forEach { parcourir(it, visite) }
     }
 
-    /** Indices de noms de paramètres d'un appel positionnel prouvé. */
+    /**
+     * Indices de noms de paramètres d'un appel positionnel prouvé.
+     *
+     * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
+     * — le break des arguments NOMMÉS et celui de l'épuisement des
+     * positions sont deux issues distinctes du contrat positionnel.
+     */
+    @Suppress("LoopWithTooManyJumpStatements")
     private fun indicesAppel(
         racine: NoeudSyntaxique,
         appel: NoeudSyntaxique,
@@ -109,7 +126,12 @@ internal object IndicesKotlin {
      * Indice de TYPE d'une déclaration sans type écrit — seulement si
      * l'initialiseur porte le type par lui-même (littéral canonique
      * ou constructeur prouvé).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * (type écrit, nom, initialiseur, type certain) est une ISSUE
+     * distincte du conservatisme D3.
      */
+    @Suppress("ReturnCount")
     private fun indiceType(
         racine: NoeudSyntaxique,
         proprieteNoeud: NoeudSyntaxique,
@@ -130,7 +152,12 @@ internal object IndicesKotlin {
     /**
      * Type CERTAIN porté par l'initialiseur LUI-MÊME — littéral
      * canonique ou constructeur résolu ; `null` sinon (jamais deviné).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * (littéral, appel, preuve de constructeur) est une ISSUE
+     * distincte (rien n'est deviné).
      */
+    @Suppress("ReturnCount")
     private fun typeCertain(
         racine: NoeudSyntaxique,
         initialisateur: NoeudSyntaxique,
@@ -149,7 +176,15 @@ internal object IndicesKotlin {
         return null
     }
 
-    /** Type d'un littéral CANONIQUE seul — `null` pour toute autre forme. */
+    /**
+     * Type d'un littéral CANONIQUE seul — `null` pour toute autre
+     * forme.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * (vide, chaîne, jeton unique, par type de littéral) est une
+     * ISSUE distincte du catalogue.
+     */
+    @Suppress("ReturnCount")
     private fun typeLitteral(initialisateur: NoeudSyntaxique): String? {
         val jetons = initialisateur.jetonsDescendants().filter { it.type !in blancs }
         if (jetons.isEmpty()) return null
