@@ -1,0 +1,97 @@
+# Matrice des capacités LSP — Java, Kotlin, XML
+
+> Livrable du lot L0 du plan 1.3.0. Une capacité est **en service** seulement si les six
+> critères de la définition (ADR 0201) sont vrais : (1) annoncée dans `ServerCapabilities`
+> à l'`initialize`, (2) implémentée honnêtement (pas de stub), (3) câblée dans l'hôte
+> (alimentée par la session moteur), (4) testée de bout en bout par le transport réel,
+> (5) consommée par le client (`cel-lsp` de code-editor), (6) réglable si pertinent
+> (table `CapacitesAnnoncees`, parité verrouillée par test).
+>
+> Légende des cases : ✅ = les six critères vrais (le 5 cité renvoie à
+> docs/LSP_ECARTS_CLIENT.md) ; ⚠️ = servie côté serveur, **hors service côté éditeur**
+> (critère 5 faux — le client n'émet pas la requête) ; ✝️ = annoncée mais conservatrice
+> par conception (le sous-rapport D3 est documenté) ; ❌ = non annoncée (case vide dans
+> le protocole). La colonne « preuve » cite le test qui verrouille la case (test de
+> parité W4 pour l'annonce, test moteur/session pour l'implémentation, test E2E du
+> serveur pour le transport réel).
+>
+> État au 21/10/2026 (SHA de référence : lot L2 livré ; colonnes Java et XML auditées
+> par le test de parité L0 — les lots L3/L4 compléteront les preuves E2E case par case).
+
+## Synchronisation et diagnostics
+
+| Capacité | Java | Kotlin | XML | Preuves |
+|---|---|---|---|---|
+| Synchronisation de document (didOpen/Change/Save/Close) | ✅ incrémentale | ✅ complète | ✅ complète | CapacitesLspPariteTest (tables) ; *LanguageServerTest par langage |
+| Diagnostics poussés (publishDiagnostics) | ✅ | ✅ | ✅ | KotlinLanguageServerTest, XmlLanguageServerTest, tests Java |
+| didChangeWatchedFiles (événements de fichiers externes) | ✅ | ✅ | ✅ (lot L1) | SurveillanceFichiersLangagesTest |
+
+## Navigation
+
+| Capacité | Java | Kotlin | XML | Preuves |
+|---|---|---|---|---|
+| Définition (`textDocument/definition`) | ✅ | ✅ | ✅ | SessionLangageKotlin*Test, XmlLanguageServerTest |
+| Définition de type (`typeDocument/typeDefinition`) | ✅ | ✅ (lot L2) | ❌ | TypesKotlinTest (moteur) ; KotlinLanguageServerL2Test (E2E) |
+| Implémentations (`textDocument/implementation`) | ✅ | ✅ (lot L2) | ❌ | TypesKotlinTest (moteur, preuve FQCN) ; KotlinLanguageServerL2Test (E2E) |
+| Références (`textDocument/references`) | ✅ | ✅ | ❌ (lot L3 : prévu) | SessionLangageKotlinOccurrencesTest |
+| Surlignage d'occurrences (`documentHighlight`) | ✅ | ✅ | ❌ (lot L3 : prévu) | SessionLangageKotlinOccurrencesTest |
+| Renommage + prepareRename | ✅ | ✅ | ✅ | SessionLangageKotlinOccurrencesTest, XmlLanguageServerTest |
+| Symboles de document (`documentSymbol`) | ✅ | ✅ | ✅ | KotlinLanguageServerTest, XmlLanguageServerTest |
+| Symboles d'espace (`workspace/symbol`) | ✅ | ✅ (lot L2) ⚠️ | ❌ | SymbolesEspace via CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
+| Plage de sélection (`selectionRange`) | ✅ | ✅ (lot L2) ⚠️ | ❌ (lot L3 : prévu) | CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
+
+## Édition assistée
+
+| Capacité | Java | Kotlin | XML | Preuves |
+|---|---|---|---|---|
+| Complétion (`completion`) | ✅ | ✅ | ✅ | CompletionKotlin + tests flux client XML/Java |
+| Survol (`hover`) | ✅ | ✅ | ✅ | InterrogationsSymboles (tests moteur), XmlLanguageServerTest |
+| Aide à la signature (`signatureHelp`) | ✅ | ✅ | ❌ | SessionLangageKotlinSignatureTest |
+| Actions de code (`codeAction`) | ✅ | ✅ (imports) | ✅ | KotlinLanguageServerTest (quick-fixes), XmlLanguageServerTest |
+| Formatage (`formatting`) | ✅ | ✅ (lot L2, ADR 0202 — ré-indentation seule) | ✅ | FormateurKotlinTest ; KotlinLanguageServerL2Test (E2E) |
+| Formatage de plage (`rangeFormatting`) | ✅ | ⚠️ (servi ; consommation client prévue 3.74.0) | ❌ (lot L3 : prévu) | FormateurKotlinTest (plage) ; KotlinLanguageServerL2Test (E2E) |
+| Formatage à la frappe (`onTypeFormatting`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 (annonces) |
+| Édition liée (`linkedEditingRange`) | ✅ | ❌ | ❌ (lot L3 : prévu) | Table de parité W4 |
+| Renommage préparé : voir Navigation | — | — | — | — |
+
+## Rendu riche
+
+| Capacité | Java | Kotlin | XML | Preuves |
+|---|---|---|---|---|
+| Pliage (`foldingRange`) | ✅ | ✅ | ✅ | PlisDocumentKotlin, XmlLanguageServerTest |
+| Indices en ligne (`inlayHint`) | ✅ ⚠️ | ✅ (lot L2) ⚠️ | ❌ | IndicesKotlin via CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
+| Jetons sémantiques (`semanticTokens`) | ✅ | ❌ (NON annoncée — distinction non fiable au niveau parseur, D3 ; dette consignée) | ❌ | Table de parité W4 (absence verrouillée) |
+| Lentilles de code (`codeLens`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
+| Hiérarchie d'appels (`callHierarchy`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
+| Hiérarchie de types (`typeHierarchy`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
+| Couleurs de document (`documentColor`) | ✅ ⚠️ | ❌ | ❌ (lot L3 : prévu) | Table de parité W4 |
+
+## Méthodes expérimentales (extensions propres)
+
+| Capacité | Java | Kotlin | XML | Preuves |
+|---|---|---|---|---|
+| Super-définition (expérimental) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
+| Source décompilée (expérimental) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
+
+## Capacités réglables (critère 6)
+
+| Interrupteur (`CapacitesAnnoncees`) | Java | Kotlin | XML | Preuve de parité |
+|---|---|---|---|---|
+| COMPLETION, SURVOL, DIAGNOSTICS, SIGNATURES, DEFINITION, REFERENCES, RENOMMAGE, ACTIONS_RAPIDES | ✅ | ✅ | ✅ (SIGNATURES/REFERENCES exclues XML) | SessionLspReglagesTest + CapacitesLspPariteTest |
+| FORMATAGE | ✅ | ✅ (lot L2) | ✅ | SessionLspReglagesTest |
+| INDICES_EN_LIGNE | ✅ | ✅ (lot L2) | ❌ | SessionLspReglagesTest |
+
+## Dettes et écarts consignés
+
+- **Jetons sémantiques Kotlin** : non annoncés — la distinction types/fonctions/propriétés
+  n'est pas fiable au niveau du parseur vendoré sans résolution complète (D3 : mieux vaut
+  ne rien proposer qu'un faux positif). Dette consignée, à rouvrir si la résolution
+  gagne en preuve.
+- **Formatage à la frappe, lentilles, hiérarchies, couleurs (Java)** : annoncées et
+  servies côté Java mais **jamais consommées** par le client actuel — voir
+  docs/LSP_ECARTS_CLIENT.md (lot L6).
+- **Symboles d'espace / plage de sélection Kotlin** : servis côté serveur dès le lot L2 ;
+  la consommation par le client (palette, expansion de sélection) est un écart consigné
+  (lot L6).
+- **XML** : références/surlignage, formatage de plage, édition liée, couleurs = lot L3
+  (prévu, non annoncé aujourd'hui — la table de parité verrouille l'absence).
