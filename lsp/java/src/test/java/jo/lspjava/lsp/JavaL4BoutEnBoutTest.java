@@ -269,6 +269,57 @@ class JavaL4BoutEnBoutTest {
     }
 
     @Test
+    void superDefinitionDuneRedéfinitionTrouveLaMéthodeDeBase() throws Exception {
+        // La classe de base déclare signaler(), la dérivée la
+        // redéfinit : super au caret de la redéfinition trouve la
+        // DÉCLARATION de base (GO TO « Super » — méthode EXPÉRIMENTALE).
+        String base = """
+                package demo;
+
+                class Base {
+                    void signaler() {
+                    }
+                }
+                """;
+        String derivee = """
+                package demo;
+
+                class Derivee extends Base {
+                    @Override
+                    void signaler() {
+                    }
+                }
+                """;
+        Files.createDirectories(dossier.resolve("demo"));
+        Files.writeString(dossier.resolve("demo/Base.java"), base);
+        Files.writeString(dossier.resolve("demo/Derivee.java"), derivee);
+        String androidJar = androidJarDuSdk();
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                androidJar != null, "android.jar absent — test ignoré");
+        jo.lspjava.engine.CompilationEnvironment environnement =
+                new jo.lspjava.engine.CompilationEnvironment(
+                        List.of(dossier.toFile()), List.of(), null);
+        var server = new JavaLanguageServer(environnement);
+        server.initialize(new InitializeParams()).get(5, TimeUnit.SECONDS);
+        server.initialized(new org.eclipse.lsp4j.InitializedParams());
+        server.environment().replaceAll(
+                java.util.Arrays.asList(dossier.toFile()),
+                List.of(new java.io.File(androidJar)));
+        String uri = ouvrir(server, "demo/Derivee.java", derivee);
+        int offset = derivee.indexOf("signaler()") + "signaler".length() / 2;
+        var params = new org.eclipse.lsp4j.TextDocumentPositionParams(
+                new TextDocumentIdentifier(uri), positionA(derivee, offset));
+        var cibles = server.getTextDocumentService()
+                .superDefinition(params)
+                .get(60, TimeUnit.SECONDS);
+        // La méthode de BASE est la cible du super (même nom, fichier Base).
+        assertEquals(1, cibles.size(), "une cible : " + cibles);
+        assertTrue(cibles.get(0).path.endsWith("Base.java"), "la méthode de base : " + cibles.get(0).path);
+        server.shutdown().get(5, TimeUnit.SECONDS);
+        server.exit();
+    }
+
+    @Test
     void decompiledSourceSurUneClasseDuJdkRendLaSource() throws Exception {
         var server = serveurInitialise("demo/T.java", SOURCE);
         ouvrir(server, "demo/T.java", SOURCE);
