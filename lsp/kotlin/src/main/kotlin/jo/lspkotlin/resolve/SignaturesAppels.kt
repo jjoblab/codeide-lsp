@@ -71,6 +71,8 @@ internal object SignaturesAppels {
         val total: Int,
         val minimum: Int,
         val aVararg: Boolean,
+        /** Noms BRUTS des paramètres ("" = inconnu — indice absent). */
+        val noms: List<String> = emptyList(),
     ) {
         /** L'arité [nombre] est-elle légale pour cette candidate ? */
         fun couvre(nombre: Int): Boolean =
@@ -237,6 +239,7 @@ internal object SignaturesAppels {
             total = declaration.parametres.size,
             minimum = declaration.parametres.size - declaration.nombreParametresDefaut,
             aVararg = declaration.aVararg,
+            noms = declaration.parametres.map { (nom, _) -> nom.orEmpty() },
         )
     }
 
@@ -248,6 +251,7 @@ internal object SignaturesAppels {
             total = declaration.parametres.size,
             minimum = declaration.parametres.size - declaration.nombreParametresDefaut,
             aVararg = declaration.aVararg,
+            noms = declaration.parametres.map { (nom, _) -> nom.orEmpty() },
         )
     }
 
@@ -261,6 +265,7 @@ internal object SignaturesAppels {
             total = parametres.size,
             minimum = parametres.size,
             aVararg = false,
+            noms = fonction.parametres().map { parametre -> parametre.nom().orEmpty() },
         )
     }
 
@@ -272,6 +277,7 @@ internal object SignaturesAppels {
             total = parametres.size,
             minimum = parametres.size,
             aVararg = false,
+            noms = appelable.parametres.map { parametre -> parametre.nom.orEmpty() },
         )
     }
 
@@ -314,10 +320,38 @@ internal object SignaturesAppels {
         return candidates.filter { vues.add(it.signature.etiquette) }
     }
 
+    /**
+     * Noms de paramètres de l'appel [appel] PROUVÉS par la résolution
+     * (L2 — indices en ligne) : ceux de la première candidate d'arité
+     * compatible — le même conservatisme que l'aide à la signature,
+     * sans le popup (le consommateur est le moteur des indices).
+     * `null` sans candidate prouvée (aucun indice, jamais deviné).
+     */
+    internal fun nomsParametres(
+        racine: NoeudSyntaxique,
+        appel: NoeudSyntaxique,
+        contexte: Contexte,
+    ): List<String>? {
+        val nom = nomAppele(appel) ?: return null
+        val arguments = argumentsOrdinaires(appel)
+        val nombreArguments = arguments.size + if (aLambdaFinal(appel)) 1 else 0
+        val chaine = chaineAncetresA(racine, appel.debut)
+        val candidates =
+            if (estQualifie(chaine, appel)) {
+                candidatesQualifie(chaine, appel, nom, racine, contexte)
+            } else {
+                candidatesSimples(appel, nom, racine, contexte)
+            }
+        return candidates
+            .firstOrNull { candidate -> candidate.couvre(nombreArguments) }
+            ?.noms
+            ?.takeIf { noms -> noms.any { nomNu -> nomNu.isNotEmpty() } }
+    }
+
     // ── Position active ────────────────────────────────────────────────
 
     /** Arguments ORDINAIRES de l'appel (le lambda final est à part). */
-    private fun argumentsOrdinaires(appel: NoeudSyntaxique): List<NoeudSyntaxique> =
+    internal fun argumentsOrdinaires(appel: NoeudSyntaxique): List<NoeudSyntaxique> =
         appel.sousNoeuds
             .firstOrNull { it.type == KtNodeTypes.VALUE_ARGUMENT_LIST }
             ?.sousNoeuds
@@ -325,7 +359,7 @@ internal object SignaturesAppels {
             ?: emptyList()
 
     /** L'appel porte-t-il un lambda final (`foo(1) { … }`) ? */
-    private fun aLambdaFinal(appel: NoeudSyntaxique): Boolean =
+    internal fun aLambdaFinal(appel: NoeudSyntaxique): Boolean =
         appel.sousNoeuds.any { it.type == KtNodeTypes.LAMBDA_ARGUMENT }
 
     /**

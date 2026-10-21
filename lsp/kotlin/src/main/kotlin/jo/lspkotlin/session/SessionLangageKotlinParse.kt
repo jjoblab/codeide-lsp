@@ -1,17 +1,20 @@
 package jo.lspkotlin.session
 
 import jo.lspkotlin.api.AideSignatureKotlin
+import jo.lspkotlin.api.ChaineSelectionKotlin
 import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EditionSourceKotlin
 import jo.lspkotlin.api.EmplacementKotlin
+import jo.lspkotlin.api.IndiceEnLigneKotlin
 import jo.lspkotlin.api.PlagePliableKotlin
 import jo.lspkotlin.api.PlageRenommableKotlin
 import jo.lspkotlin.api.PlageSurligneeKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SymboleDocumentKotlin
+import jo.lspkotlin.api.SymboleEspaceKotlin
 import jo.lspkotlin.completion.CompletionKotlin
 import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
@@ -25,11 +28,14 @@ import jo.lspkotlin.plis.PlisDocumentKotlin
 import jo.lspkotlin.resolve.CandidatsImport
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
+import jo.lspkotlin.resolve.IndicesKotlin
 import jo.lspkotlin.resolve.InterrogationsSymboles
 import jo.lspkotlin.resolve.OccurrencesKotlin
 import jo.lspkotlin.resolve.ResolutionKotlin
+import jo.lspkotlin.resolve.SelectionsKotlin
 import jo.lspkotlin.resolve.SignaturesAppels
 import jo.lspkotlin.resolve.SymbolesProjet
+import jo.lspkotlin.resolve.SymbolesEspaceKotlin
 import jo.lspkotlin.resolve.TypesKotlin
 import jo.lspkotlin.symboles.SymbolesDocumentKotlin
 import jo.lspkotlin.synthetics.ClassesSynthetiques
@@ -466,6 +472,77 @@ internal class SessionLangageKotlinParse(
                 )
             }
             resultat
+        }
+
+    /**
+     * Indices en ligne d'une plage (L2) — noms de paramètres aux
+     * appels POSITIONNELS prouvés (chaîne de l'aide à la signature)
+     * et types CERTAINS des déclarations sans type écrit (littéraux
+     * canoniques, constructeurs résolus) ; le calcul vit dans
+     * [IndicesKotlin], l'incertain ne rend RIEN (D3).
+     */
+    override fun indices(
+        uri: String,
+        debutPlage: Int,
+        finPlage: Int,
+    ): List<IndiceEnLigneKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val contexteNom = contexteNomDe(document, uri)
+            val declarations = declarationsProjet(document, uri, contexteNom.paquet)
+            IndicesKotlin.indices(
+                document.arbre.racine,
+                uri,
+                debutPlage,
+                finPlage,
+                SignaturesAppels.Contexte(
+                    contexteNom = contexteNom,
+                    resolution = resolution,
+                    declarationsProjet = declarations,
+                    index = indexAppelables,
+                    vue = classpath?.vue,
+                ),
+                InterrogationsSymboles.Contexte(
+                    contexteNom = contexteNom,
+                    resolution = resolution,
+                    declarationsProjet = declarations,
+                    index = indexAppelables,
+                    vue = classpath?.vue,
+                ),
+            )
+        }
+
+    /**
+     * Symboles de l'ESPACE de travail (L2) — déclarations nommées des
+     * documents OUVERTS (arbres vivants) puis des racines du scan
+     * (fichiers fermés), filtrées par [SymbolesEspaceKotlin] (requête
+     * contient, locales exclues, plafonné, ordonné par nom).
+     */
+    override fun symbolesEspace(requete: String): List<SymboleEspaceKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val declarations = mutableListOf<DeclarationProjet>()
+            for ((uriOuvert, document) in documents) {
+                val paquet = KtFile(document.arbre.racine).directivePackage()?.nomQualifie()
+                declarations.addAll(SymbolesProjet.declarations(document.arbre.racine, uriOuvert, paquet))
+            }
+            declarations.addAll(scanProjet.declarations())
+            SymbolesEspaceKotlin.rechercher(requete, declarations)
+        }
+
+    /**
+     * Chaînes de sélection (L2) — le calcul (chaîne des ancêtres,
+     * fusion des plages égales) vit dans [SelectionsKotlin].
+     */
+    override fun selections(
+        uri: String,
+        decalages: List<Int>,
+    ): List<ChaineSelectionKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            decalages.map { decalage -> SelectionsKotlin.chaine(document.arbre.racine, decalage) }
         }
 
     /**
