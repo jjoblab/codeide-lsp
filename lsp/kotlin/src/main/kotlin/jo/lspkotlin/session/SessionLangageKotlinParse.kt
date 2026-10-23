@@ -11,6 +11,7 @@ import jo.lspkotlin.api.IndiceEnLigneKotlin
 import jo.lspkotlin.api.PlagePliableKotlin
 import jo.lspkotlin.api.PlageRenommableKotlin
 import jo.lspkotlin.api.PlageSurligneeKotlin
+import jo.lspkotlin.api.PreviewKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SymboleDocumentKotlin
@@ -25,6 +26,7 @@ import jo.lspkotlin.parse.NoeudSyntaxique
 import jo.lspkotlin.parse.ParseurKotlin
 import jo.lspkotlin.parse.kt.KtFile
 import jo.lspkotlin.plis.PlisDocumentKotlin
+import jo.lspkotlin.preview.PreviewsDocumentKotlin
 import jo.lspkotlin.resolve.CandidatsImport
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
@@ -246,6 +248,59 @@ internal class SessionLangageKotlinParse(
             val document = documents[uri] ?: return emptyList()
             val fichier = KtFile(document.arbre.racine)
             SymbolesDocumentKotlin.depuis(fichier)
+        }
+
+    /**
+     * Previews Compose du document (C1) — la marche vit dans
+     * [PreviewsDocumentKotlin] ; la session pioche le document courant
+     * et fournit le PORT projet (documents ouverts d'abord, disque du
+     * scan ensuite — même hiérarchie que [balayerAutresFichiers]).
+     * Document inconnu/fermé : liste VIDE.
+     */
+    override fun previews(uri: String): List<PreviewKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val paquet = KtFile(document.arbre.racine).directivePackage()?.nomQualifie()
+            val contexteNom = contexteNomDe(document, uri)
+            PreviewsDocumentKotlin.collecter(
+                PreviewsDocumentKotlin.Contexte(
+                    uri = uri,
+                    texte = document.texte,
+                    contexteNom = contexteNom,
+                    resolution = resolution,
+                    declarationsProjet = declarationsProjet(document, uri, paquet),
+                    port = portPreviews,
+                ),
+                document.arbre.racine,
+                paquet,
+            )
+        }
+
+    /**
+     * Port de la collecte previews vers le RESTE du projet : arbre
+     * VIVANT du document ouvert d'abord, fichier du scan ensuite
+     * (re-parsé à la demande — le coût est borné par le budget de la
+     * collecte, un fichier illisible rend un inline ÉCHOUÉ typé).
+     */
+    private val portPreviews: PreviewsDocumentKotlin.Port =
+        object : PreviewsDocumentKotlin.Port {
+            // Exemption detekt ciblée (règle 16) : SwallowedException —
+            // l'exception EST le signal du sous-rapport D3 (miroir
+            // balayerAutresFichiers).
+            @Suppress("SwallowedException")
+            override fun fichierDe(uri: String): Pair<ArbreSyntaxiqueKotlin, CharSequence>? {
+                documents[uri]?.let { document -> return document.arbre to document.texte }
+                return try {
+                    val texte = File(java.net.URI(uri)).readText()
+                    parseur.analyser(texte, script = false) to texte
+                } catch (t: Throwable) {
+                    null // illisible : inline échoué typé (D3)
+                }
+            }
+
+            override fun contexteNomDe(racine: NoeudSyntaxique): ResolutionKotlin.ContexteNom =
+                contexteNomPourArbre(racine, scanProjet.declarations())
         }
 
     /**

@@ -12,6 +12,7 @@ import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.EntreeClasspathKotlin
 import jo.lspkotlin.api.KindEntreeKotlin
 import jo.lspkotlin.api.MoteurLangageKotlin
+import jo.lspkotlin.api.PreviewKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
@@ -269,6 +270,32 @@ public class SessionLspKotlin(
             (module.sources.principal + module.sources.generes).forEach { racines.add(File(it)) }
         }
         return racines.toList()
+    }
+
+    /**
+     * Previews Compose d'un document (C1 — découverte `@Preview
+     * @Composable` consommée par la carte « goutte d'eau » de l'éditeur) :
+     * passe-plat vers les sessions moteur VIVANTES — la session qui
+     * détient le document ouvert répond, les autres rendent VIDE
+     * (première réponse non vide emportée). Aucune session vivante ou
+     * pack antérieur C1 (défaut vide du SPI) : liste VIDE, jamais
+     * d'exception — le consommateur dégrade honnêtement (pas de carte
+     * d'aperçu Compose).
+     *
+     * @param uri identité du document ouvert dans l'éditeur.
+     * @return les previews dans l'ordre du document ; liste VIDE sans
+     *         session détenant le document ou sans `@Preview`.
+     */
+    public fun previews(uri: String): List<PreviewKotlin> {
+        for (session in sessionsVivantes) {
+            try {
+                val resultat = session.previews(uri)
+                if (resultat.isNotEmpty()) return resultat
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "previews d'une session moteur échouées (ignorée)", t)
+            }
+        }
+        return emptyList()
     }
 
     /** Arrêt exhaustif : sessions des connexions jamais arrêtées refermées,

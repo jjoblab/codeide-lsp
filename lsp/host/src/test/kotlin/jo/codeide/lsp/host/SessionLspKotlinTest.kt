@@ -13,6 +13,7 @@ import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.KindEntreeKotlin
 import jo.lspkotlin.api.MoteurLangageKotlin
+import jo.lspkotlin.api.PreviewKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SeveriteKotlin
@@ -93,6 +94,40 @@ class SessionLspKotlinTest {
         } finally {
             facade.close()
         }
+    }
+
+    // ── Previews Compose (C1 — passe-plat vers les sessions vivantes) ─
+
+    @Test
+    fun `previews - la session detenant le document repond, vide sinon`() {
+        val moteur =
+            MoteurFactice().apply {
+                previewsDesSessions =
+                    mapOf(
+                        "file:///ecran.kt" to
+                            listOf(
+                                PreviewKotlin(
+                                    nom = "ApercuEcran",
+                                    paquet = "com.ex.app",
+                                    debutNom = 0,
+                                    finNom = 0,
+                                    parametres = emptyList(),
+                                    corps = emptyList(),
+                                ),
+                            ),
+                    )
+            }
+        val facade = SessionLspKotlin(dossierTemp.resolve("previews"), moteur, dossierIndex = null)
+        // Aucune session vivante : VIDE, jamais d'exception.
+        assertTrue(facade.previews("file:///ecran.kt").isEmpty())
+        facade.serveur() // session vivante née avec les previews factices
+        assertEquals(
+            listOf("ApercuEcran"),
+            facade.previews("file:///ecran.kt").map { it.nom },
+        )
+        // URI détenue par AUCUNE session : VIDE.
+        assertTrue(facade.previews("file:///autre.kt").isEmpty())
+        facade.close()
     }
 
     // ── Poussée de classpath (K3) ──────────────────────────────────────
@@ -280,6 +315,9 @@ class SessionLspKotlinTest {
 
         public val sessions: CopyOnWriteArrayList<SessionFactice> = CopyOnWriteArrayList()
 
+        /** À poser AVANT serveur() : les sessions futures naîtront avec. */
+        public var previewsDesSessions: Map<String, List<PreviewKotlin>> = emptyMap()
+
         override val identifiant: String = "moteur-factice"
 
         override val version: String = "0.0.0-test"
@@ -293,7 +331,11 @@ class SessionLspKotlinTest {
             script: Boolean,
         ): jo.lspkotlin.parse.ArbreSyntaxiqueKotlin = ServiceMoteurLangageKotlin.unique().analyserSource(texte, script)
 
-        override fun creerSession(): SessionLangageKotlin = SessionFactice().also { sessions.add(it) }
+        override fun creerSession(): SessionLangageKotlin =
+            SessionFactice().also {
+                it.previewsRendues = previewsDesSessions
+                sessions.add(it)
+            }
     }
 
     /** Session factice : journalise, ne lève jamais. */
@@ -302,6 +344,11 @@ class SessionLspKotlinTest {
 
         /** Classpaths reçus via definirClasspath (tests de poussée K3). */
         public val classpathsRecus: CopyOnWriteArrayList<ClasspathKotlin> = CopyOnWriteArrayList()
+
+        /** Previews rendues par previews(uri) (test de passe-plat C1). */
+        public var previewsRendues: Map<String, List<PreviewKotlin>> = emptyMap()
+
+        override fun previews(uri: String): List<PreviewKotlin> = previewsRendues[uri] ?: emptyList()
 
         override fun definirClasspath(classpath: ClasspathKotlin) {
             classpathsRecus.add(classpath)

@@ -255,6 +255,14 @@ public class KtFunction(
             ?.let { typeTexteDepuis(it.noeud) }
 
     /**
+     * CORPS de la fonction (BLOCK), ou null (en-tête en cours d'édition,
+     * fonction abstraite/d'interface sans corps) — miroir direct de
+     * [KtClass.corps]. C'est le point d'entrée des marches de corps
+     * (preview Compose C1 : l'interprétation part du BLOCK).
+     */
+    public fun corps(): KtNoeud? = premierEnfantParType(KtNodeTypes.BLOCK) as? KtNoeud
+
+    /**
      * Récepteur d'extension écrit (`fun Vue.`), ou null (fonction
      * simple). Le récepteur est la PREMIÈRE référence de type — AVANT le
      * nom et la liste de paramètres (le type de retour vient APRÈS).

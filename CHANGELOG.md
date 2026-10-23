@@ -1,5 +1,52 @@
 # Changelog — codeide-lsp
 
+## 1.4.0 (2026-10-23)
+
+- **Preview Compose C1 — découverte `@Preview @Composable` par le SPI**
+  (PREVIEW.md §4.4 de CodeIDE, consommé par la carte « goutte d'eau »
+  de l'éditeur) : la requête `previews(uri)` traverse la frontière D6
+  en modèle NEUTRE — jamais l'arbre, jamais un type Compose.
+  - **Façade annotations** (`parse/kt/KtAnnotationEntry.kt`) :
+    `KtDeclaration.annotations()` (entrées du MODIFIER_LIST, forme
+    multi-entrées traversée), nom TEL QU'ÉCRIT de l'annotation (forme
+    qualifiée conservée), arguments NOMMÉS/positionnels avec la PLAGE
+    du nœud de valeur (le texte se tranche dans la source — chaîne de
+    gabarit comprise) ; `KtFunction.corps()` (miroir de
+    `KtClass.corps()`).
+  - **Preuve FQCN par les imports** : `@Preview` résout à
+    `androidx.compose.ui.tooling.preview.Preview` et `@Composable` à
+    `androidx.compose.runtime.Composable` — un nom DÉJÀ QUALIFIÉ est
+    comparé tel quel, un nom COURT passe par `fqcnDuNomEcrit`
+    (imports exacts, jokers par la vue, unicité projet) ; un homonyme
+    sans import est ignoré (conservateur D3 — un joker runtime sans
+    vue de classpath sous-rapporte honnêtement).
+  - **Arbre d'appels NEUTRE** (`api/PreviewsKotlin.kt`) : le corps
+    réduit aux appels directs + lambda final de contenu (les lambdas
+    passés en ARGUMENT sont hors interprétation C1), arguments
+    LITTÉRAL/RÉFÉRENCE/AUTRE distingués (`a.b` = référence, `a.b()` =
+    AUTRE), toute autre expression rendue
+    `ExpressionNonInterpreteeKotlin` (jamais un faux rendu — PC1).
+  - **Inlining des composables du PROJET** : candidate top-level
+    homonyme prouvée `@Composable` par les imports de SON PROPRE
+    fichier (document ouvert d'abord, disque du scan ensuite — même
+    hiérarchie que les occurrences), SANS paramètres en C1 ; cycles
+    (la fonction racine est SEMÉE dans la pile — l'auto-récursion est
+    un CYCLE typé, jamais une boucle infinie) et budgets (500 nœuds /
+    profondeur 6, marche TRONQUÉE et signalée `coupureBudget`) —
+    garde-fous PC4 côté moteur, chaque échec est un GENRE TYPIQUE
+    (`PROJET_CYCLE`, `PROJET_BUDGET`, `PROJET_PARAMETRES`,
+    `PROJET_ILLISIBLE`).
+  - **Façade hôte** : `SessionLspKotlin.previews(uri)` — passe-plat
+    vers les sessions moteur VIVANTES (la session détenant le document
+    répond, première réponse non vide emportée, panne absorbée) ;
+    tolérance de version par DÉFAUT VIDE du SPI (un pack antérieur
+    dégrade honnêtement).
+  - Tests : +13 session (`SessionLangageKotlinPreviewsTest` — preuve
+    FQCN, paramètres tranchés, arbre imbriqué, genres d'arguments,
+    inline disque, cycle, paramétré, borne de profondeur, tolérance de
+    fin de vie) + 3 façade annotations + 1 passe-plat hôte ; baseline
+    de parité re-synchronisée (239 fichiers — nouveaux sources).
+
 ## 1.3.0 (2026-10-21)
 
 - **Lot L1 — Événements de fichiers aux trois langages** (W1 du plan

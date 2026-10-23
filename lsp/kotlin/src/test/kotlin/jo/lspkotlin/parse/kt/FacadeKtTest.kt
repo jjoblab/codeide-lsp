@@ -169,4 +169,72 @@ class FacadeKtTest {
         val fonctions = corps.enfantsParType(KtNodeTypes.FUN)
         assertEquals(1, fonctions.size)
     }
+
+    @Test
+    fun `annotations - noms ecrits et ordre du document`() {
+        val f =
+            fichier(
+                """
+                @Composable
+                @Preview(widthDp = 100)
+                fun Apercu() {}
+
+                @androidx.compose.runtime.Composable
+                fun Autre() {}
+                """.trimIndent(),
+            )
+        val apercu = f.declarations()[0] as KtFunction
+        val annotations = apercu.annotations()
+        assertEquals(listOf("Composable", "Preview"), annotations.mapNotNull { it.nomEcrit() })
+
+        // Forme qualifiée : le nom TEL QU'ÉCRIT (résolution = consommateur).
+        val autre = f.declarations()[1] as KtFunction
+        assertEquals(
+            "androidx.compose.runtime.Composable",
+            autre.annotations().single().nomEcrit(),
+        )
+    }
+
+    @Test
+    fun `annotations - arguments nommes avec plages de valeurs`() {
+        val source =
+            """
+            @Preview(widthDp = 100, heightDp = 200, device = "spec:shape=Normal", showBackground = true)
+            fun Apercu() {}
+            """.trimIndent()
+        val f = fichier(source)
+        val annotation = (f.declarations().single() as KtFunction).annotations().single()
+        val arguments = annotation.arguments()
+        assertEquals(
+            listOf("widthDp", "heightDp", "device", "showBackground"),
+            arguments.map { it.nom },
+        )
+        assertEquals("100", source.substring(arguments[0].debutValeur, arguments[0].finValeur))
+        assertEquals("200", source.substring(arguments[1].debutValeur, arguments[1].finValeur))
+        assertEquals(
+            "\"spec:shape=Normal\"",
+            source.substring(arguments[2].debutValeur, arguments[2].finValeur),
+        )
+        assertEquals("true", source.substring(arguments[3].debutValeur, arguments[3].finValeur))
+    }
+
+    @Test
+    fun `annotations - fonction sans annotations et fonction avec corps`() {
+        val f =
+            fichier(
+                """
+                fun Pleine() {
+                    Text("Bonjour")
+                }
+
+                fun Expression() = 1
+                """.trimIndent(),
+            )
+        val pleine = f.declarations()[0] as KtFunction
+        assertTrue(pleine.annotations().isEmpty())
+        // corps() : le BLOCK des accolades ; une fonction à expression
+        // n'en a PAS (le corps est l'expression d'initialisation).
+        assertEquals(KtNodeTypes.BLOCK, pleine.corps()?.type)
+        assertNull((f.declarations()[1] as KtFunction).corps())
+    }
 }

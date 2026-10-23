@@ -449,6 +449,32 @@ public interface SessionLangageKotlin : AutoCloseable {
     ): List<ChaineSelectionKotlin> = emptyList()
 
     /**
+     * Fonctions `@Preview @Composable` du document (preview Compose C1 —
+     * PREVIEW.md §4.4 : la découverte vit dans le moteur de langue, le
+     * rendu Compose vit chez le consommateur ; seul le modèle NEUTRE
+     * [PreviewKotlin] traverse la frontière D6 — jamais l'arbre, jamais
+     * un type Compose).
+     *
+     * La preuve est par FQCN : `@Preview` résout à
+     * `androidx.compose.ui.tooling.preview.Preview` et `@Composable` à
+     * `androidx.compose.runtime.Composable` PAR LES IMPORTS du fichier
+     * (un homonyme sans import est ignoré — conservateur D3). Le corps
+     * est réduit à un ARBRE D'APPELS clos : appels directs + lambda
+     * final de contenu, composables du PROJET inlinés (cycles et
+     * budgets coupés honnêtement), toute autre expression rendue
+     * [jo.lspkotlin.api.ExpressionNonInterpreteeKotlin].
+     *
+     * Tolérance de version : défaut VIDE — un pack antérieur C1 face à
+     * un hôte C1 dégrade honnêtement (pas de preview, jamais
+     * d'exception).
+     *
+     * @param uri identité du document.
+     * @return les previews dans l'ordre du document ; liste VIDE pour
+     *         un document inconnu/fermé ou sans `@Preview @Composable`.
+     */
+    public fun previews(uri: String): List<PreviewKotlin> = emptyList()
+
+    /**
      * Signale des modifications de fichiers EXTERNES (lot L1 du plan
      * 1.3.0 — le surveillant de l'hôte pousse `didChangeWatchedFiles`
      * au serveur, qui rafraîchit SES sources avant de republier les
