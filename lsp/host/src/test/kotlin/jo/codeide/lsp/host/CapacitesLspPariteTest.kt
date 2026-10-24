@@ -385,7 +385,7 @@ class CapacitesLspPariteTest {
         private val TABLE_JAVA: Map<String, String> =
             linkedMapOf(
                 "synchronisation" to "incrémentale",
-                "complétion" to "déclencheurs .␣(,",
+                "complétion" to "déclencheurs .@",
                 "survol" to "oui",
                 "définition" to "oui",
                 "définition de type" to "oui",

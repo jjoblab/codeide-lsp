@@ -54,7 +54,19 @@ public final class ServerCapabilitiesProvider {
         ServerCapabilities caps = new ServerCapabilities();
 
         CompletionOptions completionOptions = new CompletionOptions();
-        completionOptions.setTriggerCharacters(List.of(".", " ", "(", ","));
+        // v1.9.1 : PLUS d'espace, ni « ( » ni « , » comme déclencheurs de
+        // COMPLÉTION. Le client cel ouvre le popup à préfixe VIDE dès que
+        // le caractère précédent est annoncé déclencheur : « espace »
+        // ouvrait le popup après CHAQUE espace (et après l'auto-indent du
+        // retour à la ligne — le texte inséré finit par un espace) avec
+        // la liste bruyante noms+mot-clés (retour propriétaire v1.9.0
+        // « popup juste après une déclaration ou un retour à la ligne »).
+        // La discipline retenue (même frontière que l'éditeur de
+        // référence) : « . » rouvre (accès membre), « @ » rouvre
+        // (annotations) ; TOUT AUTRE caractère non-identifiant referme.
+        // Les « ( » et « , » restent déclencheurs de SIGNATURE HELP
+        // (c'est leur rôle — voir signatureHelpOptions ci-dessous).
+        completionOptions.setTriggerCharacters(List.of(".", "@"));
         // resolveProvider=false car resolveCompletionItem est un no-op
         // (retourne l'item tel quel) — le client ne fait pas de round-trip inutile.
         completionOptions.setResolveProvider(false);
