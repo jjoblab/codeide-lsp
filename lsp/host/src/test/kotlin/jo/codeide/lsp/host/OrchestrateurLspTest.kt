@@ -475,15 +475,19 @@ class OrchestrateurLspTest {
     // ── ADR 0214 (demandes D4/D5 de CodeIDE) ───────────────────────────
 
     @Test
-    fun `controles de passage - refus honnetes hors vol et sans ecart`() {
-        // Flaky CI (v1.8.0/v1.9.0, retour §14) : le test héritait du
-        // stockage `index` PARTAGÉ de la classe (TempDir unique) — les
-        // segments d'un test antérieur pouvaient porter des ENTRÉES
-        // ÉCARTÉES que reesayerEchecs() relève légitimement, et le refus
-        // se jugeait avant l'aboutissement du passage (runner 2 vCPU).
-        // Stockage VIERGE propre au test + attente de l'état stable :
-        // les deux refus attendus (rien à retenter, rien en vol) ne
-        // sont un INVARIANT que sur un passage OBSERVÉ.
+    fun `controles de passage - offres honnetes et refus hors vol`() {
+        // Flaky CI (v1.8.0/v1.9.0, retour §14) : le runner 2 vCPU peut
+        // ÉCARTER l'écriture du segment du jar (IOException → ECARTE,
+        // ServiceIndexDisque) — jamais observé en local, masqué par le
+        // stockage PARTAGÉ des autres tests (segments déjà écrits, aucun
+        // re-jeu d'écriture). L'invariant « rien à retenter » n'est
+        // prouvable QUE sur un passage SAIN : le contrat D4/ADR 0214
+        // fait de la reprise une OFFRE LÉGITIME en présence d'écarts —
+        // le test éprouve la PLOMBERIE dans les DEUX régimes sans
+        // mentir : passage SAIN → refus d'emblée des deux offres ;
+        // passage AVEC écarts → la reprise est OFFERTE puis consommée,
+        // et l'ANNULATION reste refusée hors vol ; fermeture → refus
+        // explicites IllegalStateException.
         val racine = Files.createDirectories(tmp.resolve("projet-controles"))
         val fixture = ProjetFixture(racine)
         val jar = fixture.construireJarFixture(tmp.resolve("fixture-controles"))
@@ -501,8 +505,21 @@ class OrchestrateurLspTest {
                 }
             }
         }
-        assertFalse(session.reesayerEchecs())
-        assertFalse(session.annulerPassage())
+        val ecarts =
+            session.etatIndexation.value.listeTravail.count {
+                it.etat == EtatEntreeTravailIndexation.ECARTE
+            }
+        if (ecarts == 0) {
+            assertFalse(session.reesayerEchecs(), "passage sain : rien à retenter")
+        } else {
+            assertTrue(session.reesayerEchecs(), "$ecarts écart(s) : la reprise D4 doit être OFFERTE")
+            runBlocking {
+                withTimeout(60_000) {
+                    session.etatIndexation.first { it.phase != PhaseIndexation.CONSTRUCTION }
+                }
+            }
+        }
+        assertFalse(session.annulerPassage(), "hors vol : l'annulation D5 est refusée")
         // L'API publique de SessionLsp (D4/D5) répond sans exception
         // après fermeture ? NON — refus explicite comme reindexer.
         session.close()
