@@ -70,9 +70,10 @@ public final class JavaWorkspaceService implements WorkspaceService {
                         ? java.net.URLDecoder.decode(uri.substring(7),
                                 java.nio.charset.StandardCharsets.UTF_8)
                         : uri;
-                // Invalide le cache de parse si le moteur est initialisé.
-                if (environment.isEcjInitialized()) {
-                    environment.jdt().invalidateParseCache(filePath);
+                // Invalide le cache de parse du MOTEUR DU MODULE du fichier
+                // (ADR 0215) — chaque moteur a SON cache.
+                if (environment.isEcjInitialisePour(filePath)) {
+                    environment.jdtPourFichier(filePath).invalidateParseCache(filePath);
                     LOG.fine("didChangeWatchedFiles: invalidated parse cache for " + filePath);
                 }
             } catch (Throwable t) {
@@ -111,10 +112,29 @@ public final class JavaWorkspaceService implements WorkspaceService {
             return CompletableFuture.completedFuture(Either.forLeft(java.util.List.of()));
         }
         try {
-            if (!environment.isEcjInitialized()) {
-                return CompletableFuture.completedFuture(Either.forLeft(java.util.List.of()));
+            // ADR 0215 : recherche UNIE — le DÉFAUT d'abord (construction
+            // paresseuse, miroir du comportement historique : il peut
+            // être nourri par replaceAll sans apparaître dans la map des
+            // modules), puis les moteurs de MODULES VIVANTS (jamais
+            // construits pour une sonde) ; plafond global réparti,
+            // dédupliqué.
+            java.util.List<jo.lspjava.ecj.EcjCompilerEngine> moteurs =
+                    new java.util.ArrayList<>();
+            moteurs.add(environment.jdt());
+            for (jo.lspjava.ecj.EcjCompilerEngine moteur : environment.moteursVivants()) {
+                if (!moteurs.contains(moteur)) moteurs.add(moteur);
             }
-            java.util.List<String> fqns = environment.jdt().symbolesEspace(requete, PLAFOND_SYMBOLES);
+            java.util.List<String> fqns = new java.util.ArrayList<>(PLAFOND_SYMBOLES);
+            java.util.Set<String> vus = new java.util.HashSet<>();
+            for (jo.lspjava.ecj.EcjCompilerEngine moteur : moteurs) {
+                if (fqns.size() >= PLAFOND_SYMBOLES) break;
+                for (String fqn : moteur.symbolesEspace(requete, PLAFOND_SYMBOLES - fqns.size())) {
+                    if (vus.add(fqn)) {
+                        fqns.add(fqn);
+                        if (fqns.size() >= PLAFOND_SYMBOLES) break;
+                    }
+                }
+            }
             java.util.List<SymbolInformation> sortie = new java.util.ArrayList<>(fqns.size());
             for (String fqn : fqns) {
                 SymbolInformation symbole = symboleDe(fqn);
@@ -142,7 +162,17 @@ public final class JavaWorkspaceService implements WorkspaceService {
         int dot = fqn.lastIndexOf('.');
         String simple = dot < 0 ? fqn : fqn.substring(dot + 1);
         String paquet = dot < 0 ? "" : fqn.substring(0, dot);
-        java.nio.file.Path source = environment.jdt().fichierSourceDe(fqn);
+        java.nio.file.Path source = null;
+        // ADR 0215 : source attachée du PREMIER moteur qui la connaît
+        // (défaut paresseux d'abord — miroir historique — puis modules
+        // vivants).
+        if (environment.isEcjInitialized()) source = environment.jdt().fichierSourceDe(fqn);
+        if (source == null) {
+            for (jo.lspjava.ecj.EcjCompilerEngine moteur : environment.moteursVivants()) {
+                source = moteur.fichierSourceDe(fqn);
+                if (source != null) break;
+            }
+        }
         if (source == null) return null;
         Location location =
                 new Location(source.toUri().toString(), plageDeclaration(source, simple));

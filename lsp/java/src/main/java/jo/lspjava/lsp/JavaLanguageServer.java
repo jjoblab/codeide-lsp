@@ -198,8 +198,11 @@ public final class JavaLanguageServer implements NavLanguageServer {
         // un fichier l'index est déjà prêt (ou en cours de construction — le
         // didOpen attendra, mais le verrou synchronized de EcjCompilerEngine
         // n'est pas tenu pendant la construction).
+        // ADR 0215 : défaut + moteurs des modules NOURRIS — le premier
+        // didOpen d'un fichier de :app ne paie plus le cold start de SON
+        // moteur (racines sources/jars du modèle).
         try {
-            environment.jdt().preWarmIndex();
+            environment.prechaufferTousLesMoteurs();
             LOG.info("[preWarmIndex] démarré en arrière-plan");
         } catch (Throwable t) {
             LOG.warning("[preWarmIndex] échec du démarrage: " + t);

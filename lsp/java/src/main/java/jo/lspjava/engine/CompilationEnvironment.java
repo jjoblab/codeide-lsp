@@ -639,6 +639,122 @@ public final class CompilationEnvironment {
     }
 
     /**
+     * Routeur fichier → module — couture de l'HÔTE (découverte D6 du
+     * rapport d'audit §14, ADR 0215) : le serveur LSP doit analyser un
+     * fichier avec le moteur de SON module (racines sources, jars,
+     * android.jar du modèle Gradle), pas avec le contexte défaut. Le lot
+     * E a créé les contextes par module et {@link #jdt(String)} ; ce qui
+     * manquait est le ROUTAGE — l'association fichier → module vivait
+     * côté modèle (`AssociationFichier`) sans être branchée.
+     *
+     * <p>Le routeur est CONSULTÉ À CHAQUE REQUÊTE (jamais mis en cache
+     * par l'environnement) : l'hôte lit l'instantané courant de son
+     * modèle — un fichier ajouté à un nouveau sourceset route vers le
+     * bon module dès la sync suivante, SANS re-pose du routeur. Un
+     * routeur {@code null} (jamais posé — tests directs, packs
+     * historiques) maintient le comportement historique : TOUT fichier
+     * vers le contexte défaut.</p>
+     */
+    public interface RouteurModules {
+        /**
+         * Module propriétaire d'un fichier source.
+         *
+         * @param cheminFichier chemin ABSOLU sur disque (URI décodée)
+         * @return le nom du module («&nbsp;:app&nbsp;»), ou {@code null}
+         *         / vide pour le contexte défaut
+         */
+        String moduleDe(String cheminFichier);
+    }
+
+    /** Routeur posé par l'hôte — {@code null} = comportement historique. */
+    private volatile RouteurModules routeurModules;
+
+    /**
+     * Pose le routeur fichier → module (idempotent, aucune
+     * invalidation : le routeur est une LECTURE, jamais une donnée de
+     * moteur).
+     */
+    public void setRouteurModules(RouteurModules routeur) {
+        this.routeurModules = routeur;
+    }
+
+    /** Le routeur posé, ou {@code null} (transparence/tests). */
+    public RouteurModules routeurModules() {
+        return routeurModules;
+    }
+
+    /**
+     * Moteur d'un FICHIER : celui de SON module quand le routeur
+     * l'associe, sinon le contexte défaut. C'est LE point d'entrée des
+     * services LSP (diagnostics, hover, complétion, navigation,
+     * renommage…) — le diagnostic d'un fichier de {@code :app} vit sur
+     * les racines sources et le classpath de {@code :app}, pas sur le
+     * contexte défaut (découverte D6 : sans ce routage, un type du
+     * MÊME PAQUET que le fichier — sans import — restait « cannot be
+     * resolved » bien que le modèle l'eût nourri, car seul le contexte
+     * défaut — android.jar seul — était consulté).
+     *
+     * <p>Le routeur est consulté HORS verrou ; {@link #jdt(String)}
+     * gère ensuite le sien. Un échec du routeur ne doit JAMAIS casser
+     * une requête : repli explicite sur le défaut (journal fin).</p>
+     */
+    public EcjCompilerEngine jdtPourFichier(String cheminFichier) {
+        RouteurModules routeur = routeurModules;
+        if (routeur == null || cheminFichier == null) {
+            return jdt();
+        }
+        try {
+            String module = routeur.moduleDe(cheminFichier);
+            return jdt(module);
+        } catch (Throwable t) {
+            LOG.log(java.util.logging.Level.FINE,
+                    "routage module échoué pour " + cheminFichier + " — défaut", t);
+            return jdt();
+        }
+    }
+
+    /**
+     * Le moteur du contexte de [cheminFichier] est-il DÉJÀ construit —
+     * sans le construire (miroir routé de {@link #isEcjInitialized()},
+     * même usage : éviter un cold start synchrone sur le fil LSP pour
+     * une pure invalidation de cache) ?
+     */
+    public boolean isEcjInitialisePour(String cheminFichier) {
+        RouteurModules routeur = routeurModules;
+        if (routeur == null || cheminFichier == null) {
+            return isEcjInitialized();
+        }
+        try {
+            return isEcjInitialized(routeur.moduleDe(cheminFichier));
+        } catch (Throwable t) {
+            LOG.log(java.util.logging.Level.FINE,
+                    "routage module échoué pour " + cheminFichier + " — défaut", t);
+            return isEcjInitialized();
+        }
+    }
+
+    /**
+     * Moteurs VIVANTS (défaut + modules déjà construits), ordre
+     * stable (défaut d'abord, puis modules dans l'ordre d'insertion de
+     * la map) — pour les requêtes SANS fichier porteur (le stub
+     * décompilé d'un fqcn : le classpath pertinent est celui du module
+     * appelant, déjà perdu — on sonde les moteurs qui EXISTENT, sans en
+     * construire).
+     */
+    public java.util.List<EcjCompilerEngine> moteursVivants() {
+        java.util.List<EcjCompilerEngine> out = new ArrayList<>();
+        synchronized (this) {
+            if (contexteDefaut.moteur != null) out.add(contexteDefaut.moteur);
+        }
+        for (ContexteModule c : contextes.values()) {
+            synchronized (c) {
+                if (c.moteur != null) out.add(c.moteur);
+            }
+        }
+        return out;
+    }
+
+    /**
      * Permet de tester si le moteur ecj du contexte DÉFAUT a déjà été
      * initialisé sans le construire paresseusement. Utilisé par
      * {@code didChange} pour éviter de déclencher {@code buildJarIndex}
@@ -674,6 +790,50 @@ public final class CompilationEnvironment {
         synchronized (c) {
             return c.moteur != null;
         }
+    }
+
+    /**
+     * Pré-chauffe l'index de TOUS les moteurs UTILES (défaut + modules
+     * NOURRIS — listes non vides, ADR 0215) en arrière-plan : le premier
+     * didOpen d'un fichier de {@code :app} ne paie plus le cold start
+     * de SON moteur. Le DÉFAUT est préchauffé SANS CONDITION (comportement
+     * historique du preWarmIndex d'initialize : le contexte défaut peut
+     * être nourri par {@code replaceAll} — moteur historique des tests
+     * et des packs anciens — sans apparaître dans la map des modules) ;
+     * les contextes de modules VIDES (jamais syncés) sont ÉCARTÉS — les
+     * construire ne préparerait qu'un moteur vide qu'une sync
+     * invaliderait aussitôt.
+     */
+    public void prechaufferTousLesMoteurs() {
+        try {
+            jdt().preWarmIndex();
+        } catch (Throwable t) {
+            LOG.log(java.util.logging.Level.FINE,
+                    "pré-chauffe du moteur défaut échouée (ignorée)", t);
+        }
+        for (String module : modulesNourris()) {
+            try {
+                jdt(module).preWarmIndex();
+            } catch (Throwable t) {
+                LOG.log(java.util.logging.Level.FINE,
+                        "pré-chauffe du moteur " + module + " échouée (ignorée)", t);
+            }
+        }
+    }
+
+    /**
+     * Modules dont le contexte est NOURRI (une liste au moins non vide) —
+     * ordre stable (tri) pour un pré-chauffe déterministe.
+     */
+    private synchronized java.util.List<String> modulesNourris() {
+        java.util.List<String> out = new ArrayList<>();
+        for (java.util.Map.Entry<String, ContexteModule> e : contextes.entrySet()) {
+            if (!e.getValue().sourceDirs.isEmpty() || !e.getValue().classpathEntries.isEmpty()) {
+                out.add(e.getKey());
+            }
+        }
+        out.sort(String::compareTo);
+        return out;
     }
 
     /** Invalidation du moteur du contexte défaut (sous verrou {@code this}). */

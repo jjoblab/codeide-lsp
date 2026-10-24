@@ -110,7 +110,7 @@ public final class CodeActionService {
         String filePackage = filePackage(source);
 
         switch (family) {
-            case UNRESOLVED_REFERENCE -> out.addAll(importFixes(args, source, filePackage));
+            case UNRESOLVED_REFERENCE -> out.addAll(importFixes(args, source, filePackage, filePath));
             case UNDEFINED_METHOD -> out.addAll(createMethodFixes(args, diagnostic,
                     source, filePath));
             case UNUSED_IMPORT -> {
@@ -155,7 +155,8 @@ public final class CodeActionService {
      * exactement — même édition d'auto-import que la complétion, mais
      * atteignable depuis l'ampoule sur un nom déjà tapé.
      */
-    private List<CodeAction> importFixes(List<String> args, String source, String filePackage) {
+    private List<CodeAction> importFixes(List<String> args, String source, String filePackage,
+                                         String filePath) {
         List<CodeAction> out = new ArrayList<>();
         if (args.isEmpty() || environment == null) return out;
         String name = args.get(0);
@@ -169,7 +170,10 @@ public final class CodeActionService {
 
         List<String> candidates;
         try {
-            candidates = environment.jdt().fqnsForSimpleTypeName(name);
+            // ADR 0215 : candidats du classpath du MODULE du fichier (le
+            // défaut n'a que la plateforme — les types des dépendances
+            // du module, eux, vivent dans SON contexte).
+            candidates = environment.jdtPourFichier(filePath).fqnsForSimpleTypeName(name);
         } catch (Throwable t) {
             return out;
         }
@@ -393,7 +397,7 @@ public final class CodeActionService {
     private EnclosingDecl enclosingDecl(String source, String filePath, int offset) {
         if (environment == null || filePath == null) return null;
         try {
-            var cud = environment.jdt().resolveUnit(filePath, source, false);
+            var cud = environment.jdtPourFichier(filePath).resolveUnit(filePath, source, false);
             if (cud == null || cud.scope == null) return null;
             final int at = clamp(offset, 0, Math.max(0, source.length() - 1));
             final org.eclipse.jdt.internal.compiler.ast.TypeDeclaration[] bestType =

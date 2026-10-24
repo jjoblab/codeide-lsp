@@ -65,7 +65,10 @@ public final class DiagnosticService {
      *         kill-switch) — l'appelant gère la dégradation.
      */
     public List<Diagnostic> diagnose(String filePath, String source) {
-        var jdt = environment.jdt();
+        // ADR 0215 (découverte D6) : moteur de SON module — un type du
+        // même paquet (sans import) ne résout que sur les RACINES
+        // SOURCES du module, qui ne vivent que dans SON contexte.
+        var jdt = environment.jdtPourFichier(filePath);
         if (!jdt.isLikelyUsable()) {
             // Lot h4 : mode instantané — la syntaxe seule plutôt que le
             // silence (le régime plein remplace à la montée de plateforme).

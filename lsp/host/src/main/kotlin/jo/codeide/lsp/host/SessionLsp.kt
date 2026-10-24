@@ -3,6 +3,7 @@ package jo.codeide.lsp.host
 import jo.codeeditor.lsp.LanguageServerDefinition
 import jo.codeeditor.lsp.connection.InProcessStreamConnectionProvider
 import jo.codeeditor.lsp.connection.StreamConnectionProvider
+import jo.codeide.lsp.model.AssociationFichier
 import jo.codeide.lsp.model.DepotModeleLsp
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.PersistanceModeleLsp
@@ -170,6 +171,17 @@ public class SessionLsp(
     init {
         if (jdkHome != null) {
             environnement.setJdkHome(jdkHome)
+        }
+        // ADR 0215 (découverte D6) : ROUTAGE fichier → module — le serveur
+        // Java analyse chaque fichier avec le moteur de SON module (racines
+        // sources, jars, android.jar du modèle) au lieu du contexte défaut
+        // (android.jar seul). Le routeur lit l'INSTANTANÉ COURANT du dépôt à
+        // CHAQUE requête : un modèle remplacé par la sync suivante route
+        // aussitôt sans re-pose. `AssociationFichier` (modèle) faisait déjà
+        // l'association — il n'était branché NULLE PART.
+        environnement.setRouteurModules { chemin ->
+            depot.instantane.value
+                ?.let { projet -> AssociationFichier.associer(projet, chemin)?.nom }
         }
         // Lot h4 écart 1 (v0.102.0) : la plateforme du toolchain rejoint le
         // contexte PAR DÉFAUT AVANT tout branchement d'onglet — la voie

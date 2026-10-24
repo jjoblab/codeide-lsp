@@ -90,6 +90,167 @@ public object OutilsHarnais {
         File(src, "autre/Homonymes.kt").writeText(HOMONYMES_KT)
     }
 
+    // ── Projet JAVA (découverte D6, ADR 0215) ─────────────────────────
+
+    /** Le cas du propriétaire : deux fichiers du MÊME PAQUET + un
+     *  ViewBinding DÉJÀ GÉNÉRÉ dans la racine `generated` du modèle. */
+    public val MAIN_ACTIVITY_JAVA: String =
+        """
+        package com.ex.app;
+
+        import com.ex.app.databinding.ActivityMainBinding;
+
+        public class MainActivity extends android.app.Activity {
+            private final Greeter greeter = new Greeter();
+            private ActivityMainBinding binding;
+
+            @Override
+            public void onCreate(android.os.Bundle savedInstanceState) {
+                super.onCreate(savedInstanceState);
+                binding = ActivityMainBinding.inflate(getLayoutInflater());
+                setContentView(binding.getRoot());
+                greeter.saluer();
+            }
+        }
+        """.trimIndent() + "\n"
+
+    public val GREETER_JAVA: String =
+        """
+        package com.ex.app;
+
+        public class Greeter {
+            public String saluer() {
+                return "Salut";
+            }
+        }
+        """.trimIndent() + "\n"
+
+    /** ViewBinding façon AGP (généré dans `<pkg>.databinding`). */
+    public val ACTIVITY_MAIN_BINDING_JAVA: String =
+        """
+        package com.ex.app.databinding;
+
+        public final class ActivityMainBinding {
+            public android.widget.TextView root;
+
+            public static ActivityMainBinding inflate(android.view.LayoutInflater inflater) {
+                return new ActivityMainBinding();
+            }
+
+            public android.widget.TextView getRoot() {
+                return root;
+            }
+        }
+        """.trimIndent() + "\n"
+
+    /**
+     * Prépare le projet JAVA de test sur disque — `src` (principal) et
+     * `generated` (racine des sources générées, ViewBinding compris),
+     * le MÊME montage que le modèle v8 du tooling.
+     */
+    public fun preparerProjetJava(racine: File) {
+        val src = File(racine, "src/com/ex/app").apply { mkdirs() }
+        File(src, "MainActivity.java").writeText(MAIN_ACTIVITY_JAVA)
+        File(src, "Greeter.java").writeText(GREETER_JAVA)
+        val generated = File(racine, "generated/com/ex/app/databinding").apply { mkdirs() }
+        File(generated, "ActivityMainBinding.java").writeText(ACTIVITY_MAIN_BINDING_JAVA)
+    }
+
+    /**
+     * Écrit le `ClasspathResult` JSON du projet Java (module `:app` :
+     * src + generated + android.jar de la plateforme) — le client
+     * harnais le pousse au serveur stdio par la notification
+     * `harnais/appliquerClasspath` APRÈS le didOpen (le live-republish
+     * est la PREUVE que le routage D6 nourrit le moteur du module).
+     */
+    public fun ecrireClasspathJava(
+        racine: File,
+        androidJar: File?,
+    ): File {
+        val resultat =
+            jo.codeide.tooling.protocol.ClasspathResult(
+                id = "harnais-java",
+                protocolVersion = 1,
+                projectDir = racine.absolutePath,
+                modules =
+                    listOf(
+                        jo.codeide.tooling.protocol.ClasspathModule(
+                            name = ":app",
+                            sourceDirs = listOf(File(racine, "src").absolutePath),
+                            entries =
+                                listOfNotNull(
+                                    androidJar?.let {
+                                        jo.codeide.tooling.protocol.ClasspathEntry(
+                                            it.absolutePath,
+                                            jo.codeide.tooling.protocol.ClasspathKind.JAR,
+                                            "platform",
+                                        )
+                                    },
+                                ),
+                            fichiersGeneres = listOf(File(racine, "generated").absolutePath),
+                            androidJar = androidJar?.absolutePath,
+                        ),
+                    ),
+            )
+        val fichier = File(racine, "classpath-harnais.json")
+        fichier.writeText(
+            kotlinx.serialization.json.Json.encodeToString(
+                jo.codeide.tooling.protocol.ClasspathResult
+                    .serializer(),
+                resultat,
+            ),
+        )
+        return fichier
+    }
+
+    /**
+     * Démarre le serveur LSP JAVA (stdio) et négocie
+     * l'initialisation — miroir de [demarrerServeur] pour la face
+     * Java de la découverte D6 (projets Java réels : classement par
+     * module, ViewBinding, same-package).
+     */
+    public fun demarrerServeurJava(
+        nomGroupe: String,
+        initialiser: Boolean = true,
+    ): Connexion {
+        val racine = File(racineTravail, "projet-java-$nomGroupe").apply { mkdirs() }
+        preparerProjetJava(racine)
+        val javaExe = File(System.getProperty("java.home"), "bin/java")
+        val classpath = System.getProperty("java.class.path")
+        val constructeur =
+            ProcessBuilder(
+                javaExe.absolutePath,
+                "-Xmx640m",
+                "-Dfile.encoding=UTF-8",
+                "-cp",
+                classpath,
+                "jo.codeide.lsp.host.harnais.ServeurStdioJava",
+            )
+        constructeur.environment()["HARNAIS_RACINE"] = racine.absolutePath
+        androidJar?.let { constructeur.environment()["HARNAIS_ANDROID_JAR"] = it.absolutePath }
+        constructeur.environment()["HARNAIS_INDEX"] = dossierIndexPartage.absolutePath
+        val processus = constructeur.start()
+        val stderr = StringBuilder()
+        thread(isDaemon = true, name = "stderr-java-$nomGroupe") {
+            processus.errorStream.bufferedReader().forEachLine { stderr.appendLine(it) }
+        }
+        val client = ClientCollecteur()
+        val lanceur =
+            org.eclipse.lsp4j.jsonrpc.Launcher
+                .Builder<org.eclipse.lsp4j.services.LanguageServer>()
+                .setLocalService(client)
+                .setRemoteInterface(org.eclipse.lsp4j.services.LanguageServer::class.java)
+                .setInput(processus.inputStream)
+                .setOutput(processus.outputStream)
+                .create()
+        lanceur.startListening()
+        val connexion = Connexion(processus, lanceur.remoteProxy, lanceur.remoteEndpoint, client, racine, stderr)
+        if (initialiser) {
+            initialiser(connexion)
+        }
+        return connexion
+    }
+
     public val CALCUL_KT: String =
         """
         package jo.demo

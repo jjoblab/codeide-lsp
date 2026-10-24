@@ -57,6 +57,10 @@ internal object DiagnosticsSemantiques {
      * @property declarationsProjet déclarations du projet (document d'abord).
      * @property indexAppelables index des appelables Kotlin (premier
      *        niveau du classpath) — `null` : régime sans classpath.
+     * @property portFichier lecture des fichiers FRÈRES déclarants
+     *        (voie 2-ter « membres hérités », ADR 0216 — `null` = fermeture
+     *        limitée aux clauses ÉCRITES du document courant : la session
+     *        de production fournit toujours le port, miroir du GO TO Super).
      */
     internal data class Contexte(
         val texte: CharSequence,
@@ -64,6 +68,7 @@ internal object DiagnosticsSemantiques {
         val resolution: ResolutionKotlin,
         val declarationsProjet: List<DeclarationProjet>,
         val indexAppelables: IndexAppelablesKotlin?,
+        val portFichier: jo.lspkotlin.resolve.SuperKotlin.PortFichier? = null,
     )
 
     /**
@@ -116,6 +121,12 @@ internal object DiagnosticsSemantiques {
             if (estDansDirective(racine, reference)) return@parcourir
             // Sélecteur qualifié : le récepteur peut être inconnu.
             if (estSelecteurQualifie(racine, reference)) return@parcourir
+            // E4 (découverte du rapport §14, ADR 0216) : SEGMENT d'un
+            // TYPE QUALIFIÉ écrit (`android.os.Bundle` produit TROIS
+            // REFERENCE_EXPRESSION — android, os, Bundle — que la
+            // résolution de NOM ne résout pas individuellement : le
+            // « beaucoup d'unresolved » des projets Android réels).
+            if (estSegmentTypeQualifie(racine, reference, contexte)) return@parcourir
             if (estResolu(racine, reference, nom, contexte, index)) return@parcourir
             val jeton = reference.jetonsDescendants().firstOrNull { it.type == KtTokens.IDENTIFIER }
             resultats +=
@@ -139,6 +150,64 @@ internal object DiagnosticsSemantiques {
         return chaine.any {
             it.type == KtNodeTypes.IMPORT_DIRECTIVE || it.type == KtNodeTypes.PACKAGE_DIRECTIVE
         }
+    }
+
+    /** Genres de déclaration qui SONT des types (miroir SuperKotlin). */
+    private val GENRES_TYPES_SEGMENT =
+        setOf(GenreDeclaration.CLASSE, GenreDeclaration.INTERFACE, GenreDeclaration.OBJET)
+
+    /**
+     * E4 : la référence est-elle un SEGMENT d'un TYPE QUALIFIÉ écrit
+     * qu'il faut TAIRE (`kt.unresolved` JAMAIS par segment) ?
+     *
+     * Le type COMPLET (`android.os.Bundle`) résout par la VUE du
+     * classpath (membresDe) ou le PROJET (classes/scan) — pas par la
+     * résolution de NOM du segment isolé. Si le type complet RÉSOUT :
+     * TOUS ses segments sont muets. S'il est INTROUVABLE : seul le
+     * DERNIER segment (nom de classe, celui que l'utilisateur corrige)
+     * reste diagnostiqué par la voie normale — les segments PAQUET ne
+     * le sont JAMAIS (miroir kotlinc : un segment faillible, pas
+     * trois faux positifs).
+     */
+    private fun estSegmentTypeQualifie(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+        contexte: Contexte,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        // Les segments d'un type QUALIFIÉ sont des USER_TYPE IMBRIQUÉS
+        // (zz > zz.qqq > zz.qqq.Inconnu — grammaire vendorée PSI) : le
+        // type COMPLET est l'USER_TYPE le plus EXTERNE de la chaîne
+        // CONTIGUË (sans traverser TYPE_ARGUMENT_LIST : le segment
+        // `a.b.C` de `List<a.b.C>` ne doit pas avaler `List`).
+        val indexUser = chaine.indexOfLast { it.type == KtNodeTypes.USER_TYPE }
+        if (indexUser < 0) return false
+        var externe = chaine[indexUser]
+        var parent = indexUser - 1
+        while (parent >= 0 && chaine[parent].type == KtNodeTypes.USER_TYPE) {
+            externe = chaine[parent]
+            parent--
+        }
+        val ecrit = contexte.texte.subSequence(externe.debut, externe.fin)
+        if ('.' !in ecrit) return false // type SIMPLE : voie normale inchangée
+        val nomComplet = ecrit.toString().trim().trimEnd('?').trim()
+        if (nomComplet.isEmpty()) return true
+        // Le type COMPLET vit-il dans le classpath (vue) ou le projet ?
+        if (contexte.resolution.membresDe(nomComplet) != null) return true
+        if (contexte.contexteNom.classesProjet[nomComplet] != null) return true
+        val fqcnProjet =
+            contexte.declarationsProjet.any { d ->
+                d.conteneur == null &&
+                    d.genre in GENRES_TYPES_SEGMENT &&
+                    (d.paquet?.let { "$it." }.orEmpty()) + d.nom == nomComplet
+            }
+        if (fqcnProjet) return true
+        // Type complet introuvable : seul le DERNIER segment reste
+        // diagnostiquable — les segments PAQUET sont TOUJOURS muets.
+        val dernierIdentifiant =
+            externe.jetonsDescendants().lastOrNull { it.type == KtTokens.IDENTIFIER }
+                ?: return true
+        return reference.debut != dernierIdentifiant.debut
     }
 
     /** La référence est-elle le SÉLECTEUR d'une expression qualifiée ? */
@@ -186,6 +255,7 @@ internal object DiagnosticsSemantiques {
             contexte.resolution,
             contexte.declarationsProjet,
             index,
+            contexte.portFichier,
         )
 
     // ── kt.typeMismatch ────────────────────────────────────────────────

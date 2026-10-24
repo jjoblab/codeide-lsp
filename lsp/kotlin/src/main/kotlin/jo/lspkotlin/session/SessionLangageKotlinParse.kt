@@ -183,6 +183,7 @@ internal class SessionLangageKotlinParse(
             // K4 : les diagnostics SÉMANTIQUES vivent sous le MÊME verrou
             // (le contexte de résolution lit l'état de classpath).
             val contexteNom = contexteNomDe(document, uri)
+            val declarations = declarationsProjet(document, uri, contexteNom.paquet)
             val semantiques =
                 DiagnosticsSemantiques.calculer(
                     document.arbre,
@@ -190,7 +191,7 @@ internal class SessionLangageKotlinParse(
                         texte = document.texte,
                         contexteNom = contexteNom,
                         resolution = resolution,
-                        declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
+                        declarationsProjet = declarations,
                         // ADR 0211 — garde de sous-lecture : index non
                         // couvert (passe moteur en vol) ⇒ AUCUN diagnostic
                         // non résolu sur le classpath (impossible de
@@ -198,6 +199,11 @@ internal class SessionLangageKotlinParse(
                         // silence » du LSP XML) ; recalculé à CHAQUE
                         // requête — jamais d'état périmé après publication.
                         indexAppelables = indexSiPret(),
+                        // ADR 0216 — voie « membres hérités » : le port du
+                        // GO TO Super (arbre vif du frère OUVERT, sinon
+                        // lecture disque + parse bornées) traverse les
+                        // maillons PROJET de la fermeture des supertypes.
+                        portFichier = portFichierDeclaration(declarations),
                     ),
                 )
             (syntaxiques + semantiques).sortedWith(compareBy({ it.debut }, { it.code }))
@@ -283,17 +289,22 @@ internal class SessionLangageKotlinParse(
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val contexteNom = contexteNomDe(document, uri)
+            val declarations = declarationsProjet(document, uri, contexteNom.paquet)
             CandidatsImport.fqcns(
                 racine = document.arbre.racine,
                 decalage = decalage,
                 contexteNom = contexteNom,
                 resolution = resolution,
-                declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
+                declarationsProjet = declarations,
                 // ADR 0211 : même garde de sous-lecture que les
                 // diagnostics — un index non couvert n'invente NI
                 // candidat NI absence.
                 index = indexSiPret(),
                 vue = classpath?.vue,
+                // ADR 0216 : membres hérités — même prédicat que le
+                // diagnostic (jamais d'import proposé pour un appel NU
+                // déjà résolu par la fermeture des supertypes).
+                portFichier = portFichierDeclaration(declarations),
             )
         }
 

@@ -208,7 +208,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // fichier — une ligne honnête l'annonce une fois par document
         // (le live-republish remplacera tout au classpath suivant).
         try {
-            if (!environment.jdt().isLikelyUsable() && server != null) {
+            // ADR 0215 : le régime instantané se juge sur le moteur du
+            // MODULE du fichier (ses racines/jars), pas sur le défaut.
+            if (!environment.jdtPourFichier(uriToPath(uri)).isLikelyUsable() && server != null) {
                 server.logInfo("[h4] plateforme absente — mode instantané : "
                         + "diagnostics de syntaxe + symboles du fichier ("
                         + uriToPath(uri) + ")");
@@ -221,9 +223,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // l'éditeur, puis on re-planifie via le debounce standard (50 ms)
         // pour laisser le temps à l'index de se construire — didOpen ne
         // doit jamais bloquer 2-6 s sur buildJarIndex.
-        if (environment.isEcjInitialized()) {
+        if (environment.isEcjInitialisePour(uriToPath(uri))) {
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(uriToPath(uri));
                 if (!jdt.isIndexReady()) {
                     // Index en cours de construction — publier vide + retry.
                     server.publishDiagnostics(uri, 0, Collections.emptyList());
@@ -296,8 +298,8 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // environment.jdt() pourrait déclencher la construction synchrone
         // de EcjCompilerEngine (et donc buildJarIndex) sur le thread LSP4J.
         try {
-            if (environment.isEcjInitialized()) {
-                environment.jdt().invalidateParseCache(uriToPath(uri));
+            if (environment.isEcjInitialisePour(uriToPath(uri))) {
+                environment.jdtPourFichier(uriToPath(uri)).invalidateParseCache(uriToPath(uri));
             }
         } catch (Throwable t) {
             // Best-effort — le cache se fera remplacer à la prochaine
@@ -360,8 +362,8 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         try {
             String filePath = uriToPath(uri);
             // Invalide le cache de parse pour forcer un re-diagnostic.
-            if (environment.isEcjInitialized()) {
-                environment.jdt().invalidateParseCache(filePath);
+            if (environment.isEcjInitialisePour(filePath)) {
+                environment.jdtPourFichier(filePath).invalidateParseCache(filePath);
             }
             if (!openDocuments.containsKey(uri)) {
                 // Document jamais ouvert (pas de buffer) : l'invalidation
@@ -396,11 +398,11 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // annulée/superseded/timed out, pour que le client
         // sache qu'il doit re-demander la complétion à la prochaine frappe.
         boolean incomplete = false;
+        String filePath = uriToPath(uri);
         try {
-            var jdt = environment.jdt();
+            var jdt = environment.jdtPourFichier(filePath);
             if (jdt.isLikelyUsable()) {
                 // Soumet la complétion au EcjEngineScheduler.
-                String filePath = uriToPath(uri);
                 try {
                     var future = jdt.scheduler().submitInteractive(filePath,
                             () -> {
@@ -727,7 +729,14 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         }
         try {
             String fqcn = params.getFqcn();
-            String src = environment.jdt().decompiledSource(fqcn);
+            // ADR 0215 : le classpath pertinent est celui du module
+            // APPELANT (perdu à cette frontière) — on sonde les moteurs
+            // VIVANTS sans en construire : défaut d'abord, puis modules.
+            String src = null;
+            for (var m : environment.moteursVivants()) {
+                src = m.decompiledSource(fqcn);
+                if (src != null) break;
+            }
             return CompletableFuture.completedFuture(new DecompiledSourceResult(src));
         } catch (Throwable t) {
             return CompletableFuture.completedFuture(new DecompiledSourceResult(null));
@@ -766,9 +775,10 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     private Location binaryDefinitionLocation(String filePath, String source,
                                                int offset, boolean targetType) {
         try {
-            String fqcn = environment.jdt().fqcnAt(filePath, source, offset, targetType);
+            var moteurBinaire = environment.jdtPourFichier(filePath);
+            String fqcn = moteurBinaire.fqcnAt(filePath, source, offset, targetType);
             if (fqcn == null || fqcn.isEmpty()) return null;
-            if (!environment.jdt().isBinaryType(fqcn)) return null;
+            if (!moteurBinaire.isBinaryType(fqcn)) return null;
             String uri = "jdt://decompiled/" + fqcn.replace('.', '/') + ".java";
             // Plage vide (0:0-0:0) : le buffer décompilé n'a pas de
             // position cible — le caret reste en haut du fichier. Le client
@@ -823,7 +833,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // d'imports existant (trié, sans doublons).
         if (wantsOrganizeImports) {
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(uriToPath(uri));
                 if (jdt.isLikelyUsable()) {
                     var organizer = new jo.lspjava.ecj.EcjImportOrganizer(jdt);
                     var result = organizer.organize(uriToPath(uri), source);
@@ -940,7 +950,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             String filePath = uriToPath(uri);
             List<jo.lspjava.api.Diagnostic> diags = null;
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 var future = jdt.scheduler().submitDiagnostics(filePath,
                         () -> diagnosticService.diagnose(filePath, source));
                 diags = future.get(
@@ -961,14 +971,14 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             if (diags == null) return;
             boolean downgradeRMode = false;
             try {
-                downgradeRMode = !environment.jdt().hasRealRClasses();
+                downgradeRMode = !environment.jdtPourFichier(filePath).hasRealRClasses();
             } catch (Throwable ignored) {
                 // Moteur non instanciable — pas de downgrade (mode strict).
             }
             boolean downgradeDatabindingMode = false;
             try {
                 downgradeDatabindingMode =
-                        !environment.jdt().hasGeneratedDatabindingClasses();
+                        !environment.jdtPourFichier(filePath).hasGeneratedDatabindingClasses();
             } catch (Throwable ignored) {
                 // Moteur non instanciable — pas de downgrade (mode strict).
             }
@@ -1080,7 +1090,10 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             }
         }
         try {
-            var jdt = environment.jdt();
+            // ADR 0215 : le scheduler est celui du MOTEUR DU FICHIER —
+            // la supersession par fichier reste cohérente avec les
+            // lambdas qui routeront vers le MÊME moteur.
+            var jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) {
                 return CompletableFuture.completedFuture(fallback);
             }
@@ -1265,22 +1278,26 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
     }
 
     /**
-     * Dégrade ERROR→HINT les imports non résolus vers le package Data
-     * Binding ({@code <namespace>.databinding.*}) tant qu'AUCUNE classe
-     * générée n'existe (v0.108.0, retour propriétaire — même philosophie
-     * « zéro devinette » que {@link #maybeDowngradeUnresolvedR}).
+     * Dégrade ERROR→HINT les imports non résolus vers le package de
+     * LIAISON ({@code <namespace>.databinding.*} — ViewBinding ET
+     * DataBinding, découverte E2 du rapport d'audit §14 : les classes
+     * {@code ActivityMainBinding} du ViewBinding vivent AUSSI sous ce
+     * segment) tant qu'AUCUNE classe générée n'existe (v0.108.0, retour
+     * propriétaire — même philosophie « zéro devinette » que
+     * {@link #maybeDowngradeUnresolvedR}).
      *
-     * <p>Constat : les classes XxxBinding ne sont produites par AGP
-     * (dataBindingGenBaseClasses, puis compilation) qu'AU BUILD — la
-     * sync ne les génère PAS. Avant tout build, l'import est
-     * STRUCTURELLEMENT non résoluble : l'ERROR sec « The import X
-     * cannot be resolved » est exact mais incurable côté utilisateur —
-     * on affiche honnêtement la situation (HINT + remède). Reconnaissance
-     * par les ARGUMENTS STRUCTURÉS du problème ecj (stables entre
-     * locales : arguments()[0] = nom importé, pattern JavaProblemCodes)
-     * et non par le message localisé ; dès que la première classe
-     * générée existe (sonde du moteur), le downgrade se coupe et les
-     * vraies erreurs (faute de frappe) repassent en ERROR intégral.</p>
+     * <p>Constat : les classes XxxBinding (ViewBinding : inflate/root,
+     * DataBinding : dataBindingGenBaseClasses) ne sont produites par
+     * AGP qu'AU BUILD — la sync ne les génère PAS. Avant tout build,
+     * l'import est STRUCTURELLEMENT non résoluble : l'ERROR sec « The
+     * import X cannot be resolved » est exact mais incurable côté
+     * utilisateur — on affiche honnêtement la situation (HINT +
+     * remède). Reconnaissance par les ARGUMENTS STRUCTURÉS du problème
+     * ecj (stables entre locales : arguments()[0] = nom importé,
+     * pattern JavaProblemCodes) et non par le message localisé ; dès
+     * que la première classe générée existe (sonde du moteur), le
+     * downgrade se coupe et les vraies erreurs (faute de frappe)
+     * repassent en ERROR intégral.</p>
      */
     private void maybeDowngradeUnresolvedDatabinding(
             jo.lspjava.api.Diagnostic d,
@@ -1297,10 +1314,11 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // ou un paquet homonyme tiers ne déclenchent PAS le downgrade.
         if (cible == null || !cible.contains(".databinding")) return;
         lsp.setSeverity(org.eclipse.lsp4j.DiagnosticSeverity.Hint);
-        lsp.setMessage(lsp.getMessage() + " — les classes Data Binding"
-                + " (XxxBinding) sont générées par AGP lors de la construction"
-                + " (dataBindingGenBaseClasses) : la sync seule ne les crée pas."
-                + " Lance un Build : elles apparaîtront et cette note s'effacera.");
+        lsp.setMessage(lsp.getMessage() + " — les classes de liaison"
+                + " (ViewBinding/DataBinding, XxxBinding) sont générées par"
+                + " AGP lors de la construction : la sync seule ne les crée"
+                + " pas. Lance un Build : elles apparaîtront et cette note"
+                + " s'effacera.");
     }
 
     // ==================== Surlignage sémantique (semantic tokens) ====================
@@ -1324,9 +1342,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         String source = openDocuments.getOrDefault(uri, "");
         List<Integer> data = new ArrayList<>();
         try {
-            var jdt = environment.jdt();
+            String filePath = uriToPath(uri);
+            var jdt = environment.jdtPourFichier(filePath);
             if (jdt.isLikelyUsable()) {
-                String filePath = uriToPath(uri);
                 final List<int[]> rows;
                 try {
                     var future = jdt.scheduler().submitAnalysis(() -> {
@@ -1414,7 +1432,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             // receveur (binaires incluses), paramètre actif compté, noms depuis
             // les déclarations sources du projet.
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 if (jdt.isLikelyUsable()) {
                     var helper = new jo.lspjava.ecj.EcjSignatureHelp(jdt);
                     var result = helper.signatureHelpAt(filePath, source, offset);
@@ -1467,7 +1485,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             // Structure du document via l'AST interne ecj — types,
             // méthodes, champs, avec plages hiérarchiques.
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 var cud = jdt.resolveUnit(filePath, source, false);
                 if (cud != null && cud.types != null) {
                     for (var td : cud.types) {
@@ -1554,7 +1572,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             // Occurrences du symbole au caret via les bindings ecj
             // (même identification que le renommage — homonymes exclus).
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 if (jdt.isLikelyUsable()) {
                     var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
                     var target = renameEngine.targetAt(filePath, source, offset);
@@ -1588,7 +1606,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // Références par bindings ecj — multi-fichiers (mêmes occurrences
         // que le renommage), homonymes exclus.
         try {
-            var jdt = environment.jdt();
+            var jdt = environment.jdtPourFichier(filePath);
             if (jdt.isLikelyUsable()) {
                 var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
                 var target = renameEngine.targetAt(filePath, source, offset);
@@ -1668,7 +1686,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // 3.17) avec message FR — l'éditeur ne peut plus confondre « rien
         // ne se passe » avec un renommage vide légitime.
         try {
-            var jdt = environment.jdt();
+            var jdt = environment.jdtPourFichier(uriToPath(uri));
             if (!jdt.isLikelyUsable()) {
                 throw new org.eclipse.lsp4j.jsonrpc.ResponseErrorException(
                         new org.eclipse.lsp4j.jsonrpc.messages.ResponseError(
@@ -1827,10 +1845,10 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         int offset = toOffset(source, params.getPosition());
 
         try {
-            var jdt = environment.jdt();
+            String filePath = uriToPath(uri);
+            var jdt = environment.jdtPourFichier(filePath);
             if (jdt.isLikelyUsable()) {
                 var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
-                String filePath = uriToPath(uri);
                 var target = renameEngine.targetAt(filePath, source, offset);
                 if (target != null) {
                     // Plage EXACTE du jeton nom porté par la cible.
@@ -1965,7 +1983,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         String source = openDocuments.getOrDefault(uri, "");
         List<org.eclipse.lsp4j.FoldingRange> out = new ArrayList<>();
         try {
-            var jdt = environment.jdt();
+            var jdt = environment.jdtPourFichier(uriToPath(uri));
             if (!jdt.isLikelyUsable()) {
                 // Moteur indisponible → null (et PAS une liste vide) : le
                 // client distingue « pas de folding serveur » (il garde ses
@@ -2028,10 +2046,11 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // pour les méthodes binaires. Une seule instance EcjInlayHints :
         // le cache de parse de l'engine mutualise l'arbre résolu.
         try {
-            var jdt = environment.jdt();
+            String filePath = uriToPath(uri);
+            var jdt = environment.jdtPourFichier(filePath);
             if (jdt.isLikelyUsable()) {
                 var inlayEngine = new jo.lspjava.ecj.EcjInlayHints(jdt);
-                for (var hint : inlayEngine.hintsFor(uriToPath(uri), source)) {
+                for (var hint : inlayEngine.hintsFor(filePath, source)) {
                     org.eclipse.lsp4j.InlayHint h = new org.eclipse.lsp4j.InlayHint(
                             toPosition(source, hint.offset),
                             org.eclipse.lsp4j.jsonrpc.messages.Either.forLeft(hint.label));
@@ -2069,7 +2088,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         // un `var s = foo();`).
         boolean varHintsFromAst = false;
         try {
-            var jdt2 = environment.jdt();
+            var jdt2 = environment.jdtPourFichier(uriToPath(uri));
             if (jdt2.isLikelyUsable()) {
                 for (var hint : new jo.lspjava.ecj.EcjInlayHints(jdt2)
                         .typeHintsFor(uriToPath(uri), source)) {
@@ -2200,7 +2219,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                 ? List.of() : params.getPositions();
 
         return submitToScheduler(filePath, () -> {
-            var moteur = new jo.lspjava.ecj.EcjSelectionRanges(environment.jdt());
+            var moteur = new jo.lspjava.ecj.EcjSelectionRanges(environment.jdtPourFichier(filePath));
             List<org.eclipse.lsp4j.SelectionRange> out = new ArrayList<>();
             for (org.eclipse.lsp4j.Position p : positions) {
                 out.add(chaineSelectionLsp(moteur, filePath, source,
@@ -2271,7 +2290,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
                 return vide;
             }
             try {
-                var moteur = new jo.lspjava.ecj.EcjSelectionRanges(environment.jdt());
+                var moteur = new jo.lspjava.ecj.EcjSelectionRanges(environment.jdtPourFichier(filePath));
                 var cible = moteur.plageFormattable(
                         filePath, source, offsetCaractere, declencheur);
                 if (cible == null) return vide;
@@ -2320,7 +2339,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(filePath, () -> {
             List<org.eclipse.lsp4j.CodeLens> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 if (!jdt.isLikelyUsable()) return out;
                 var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
                 for (jo.lspjava.ecj.EcjNavigationEngine.LenseCode lense
@@ -2376,7 +2395,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
 
     /** Le compte de références d'une déclaration (substrat rename). */
     private int compteReferences(String filePath, String source, int nomDebut) {
-        var jdt = environment.jdt();
+        var jdt = environment.jdtPourFichier(filePath);
         if (!jdt.isLikelyUsable() || source.isEmpty()) return 0;
         var renameEngine = new jo.lspjava.ecj.EcjRenameEngine(jdt);
         var target = renameEngine.targetAt(filePath, source, nomDebut);
@@ -2425,7 +2444,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(filePath, () -> {
             List<org.eclipse.lsp4j.CallHierarchyItem> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 if (!jdt.isLikelyUsable()) return out;
                 var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
                 var cible = moteur.methodeHierarchieAu(
@@ -2458,9 +2477,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(uriDe(item), () -> {
             List<org.eclipse.lsp4j.CallHierarchyIncomingCall> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
-                if (!jdt.isLikelyUsable()) return out;
                 String chemin = uriToPath(uriDe(item));
+                var jdt = environment.jdtPourFichier(chemin);
+                if (!jdt.isLikelyUsable()) return out;
                 String contenu = contenuFichier(chemin);
                 if (contenu == null) return out;
                 int offset = toOffset(contenu,
@@ -2503,9 +2522,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(uriDe(item), () -> {
             List<org.eclipse.lsp4j.CallHierarchyOutgoingCall> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
-                if (!jdt.isLikelyUsable()) return out;
                 String chemin = uriToPath(uriDe(item));
+                var jdt = environment.jdtPourFichier(chemin);
+                if (!jdt.isLikelyUsable()) return out;
                 String contenu = contenuFichier(chemin);
                 if (contenu == null) return out;
                 int offset = toOffset(contenu,
@@ -2549,7 +2568,7 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(filePath, () -> {
             List<org.eclipse.lsp4j.TypeHierarchyItem> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
+                var jdt = environment.jdtPourFichier(filePath);
                 if (!jdt.isLikelyUsable()) return out;
                 var moteur = new jo.lspjava.ecj.EcjNavigationEngine(jdt);
                 var cible = moteur.typeHierarchieAu(
@@ -2581,9 +2600,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(uriDe(item), () -> {
             List<org.eclipse.lsp4j.TypeHierarchyItem> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
-                if (!jdt.isLikelyUsable()) return out;
                 String chemin = uriToPath(uriDe(item));
+                var jdt = environment.jdtPourFichier(chemin);
+                if (!jdt.isLikelyUsable()) return out;
                 String contenu = contenuFichier(chemin);
                 if (contenu == null) return out;
                 int offset = toOffset(contenu,
@@ -2616,9 +2635,9 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
         return submitToScheduler(uriDe(item), () -> {
             List<org.eclipse.lsp4j.TypeHierarchyItem> out = new ArrayList<>();
             try {
-                var jdt = environment.jdt();
-                if (!jdt.isLikelyUsable()) return out;
                 String chemin = uriToPath(uriDe(item));
+                var jdt = environment.jdtPourFichier(chemin);
+                if (!jdt.isLikelyUsable()) return out;
                 String contenu = contenuFichier(chemin);
                 if (contenu == null) return out;
                 int offset = toOffset(contenu,

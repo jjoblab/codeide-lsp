@@ -52,11 +52,19 @@ internal object CandidatsImport {
         declarationsProjet: List<DeclarationProjet>,
         index: IndexAppelablesKotlin?,
         vue: VueClasspathKotlin?,
+        portFichier: SuperKotlin.PortFichier? = null,
     ): List<String> {
         val vueEffective = vue ?: return emptyList()
         val nom = nomReferencePosition(racine, decalage) ?: return emptyList()
         // Résolue : rien à importer (quick-fix inutile, jamais proposé).
-        if (ResolutionReferences.estResolu(racine, decalage, nom, contexteNom, resolution, declarationsProjet, index)) {
+        // MÊME prédicat que le diagnostic — membres HÉRITÉS compris (ADR
+        // 0216) : sinon le quick-fix proposerait un import pour un appel
+        // NU à un membre du supertype (setContentView…), déjà résolu.
+        if (
+            ResolutionReferences.estResolu(
+                racine, decalage, nom, contexteNom, resolution, declarationsProjet, index, portFichier,
+            )
+        ) {
             return emptyList()
         }
         val dejaImportes = contexteNom.importsParNom.values.toHashSet()

@@ -37,7 +37,7 @@ public final class HoverService {
     public EcjCompilerEngine.SurvolRiche survolRicheAt(
             String filePath, String source, int offset) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return null;
             return jdt.hoverRicheAt(filePath, source, offset);
         } catch (OperationCanceledException e) {

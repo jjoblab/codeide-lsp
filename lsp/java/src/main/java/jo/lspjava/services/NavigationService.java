@@ -34,8 +34,13 @@ public final class NavigationService {
 
     private final CompilationEnvironment environment;
 
-    /** Moteur de navigation multi-fichiers (lazy — vit avec l'environnement). */
-    private volatile EcjNavigationEngine navigationEngine;
+    /** Moteurs de navigation PAR moteur ecj (ADR 0215) — WeakHashMap : un
+     * moteur invalidé (sync) disparaît de la map au GC, l'entrée suit.
+     * EcjCompilerEngine n'override pas equals/hashCode → clé d'IDENTITÉ
+     * (un même moteur = un seul wrapper). */
+    private final java.util.Map<EcjCompilerEngine, EcjNavigationEngine> navigationEngines =
+            java.util.Collections.synchronizedMap(
+                    new java.util.WeakHashMap<>());
 
     public NavigationService(CompilationEnvironment environment) {
         this.environment = environment;
@@ -48,7 +53,7 @@ public final class NavigationService {
      */
     public TextRange findDefinition(String filePath, String source, int offset) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return null;
             return jdt.findDefinition(filePath, source, offset);
         } catch (OperationCanceledException e) {
@@ -71,7 +76,7 @@ public final class NavigationService {
      */
     public TextRange findTypeDefinition(String filePath, String source, int offset) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return null;
             return jdt.findTypeDefinition(filePath, source, offset);
         } catch (OperationCanceledException e) {
@@ -97,9 +102,9 @@ public final class NavigationService {
                                                        int offset,
                                                        Map<String, String> overlay) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return List.of();
-            return navEngine().findImplementations(filePath, source, offset, overlay);
+            return navEngine(jdt).findImplementations(filePath, source, offset, overlay);
         } catch (OperationCanceledException e) {
             LOG.fine(() -> "findImplementations canceled for " + filePath + " at " + offset);
             return List.of();
@@ -123,9 +128,9 @@ public final class NavigationService {
     public List<NavigationTarget> findSuper(String filePath, String source,
                                              int offset, Map<String, String> overlay) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return List.of();
-            return navEngine().findSuper(filePath, source, offset, overlay);
+            return navEngine(jdt).findSuper(filePath, source, offset, overlay);
         } catch (OperationCanceledException e) {
             LOG.fine(() -> "findSuper canceled for " + filePath + " at " + offset);
             return List.of();
@@ -149,9 +154,9 @@ public final class NavigationService {
                                                                      int offset,
                                                                      Map<String, String> overlay) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return null;
-            return navEngine().findDefinitionProject(filePath, source, offset, overlay);
+            return navEngine(jdt).findDefinitionProject(filePath, source, offset, overlay);
         } catch (OperationCanceledException e) {
             LOG.fine(() -> "findDefinitionProject canceled for " + filePath + " at " + offset);
             return null;
@@ -174,9 +179,9 @@ public final class NavigationService {
                                                                         int offset,
                                                                         Map<String, String> overlay) {
         try {
-            EcjCompilerEngine jdt = environment.jdt();
+            EcjCompilerEngine jdt = environment.jdtPourFichier(filePath);
             if (!jdt.isLikelyUsable()) return null;
-            return navEngine().findTypeDefinitionProject(filePath, source, offset, overlay);
+            return navEngine(jdt).findTypeDefinitionProject(filePath, source, offset, overlay);
         } catch (OperationCanceledException e) {
             LOG.fine(() -> "findTypeDefinitionProject canceled for " + filePath + " at " + offset);
             return null;
@@ -187,17 +192,10 @@ public final class NavigationService {
         }
     }
 
-    private EcjNavigationEngine navEngine() {
-        EcjNavigationEngine e = navigationEngine;
-        if (e == null) {
-            synchronized (this) {
-                e = navigationEngine;
-                if (e == null) {
-                    e = new EcjNavigationEngine(environment.jdt());
-                    navigationEngine = e;
-                }
-            }
+    /** Wrapper de navigation du moteur [jdt] (léger — cache par identité). */
+    private EcjNavigationEngine navEngine(EcjCompilerEngine jdt) {
+        synchronized (navigationEngines) {
+            return navigationEngines.computeIfAbsent(jdt, k -> new EcjNavigationEngine(k));
         }
-        return e;
     }
 }

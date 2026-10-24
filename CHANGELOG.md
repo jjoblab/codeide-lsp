@@ -1,5 +1,62 @@
 # Changelog — codeide-lsp
 
+## 1.9.0 (2026-10-24)
+
+- **Chantier « retour propriétaire E2E » — ADR 0215/0216** (réponse au
+  retour du propriétaire : « ActivityMainBinding/Greeter cannot be
+  resolved » côté LSP Java, « Référence non résolue : setContentView /
+  instantiate » et « beaucoup de diagnostics unresolved » côté LSP
+  Kotlin sur un projet Android Compose).
+  - **ADR 0215 — routage fichier → module du serveur Java (découverte
+    D6)** : les moteurs PAR MODULE du lot E (racines sources + jars +
+    android.jar du modèle) n'étaient JAMAIS consultés — TOUS les
+    services LSP Java utilisaient le contexte DÉFAUT (android.jar
+    seul). `CompilationEnvironment` gagne la couture
+    `RouteurModules` + `jdtPourFichier(chemin)` (consultée à CHAQUE
+    requête, repli explicite sur le défaut : routeur absent/fautif =
+    comportement historique au bit près) ; `SessionLsp` branche
+    `AssociationFichier` (code mort depuis le lot E) sur l'instantané
+    du dépôt de modèle ; tous les handlers (diagnostics, hover,
+    complétion, definition/typeDefinition/implementation/super,
+    references, rename, codeAction, folding, inlayHints, codeLens,
+    hiérarchies, semanticTokens) routent vers le moteur du module
+    propriétaire — un type du MÊME PAQUET (`Greeter`) et un ViewBinding
+    de la racine `generated` (`ActivityMainBinding`) résolvent ENFIN.
+    `workspace/symbol` unifie défaut + moteurs vivants (plafond global
+    dédupliqué), `decompiledSource` sonde les moteurs vivants, la
+    pré-chauffe d'`initialized()` couvre défaut + modules NOURRIS,
+    `EcjNavigationEngine` devient un wrapper PAR moteur (WeakHashMap),
+    et le downgrade ERROR→HINT du paquet `.databinding` parle
+    désormais des classes de liaison ViewBinding/DataBinding (elles y
+    vivent TOUTES les deux — générées par AGP au BUILD, la sync ne les
+    crée pas).
+  - **ADR 0216 — membres HÉRITÉS et segments de TYPES QUALIFIÉS
+    (découvertes E3/E4)** : nouveau `kt.unresolved` sans faux positifs
+    sur projets Android — voie 2-ter « membres hérités » de
+    `ResolutionReferences` (fermeture transitive mixte classpath+projet
+    des supertypes ÉCRITS, port du GO TO Super pour les maillons
+    frères, bornes honnêtes : profondeur 16, 96 sondes, anti-cycle,
+    sources Java jamais traversées) : un appel NU à
+    `setContentView(…)`/`instantiate(…)` dans une classe dont le
+    supertype binaire porte le membre n'est PLUS signalé ; le
+    quick-fix d'import partage le MÊME prédicat (jamais d'import
+    proposé pour un appel résolu par héritage). Les SEGMENTS d'un type
+    QUALIFIÉ écrit (`android.os.Bundle` → trois REFERENCE_EXPRESSION)
+    sont mus quand le type COMPLET vit dans le classpath/projet — sinon
+    seul le DERNIER segment (nom de classe) est diagnostiqué, miroir
+    kotlinc. Le port vit dans `DiagnosticsSemantiques.Contexte` et la
+    session fournit toujours celui du GO TO Super (arbre vif du frère
+    OUVERT, lecture bornée sinon).
+  - **Preuves** : 8 tests routeur (`CompilationEnvironmentRouteurTest`),
+    13 tests moteur (`SessionLangageKotlinHeritageTest`), 7 scénarios
+    E2E Java (`ScenariosJavaAndroidTest` — serveur stdio branché sur la
+    VRAIE `SessionLsp`, sync rejouée APRÈS didOpen : le live-republish
+    efface les erreurs du propriétaire sans frappe) et 4 scénarios E2E
+    Kotlin (`ScenariosKotlinHeritageTest` — classpath de production
+    kotlin-stdlib + android.jar 37.2). Toutes les suites historiques
+    restent vertes (parité du corpus re-synchronisée : +6 fichiers de
+    test).
+
 ## 1.8.0 (2026-10-24)
 
 - **Chantier « demandes CodeIDE » D1–D5 — ADR 0211/0212/0213/0214**
