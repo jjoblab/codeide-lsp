@@ -306,6 +306,20 @@ internal class KotlinLanguageServer(
         }
     }
 
+    /**
+     * REPUBLIE les documents OUVERTS (ADR 0211/0213 — demandes D1/D3 de
+     * CodeIDE) : appelé par la façade quand la passe d'indexation moteur
+     * ABOUTIT — les diagnostics publiés pendant la fenêtre de
+     * sous-lecture (index non encore couvert : SILENCE conservateur sur
+     * le classpath, jamais de faux `kt.unresolved`) deviennent VRAIS dès
+     * que le snapshot est publié. Miroir de la republication des
+     * serveurs Java au didChangeWatchedFiles — le client reçoit la
+     * vérité DÈS qu'elle existe.
+     */
+    internal fun republierDocumentsOuverts() {
+        documents.keys.forEach { publier(it) }
+    }
+
     /** Traduit les diagnostics neutres en diagnostics LSP.
      *  v0.134.4 — KP13 CORRIGÉ : convertisseur partagé du [DocumentLsp]
      *  (une construction par version, plus un scan O(n) par diagnostic).

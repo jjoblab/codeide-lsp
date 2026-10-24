@@ -173,13 +173,20 @@ internal class SessionLangageXmlImpl(
         // les AAR P3 par chemin+mtime — archives inchangées épargnées).
         if (fermee) return
         this.classpath = classpath
-        // XE3 : l'index des ressources suit les RACINES SOURCES du
-        // classpath (scan incrémental — deltas seuls).
-        indexRessources.definir(classpath.racinesSources)
-        // P3 : le volet BIBLIOTHÈQUES suit les AAR des dépendances
-        // (même loi incrémentale — un conteneur inchangé n'est jamais
-        // re-décodé).
-        indexRessources.definirAar(classpath.racinesAar)
+        // ADR 0211 (annexe D1-d) : BRANCHEMENT quand le moteur possède
+        // le nourrissage — AUCUN re-balayage ici (le supplier de
+        // connexion ne paie plus d'E/S). Hors moteur nourricier
+        // (usages directs, packs anciens), le contrat SYNCHRONE
+        // historique tient : le balayage a lieu ici et maintenant.
+        if (!indexRessources.nourrissageParMoteur) {
+            // XE3 : l'index des ressources suit les RACINES SOURCES du
+            // classpath (scan incrémental — deltas seuls).
+            indexRessources.definir(classpath.racinesSources)
+            // P3 : le volet BIBLIOTHÈQUES suit les AAR des dépendances
+            // (même loi incrémentale — un conteneur inchangé n'est jamais
+            // re-décodé).
+            indexRessources.definirAar(classpath.racinesAar)
+        }
     }
 
     /**

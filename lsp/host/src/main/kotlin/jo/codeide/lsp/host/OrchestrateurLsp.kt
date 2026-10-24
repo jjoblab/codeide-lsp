@@ -287,6 +287,45 @@ internal class OrchestrateurLsp(
     }
 
     /**
+     * Annule le passage de construction EN VOL (ADR 0214 — demande D5
+     * de CodeIDE) : le `Job` structuré meurt au prochain point
+     * coopératif (`ensureActive` entre les entrées) et le service
+     * publie PARTIEL « annulé par l'utilisateur ».
+     *
+     * @return `false` si aucune construction n'est en vol.
+     */
+    internal fun annulerPassage(): Boolean {
+        val courante = construction
+        if (courante?.isActive == true) {
+            courante.cancel()
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Reprise ciblée des entrées ÉCARTÉES du dernier passage (ADR 0214
+     * — demande D4 de CodeIDE) : SEULES les entrées marquées ECARTE
+     * sont relancées (les saines gardent leur segment), les
+     * statistiques sont semées — la reprise est visible et bon marché.
+     * Refusée pendant une construction en vol (elle travaille déjà).
+     *
+     * @return `false` sans vue, sans écart à retenter, ou en vol.
+     *
+     * Exemption detekt ciblée (règle 8 : exception commentée) :
+     * ReturnCount — les issues sont les REFUS distincts du contrat D4
+     * (sans vue, en vol, rien à retenter) plus le lancement.
+     */
+    @Suppress("ReturnCount")
+    internal fun reesayerEchecs(): Boolean {
+        val vueCourante = vue ?: return false
+        if (construction?.isActive == true) return false
+        val reprise = service?.reesayerEchecs(vueCourante) ?: return false
+        construction = reprise
+        return true
+    }
+
+    /**
      * Plafond de budget explicite (lot LSP-1, ADR 0128 §4) — rejoue
      * l'alignement de l'union COURANTE : le service est recréé si le
      * budget cible change (croissance OU décroissance), la construction

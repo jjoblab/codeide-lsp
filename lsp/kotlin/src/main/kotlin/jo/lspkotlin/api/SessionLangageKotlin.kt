@@ -92,6 +92,17 @@ public interface SessionLangageKotlin : AutoCloseable {
      * filtrées par le moteur ; répéter un appel identique est un NO-OP
      * chaud (segments par empreinte, jamais redécodés).
      *
+     * ADR 0211 : quand le MOTEUR possède le nourrissage
+     * ([MoteurLangageKotlin.definirClasspath] — passe en vol ou snapshot
+     * couvrant), cet appel devient un BRANCHEMENT quasi gratuit : il
+     * pose classpath/vue/racines et NE RE-LIT RIEN (le supplier de
+     * connexion ne paie plus d'E/S lourde — demande D1 de CodeIDE).
+     * Hors moteur nourricier (usages directs, packs anciens), le
+     * contrat SYNCHRONE historique tient : la définition construit
+     * l'index partagé ici et maintenant. Pendant une passe en vol, les
+     * requêtes SOUS-LISENT honnêtement (diagnostics silencieux sur le
+     * classpath — jamais de faux `kt.unresolved`).
+     *
      * Après [close] : sans effet (la session ne retient rien).
      */
     public fun definirClasspath(classpath: ClasspathKotlin) {}

@@ -250,6 +250,17 @@ internal class XmlLanguageServer(
         }
     }
 
+    /**
+     * REPUBLIE les documents OUVERTS (ADR 0211/0213 — miroir du serveur
+     * Kotlin) : appelé par la façade quand la passe d'indexation XML
+     * ABOUTIT — les références publiées pendant la fenêtre de
+     * sous-lecture (index ressources encore froid : garde « dumb mode =
+     * silence » X4) se re-diagnostiquent dès que l'index est nourri.
+     */
+    internal fun republierDocumentsOuverts() {
+        documents.keys.forEach { publier(it) }
+    }
+
     /** Traduit les diagnostics neutres en diagnostics LSP. */
     private fun traduire(
         diagnostics: List<DiagnosticXml>,

@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -202,7 +203,11 @@ class ServiceIndexDisqueTest {
     fun `annulation laisse les positions acquises interrogables (pas de faux PRÊT)`() {
         // Séquentiel : l'entrée en cours dort dans Thread.sleep
         // (insensible à l'annulation), les SUIVANTES ne démarrent pas
-        // (ensureActive avant chaque entrée).
+        // (ensureActive avant chaque entrée). ADR 0214 (demande D5 de
+        // CodeIDE) : l'état devient PARTIEL « annulé par l'utilisateur »
+        // (settled=false — l'acquis reste interrogable, JAMAIS de faux
+        // PRÊT ; l'ancien invariant « reste CONSTRUCTION » est dépassé
+        // par la maquette de l'écran d'indexation).
         val analyseur = AnalyseurReglable(delaiMs = 400)
         val (service, scope) = service(analyseur, parallelisme = 1)
         val vue =
@@ -218,7 +223,12 @@ class ServiceIndexDisqueTest {
             }
         }
 
-        assertEquals(PhaseIndex.CONSTRUCTION, vue.etat.value.phase)
+        assertEquals(PhaseIndex.PARTIEL, vue.etat.value.phase)
+        assertFalse(vue.etat.value.settled)
+        assertTrue(
+            vue.etat.value.avertissements
+                .any { it == "annulé par l'utilisateur" },
+        )
         assertTrue(vue.etat.value.faits in 1..2)
         scope.cancel()
     }
@@ -319,6 +329,115 @@ class ServiceIndexDisqueTest {
 
         assertEquals(1, vue.etat.value.total)
         assertNull(vue.localiser("exo.inconnu"))
+        scope.cancel()
+    }
+
+    // ── ADR 0214 (demandes D4/D5 de CodeIDE) ───────────────────────────
+
+    @Test
+    fun `annulation publie PARTIEL annule par l utilisateur (ADR 0214)`() {
+        val analyseur = AnalyseurReglable(delaiMs = 400)
+        val (service, scope) = service(analyseur)
+        val vue = service.vuePour(classpath("maven:long-a", "maven:long-b", "maven:long-c"))
+        val job = service.construire(vue)
+        // Laisse la première entrée démarrer puis annule (drapeau
+        // coopératif : la mort survient à l'entrée SUIVANTE).
+        runBlocking { delay(150) }
+        job.cancel()
+        runBlocking { withTimeout(10_000) { job.join() } }
+        val etat = vue.etat.value
+        assertEquals(PhaseIndex.PARTIEL, etat.phase)
+        assertFalse("un passage annulé n'est pas settled", etat.settled)
+        assertTrue(
+            "l'avertissement d'annulation est publié",
+            etat.avertissements.any { it == "annulé par l'utilisateur" },
+        )
+        scope.cancel()
+    }
+
+    /**
+     * Analyseur à PANNE PONCTUELLE : l'entrée [enPanne] échoue tant que
+     * [repare] n'est pas basculé (écart honnête — jamais de crash).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — reprise/panne/
+     * analyse sont les ISSUES du contrat de reprise ciblée (D4).
+     */
+    @Suppress("ReturnCount")
+    private class AnalyseurReparable(
+        private val enPanne: String,
+        var repare: Boolean = false,
+        val analyses: java.util.Queue<String> = java.util.concurrent.ConcurrentLinkedQueue(),
+    ) : AnalyseurClasspath {
+        override fun analyser(
+            entree: EntreeAIndexer,
+            repriseValide: (cle: String) -> Boolean,
+        ): ResultatAnalyse {
+            if (repriseValide(entree.empreinte)) return ResultatAnalyse.Reprise(entree.empreinte)
+            if (entree.chemin == enPanne && !repare) {
+                return ResultatAnalyse.Illisible("panne ponctuelle (test)")
+            }
+            analyses.add(entree.chemin)
+            val nomSain = entree.empreinte.replace(':', '_').replace('.', '_')
+            val moisson =
+                listOf(Triple("exo/$nomSain.class", MembresClasse(1, emptyList(), emptyList()), null))
+            return ResultatAnalyse.Ok(
+                AssembleurSegment.assembler(
+                    conteneur = Conteneur.Jar(entree.chemin),
+                    cle = entree.empreinte,
+                    tailleSource = entree.taille,
+                    mtimeSource = entree.mtime,
+                    moisson = moisson,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `reesayerEchecs - ne retente que les ECARTEES, les saines gardees par semis`() {
+        val analyseur = AnalyseurReparable(enPanne = "/cache/maven:malade.jar")
+        val (service, scope) = service(analyseur)
+        val vue = service.vuePour(classpath("maven:saine", "maven:malade"))
+        assertNull("rien à retenter avant tout passage", service.reesayerEchecs(vue))
+
+        runBlocking { withTimeout(10_000) { service.construire(vue).join() } }
+        assertEquals(PhaseIndex.PARTIEL, vue.etat.value.phase)
+        assertEquals(1, vue.etat.value.avertissements.size)
+        assertEquals(
+            EtatEntreeTravail.ECARTE,
+            vue.etat.value.listeTravail
+                .first { it.nom == "/cache/maven:malade.jar" }
+                .etat,
+        )
+
+        // RÉPARATION + reprise ciblée : SEULE la malade est re-analysée
+        // (la saine garde son segment — reprise honorée, jamais
+        // re-analysée) ; les messages de la retentée partent, la phase
+        // finale est recalculée sur l'ensemble.
+        analyseur.repare = true
+        val reprise = service.reesayerEchecs(vue)
+        assertNotNull("un écart existe", reprise)
+        runBlocking { withTimeout(10_000) { reprise!!.join() } }
+        assertEquals(PhaseIndex.PRET, vue.etat.value.phase)
+        assertTrue(
+            "l'avertissement de la retentée part",
+            vue.etat.value.avertissements
+                .isEmpty(),
+        )
+        assertEquals(2, vue.etat.value.faits)
+        assertEquals(2, vue.etat.value.total)
+        assertEquals(
+            EtatEntreeTravail.TERMINE,
+            vue.etat.value.listeTravail
+                .first { it.nom == "/cache/maven:malade.jar" }
+                .etat,
+        )
+        // La cible « reprise ciblée » : chaque entrée n'a été ANALYSÉE
+        // qu'une fois — la saine au premier passage (la reprise l'a
+        // REPRISE sans la toucher), la malade à la reprise (le premier
+        // passage l'a écartée sans analyse).
+        assertEquals(1, analyseur.analyses.count { it == "/cache/maven:saine.jar" })
+        assertEquals(1, analyseur.analyses.count { it == "/cache/maven:malade.jar" })
+        assertNull("plus rien à retenter", service.reesayerEchecs(vue))
         scope.cancel()
     }
 }

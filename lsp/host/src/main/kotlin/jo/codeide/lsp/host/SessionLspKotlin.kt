@@ -10,11 +10,17 @@ import jo.codeide.lsp.model.ProjetLsp
 import jo.codeide.tooling.protocol.ClasspathResult
 import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.EntreeClasspathKotlin
+import jo.lspkotlin.api.EtatEntreeTravailKotlin
+import jo.lspkotlin.api.EvenementIndexationKotlin
 import jo.lspkotlin.api.KindEntreeKotlin
 import jo.lspkotlin.api.MoteurLangageKotlin
+import jo.lspkotlin.api.PhaseIndexationKotlin
 import jo.lspkotlin.api.PreviewKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.SessionLangageKotlin
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.services.LanguageServer
 import java.io.Closeable
@@ -59,7 +65,7 @@ import java.util.logging.Logger
  *        (les événements externes ne la touchent pas — tests, usage
  *        hors projet).
  */
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "TooManyFunctions")
 public class SessionLspKotlin(
     racineProjet: File,
     private val moteur: MoteurLangageKotlin = ServiceMoteurLangageKotlin.unique(),
@@ -93,6 +99,60 @@ public class SessionLspKotlin(
      */
     private val desinscriptionSurveillance: Closeable? =
         sessionJava?.enregistrerDestinataireFichiers(::diffuserEvenementsFichiers)
+
+    /**
+     * Miroir public de l'état d'indexation du MOTEUR Kotlin (ADR 0213 —
+     * demande D3 de CodeIDE, écran multi-moteurs) : le MÊME type public
+     * que [SessionLsp.etatIndex] côté Java, alimenté par les événements
+     * du moteur (phases, liste de travail, breakdown, bilan) — l'agrégat
+     * CodeIDE branche le flux SANS autre changement côté hôte.
+     */
+    private val etatIndexationMutable = MutableStateFlow(EtatIndexation.INITIAL)
+
+    /** État d'indexation Kotlin observable (type public commun aux trois langues). */
+    public val etatIndexation: StateFlow<EtatIndexation>
+        get() = etatIndexationMutable.asStateFlow()
+
+    /**
+     * Désinscription de l'observateur moteur (ADR 0213) — fermée à
+     * [close] : une façade morte ne reçoit plus d'événements. Un pack
+     * ancien rend la poignée vide du SPI (aucun événement — les
+     * FENÊTRES de [appliquerModele] prennent le relais).
+     */
+    private val desinscriptionObservateur: Closeable =
+        try {
+            moteur.enregistrerObservateurIndexation { evenement ->
+                etatIndexationMutable.value = traduire(evenement)
+                // ADR 0211/0213 : la passe ABOUTIT (PRET/PARTIEL final) —
+                // les documents ouverts pendant la fenêtre de
+                // sous-lecture se REPUBLIENT avec les VRAIS diagnostics
+                // (le client reçoit la vérité dès qu'elle existe).
+                if (evenement.phase == jo.lspkotlin.api.PhaseIndexationKotlin.PRET ||
+                    evenement.phase == jo.lspkotlin.api.PhaseIndexationKotlin.PARTIEL
+                ) {
+                    republierServeursVivants()
+                }
+            }
+        } catch (t: Throwable) {
+            // Pack exotique : fenêtres seules (le monde d'avant).
+            LOGGER.log(Level.WARNING, "observateur d'indexation refusé par le moteur (fenêtres seules)", t)
+            java.io.Closeable { }
+        }
+
+    /**
+     * Republie les documents ouverts de CHAQUE serveur vivant (ADR
+     * 0211/0213) — un serveur fautif n'empêche pas les autres (miroir
+     * de [diffuserEvenementsFichiers]).
+     */
+    private fun republierServeursVivants() {
+        for (serveur in serveursVivants) {
+            try {
+                serveur.republierDocumentsOuverts()
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "republication d'un serveur Kotlin échouée (ignorée)", t)
+            }
+        }
+    }
 
     private var fermee = false
 
@@ -201,6 +261,29 @@ public class SessionLspKotlin(
                 )
             classpathCourant = classpath
         }
+        // ADR 0211 (demande D1) : nourrissage MOTEUR une fois par sync,
+        // sur le fil dédié du moteur — le supplier de connexion ne paie
+        // plus RIEN. `false` = pack ancien sans nourrissage moteur : la
+        // poussée SYNCHRONE ci-dessous reste LE nourrissage (monde
+        // d'avant, tolérance de version).
+        val prisEnCharge =
+            try {
+                moteur.definirClasspath(classpathCourant!!)
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "nourrissage moteur refusé (poussée par session)", t)
+                false
+            }
+        // ADR 0213 (demande D3) : fenêtre CONSTRUCTION au départ de sync
+        // — le premier événement moteur (s'il y en a) reprend la main.
+        etatIndexationMutable.value =
+            EtatIndexation(
+                phase = PhaseIndexation.CONSTRUCTION,
+                faits = 0,
+                total = 0,
+                entreeCourante = null,
+                avertissements = emptyList(),
+                erreurs = emptyList(),
+            )
         // Poussé HORS verrou : les sessions moteur sérialisent en
         // interne, la façade reste responsive (le push est idempotent).
         sessionsVivantes.forEach { session ->
@@ -210,7 +293,142 @@ public class SessionLspKotlin(
                 LOGGER.log(Level.WARNING, "poussée de classpath à une session moteur échouée (ignorée)", t)
             }
         }
+        if (!prisEnCharge) {
+            // Pack ancien : la poussée ci-dessus a nourri SYNCHRONEMENT —
+            // fenêtre PRET honnête (jamais de PARTIEL inventé, le moteur
+            // n'est pas observable).
+            etatIndexationMutable.value =
+                EtatIndexation(
+                    phase = PhaseIndexation.PRET,
+                    faits = 0,
+                    total = 0,
+                    entreeCourante = null,
+                    avertissements = emptyList(),
+                    erreurs = emptyList(),
+                )
+        }
     }
+
+    /**
+     * Annule le passage d'indexation Kotlin EN VOL (ADR 0214 — demande
+     * D5) : drapeau coopératif, le passage publie son acquis et se
+     * marque PARTIEL « annulé par l'utilisateur ».
+     *
+     * @return `false` si aucun passage n'est en vol (ou pack ancien).
+     */
+    public fun annulerPassage(): Boolean =
+        try {
+            moteur.annulerPassage()
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "annulation refusée par le moteur (ignorée)", t)
+            false
+        }
+
+    /**
+     * Retente les ÉCHECS du dernier passage Kotlin SEULEMENT (ADR 0214
+     * — demande D4) : les entrées saines sont reprises du cache sans
+     * re-lecture (REPRIS massifs visibles à l'écran), seuls les écarts
+     * et les pendances d'une annulation sont re-payés.
+     *
+     * @return `false` s'il n'y a rien à retenter (ou pack ancien).
+     */
+    public fun reesayerEchecs(): Boolean =
+        try {
+            moteur.reesayerEchecs()
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "reprise des échecs refusée par le moteur (ignorée)", t)
+            false
+        }
+
+    /**
+     * Traduit un événement moteur (types neutres du pack, ADR 0213) en
+     * [EtatIndexation] public — MÊME patron de découplage que
+     * [SessionLsp.traduireEtatIndex] côté Java (l'UI ne voit que les
+     * types publics de `lsp:host`).
+     *
+     * Exemption detekt ciblée (règle 8 : exception commentée) :
+     * LongMethod/CyclomaticComplexMethod — la traduction EXHAUSTIVE de
+     * tous les champs de l'événement (les `when` sur les enums
+     * compris) est par construction longue, miroir assumé de
+     * `traduireEtatIndex` (SessionLsp) : la découper casserait la
+     * lisibilité UN-À-UN sans réduire la complexité réelle.
+     */
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
+    private fun traduire(evenement: EvenementIndexationKotlin): EtatIndexation =
+        EtatIndexation(
+            phase =
+                when (evenement.phase) {
+                    jo.lspkotlin.api.PhaseIndexationKotlin.INITIAL -> PhaseIndexation.INITIAL
+                    jo.lspkotlin.api.PhaseIndexationKotlin.CONSTRUCTION -> PhaseIndexation.CONSTRUCTION
+                    jo.lspkotlin.api.PhaseIndexationKotlin.PRET -> PhaseIndexation.PRET
+                    jo.lspkotlin.api.PhaseIndexationKotlin.PARTIEL -> PhaseIndexation.PARTIEL
+                    jo.lspkotlin.api.PhaseIndexationKotlin.ERREUR -> PhaseIndexation.ERREUR
+                },
+            faits = evenement.faits,
+            total = evenement.total,
+            entreeCourante = evenement.entreeCourante,
+            avertissements = evenement.avertissements,
+            erreurs = evenement.erreurs,
+            phaseDetaillee =
+                when (evenement.phaseDetaillee) {
+                    jo.lspkotlin.api.PhaseDetailleeIndexationKotlin.AUCUNE -> {
+                        PhaseDetailleeIndexation.AUCUNE
+                    }
+
+                    jo.lspkotlin.api.PhaseDetailleeIndexationKotlin.BIBLIOTHEQUES -> {
+                        PhaseDetailleeIndexation.BIBLIOTHEQUES
+                    }
+
+                    jo.lspkotlin.api.PhaseDetailleeIndexationKotlin.SOURCES -> {
+                        PhaseDetailleeIndexation.SOURCES
+                    }
+                },
+            listeTravail =
+                evenement.listeTravail.map { entree ->
+                    EntreeTravailIndexation(
+                        nom = entree.nom,
+                        etat =
+                            when (entree.etat) {
+                                EtatEntreeTravailKotlin.EN_ATTENTE -> EtatEntreeTravailIndexation.EN_ATTENTE
+                                EtatEntreeTravailKotlin.ACTIF -> EtatEntreeTravailIndexation.ACTIF
+                                EtatEntreeTravailKotlin.TERMINE -> EtatEntreeTravailIndexation.TERMINE
+                                EtatEntreeTravailKotlin.REPRIS -> EtatEntreeTravailIndexation.REPRIS
+                                EtatEntreeTravailKotlin.ECARTE -> EtatEntreeTravailIndexation.ECARTE
+                            },
+                    )
+                },
+            breakdownIndexeurs =
+                evenement.breakdownIndexeurs.map { breakdown ->
+                    BreakdownIndexeurIndexation(
+                        identifiant = breakdown.identifiant,
+                        libelle = breakdown.libelle,
+                        millisecondesCumulees = breakdown.millisecondesCumulees,
+                        nombreEntrees = breakdown.nombreEntrees,
+                    )
+                },
+            dureesPhases =
+                evenement.dureesPhases?.let { durees ->
+                    DureesPhasesIndexation(
+                        bibliothequesMs = durees.bibliothequesMs,
+                        sourcesMs = durees.sourcesMs,
+                    )
+                },
+            bilanDernierPassage =
+                evenement.bilanDernierPassage?.let { bilan ->
+                    BilanDernierPassageIndexation(
+                        dureeMs = bilan.dureeMs,
+                        artefactsTotal = bilan.artefactsTotal,
+                        artefactsRepris = bilan.artefactsRepris,
+                        artefactsReconstruits = bilan.artefactsReconstruits,
+                        fichiersParcourus = bilan.fichiersParcourus,
+                        fichiersReanalyses = bilan.fichiersReanalyses,
+                        indexeurPlusCouteux = bilan.indexeurPlusCouteux,
+                        horodatageMs = bilan.horodatageMs,
+                    )
+                },
+            settled = evenement.settled,
+            reprises = evenement.reprises,
+        )
 
     /**
      * Union des entrées JAR/AAR EXISTANTES de tous les modules +
@@ -300,7 +518,8 @@ public class SessionLspKotlin(
 
     /** Arrêt exhaustif : sessions des connexions jamais arrêtées refermées,
      * décompte vidé, désinscription au surveillant de la session Java
-     * (lot L1 — la façade morte ne reçoit plus d'événements).
+     * (lot L1 — la façade morte ne reçoit plus d'événements) et à
+     * l'observateur d'indexation du moteur (ADR 0213).
      * Idempotente (le Java l'est aussi — contrat h1). */
     public override fun close() {
         synchronized(this) {
@@ -313,6 +532,11 @@ public class SessionLspKotlin(
             } catch (t: Throwable) {
                 LOGGER.log(Level.WARNING, "désinscription du surveillant échouée (ignorée)", t)
             }
+        }
+        try {
+            desinscriptionObservateur.close()
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "désinscription de l'observateur d'indexation échouée (ignorée)", t)
         }
         serveursVivants.clear()
         sessionsVivantes.forEach { session ->

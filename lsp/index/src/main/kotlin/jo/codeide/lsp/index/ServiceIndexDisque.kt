@@ -104,14 +104,65 @@ public class ServiceIndexDisque internal constructor(
     /**
      * Construit les segments de la vue en arrière-plan.
      *
+     * ADR 0214 (demande D5 de CodeIDE) : la construction est ANNULABLE
+     * — les points coopératifs sont les `ensureActive()` ENTRE les
+     * entrées — et une annulation publie PARTIEL « annulé par
+     * l'utilisateur » (settled=false, l'état acquis reste, la reprise
+     * ciblée [reesayerEchecs] complète). La publication voyage par
+     * `invokeOnCompletion` : elle ne se court-circuite JAMAIS avec une
+     * course de fin de coroutine (l'annulation INTERNE d'une relance
+     * de sync produit le même PARTIEL transitoire — recouvert au tick
+     * suivant par la construction neuuve, conflated par le StateFlow).
+     *
      * @return le `Job` de construction (annulable — les positions déjà
      *         construites restent interrogables, l'état reste
      *         CONSTRUCTION : partial honnête, jamais de faux PRÊT).
      */
-    public fun construire(vue: VueIndex): Job =
-        scope.launch(dispatcheurIo) {
-            construireInterne(vue)
+    public fun construire(vue: VueIndex): Job {
+        val job = scope.launch(dispatcheurIo) { construireInterne(vue) }
+        job.invokeOnCompletion { cause ->
+            if (cause is kotlinx.coroutines.CancellationException) {
+                vue.etatMutable.value =
+                    vue.etatMutable.value.copy(
+                        phase = PhaseIndex.PARTIEL,
+                        avertissements =
+                            (vue.etatMutable.value.avertissements + "annulé par l'utilisateur").distinct(),
+                        settled = false,
+                    )
+            }
         }
+        return job
+    }
+
+    /**
+     * Retente les entrées ÉCARTÉES du dernier passage SEULEMENT (ADR
+     * 0214 — demande D4 de CodeIDE) : les positions dont le chemin est
+     * ECARTE dans la liste de travail courante sont RELANCÉES (à
+     * elles seules), les statistiques sont SEMÉES du passage
+     * précédent (les entrées saines gardent leur état, les
+     * avertissements/erreurs des retentées partent, la phase finale
+     * est recalculée sur l'ensemble). `null` quand il n'y a RIEN à
+     * retenter.
+     *
+     * @return le `Job` de la reprise (annulable comme une construction).
+     *
+     * Exemption detekt ciblée (règle 8 : exception commentée) :
+     * ReturnCount — les issues sont les REFUS distincts du contrat D4
+     * (rien à retenter, positions introuvables) plus le lancement.
+     */
+    @Suppress("ReturnCount")
+    public fun reesayerEchecs(vue: VueIndex): Job? {
+        val precedent = vue.etat.value
+        val cheminsEcartes =
+            precedent.listeTravail
+                .filter { it.etat == EtatEntreeTravail.ECARTE }
+                .map { it.nom }
+                .toSet()
+        if (cheminsEcartes.isEmpty()) return null
+        val positions = vue.positionsInternes().filter { it.entree.chemin in cheminsEcartes }
+        if (positions.isEmpty()) return null
+        return scope.launch(dispatcheurIo) { reesayerInterne(vue, positions, precedent) }
+    }
 
     /** Purge les `.tmp` d'écritures interrompues (au démarrage de l'hôte). */
     public fun purgerTemporaires(): Int = entrepot.purgerTemporaires()
@@ -154,6 +205,64 @@ public class ServiceIndexDisque internal constructor(
         // classpath (toutes les positions). La phase sources n'est pas
         // gérée par ServiceIndexDisque (elle vivra dans un indexeur
         // dédié aux fichiers `.java` du projet — hors périmètre B2).
+        val debutBibliotheques = System.currentTimeMillis()
+        vue.etatMutable.value =
+            statistiques.etat(
+                phase = PhaseIndex.CONSTRUCTION,
+                entreeCourante = null,
+                phaseDetaillee = PhaseDetailleeIndex.BIBLIOTHEQUES,
+            )
+        coroutineScope {
+            positions
+                .map { position ->
+                    async {
+                        barriere.withPermit {
+                            construirePosition(vue, position, statistiques)
+                        }
+                    }
+                }.awaitAll()
+        }
+        val finBibliotheques = System.currentTimeMillis()
+        val durees =
+            DureesPhases(
+                bibliothequesMs = finBibliotheques - debutBibliotheques,
+                sourcesMs = 0L,
+            )
+        vue.etatMutable.value =
+            statistiques.etat(
+                phase = phaseFinale(statistiques),
+                entreeCourante = null,
+                phaseDetaillee = PhaseDetailleeIndex.AUCUNE,
+                dureesPhases = durees,
+                bilanDernierPassage =
+                    BilanDernierPassage(
+                        dureeMs = durees.bibliothequesMs + durees.sourcesMs,
+                        artefactsTotal = statistiques.total,
+                        artefactsRepris = statistiques.reprises.get(),
+                        artefactsReconstruits = statistiques.faits.get() - statistiques.reprises.get(),
+                        fichiersParcourus = 0,
+                        fichiersReanalyses = 0,
+                        indexeurPlusCouteux = "noms-classes-java",
+                        horodatageMs = finBibliotheques,
+                    ),
+                settled = true,
+            )
+    }
+
+    /** Reprise ciblée des entrées ÉCARTÉES (ADR 0214 — même pipeline,
+     *  statistiques semées du passage précédent). */
+    private suspend fun reesayerInterne(
+        vue: VueIndex,
+        positions: List<PositionSegment>,
+        precedent: EtatIndex,
+    ) {
+        val barriere = Semaphore(parallelisme.coerceAtLeast(1))
+        val statistiques =
+            StatistiquesConstruction(
+                total = precedent.total,
+                seed = precedent,
+                cheminsRetentes = positions.map { it.entree.chemin }.toSet(),
+            )
         val debutBibliotheques = System.currentTimeMillis()
         vue.etatMutable.value =
             statistiques.etat(
@@ -330,18 +439,52 @@ public class ServiceIndexDisque internal constructor(
     /** Comptes atomiques de la construction (progression par jar).
      *  B2 (Phase B prompt 2, ADR 0117 §4.4) : suit aussi la liste de
      *  travail par entrée (état en attente / actif / terminé / repris /
-     *  écarté) pour l'écran d'indexation. */
+     *  écarté) pour l'écran d'indexation. ADR 0214 (demande D4 de
+     *  CodeIDE) : constructeur de SEMIS depuis l'état du passage
+     *  précédent — les entrées saines gardent leur compte et leur
+     *  état, les MESSAGES des retentées partent (elles repartent de
+     *  zéro, leur issue neuve les recréera). */
     private class StatistiquesConstruction(
         val total: Int,
+        seed: EtatIndex? = null,
+        cheminsRetentes: Set<String> = emptySet(),
     ) {
-        val faits = AtomicInteger()
-        val reprises = AtomicInteger()
-        val avertissements = ConcurrentLinkedQueue<String>()
-        val erreurs = ConcurrentLinkedQueue<String>()
+        val faits = AtomicInteger(seed?.faits ?: 0)
+        val reprises = AtomicInteger(seed?.reprises ?: 0)
+        val avertissements =
+            ConcurrentLinkedQueue(
+                seed?.avertissements?.sansMessagesDe(cheminsRetentes) ?: emptyList(),
+            )
+        val erreurs =
+            ConcurrentLinkedQueue(
+                seed?.erreurs?.sansMessagesDe(cheminsRetentes) ?: emptyList(),
+            )
 
         /** B2 : liste de travail par entrée (chemin → état). ConcurrentHashMap
          *  pour la sécurité concurrente (les entrées sont traitées en parallèle). */
         val listeTravail = ConcurrentHashMap<String, EtatEntreeTravail>()
+
+        init {
+            // ADR 0214 : semis de la liste du passage précédent — les
+            // retentées seront re-marquées ACTIF → final par le pipeline.
+            seed?.listeTravail?.forEach { entree ->
+                listeTravail[entree.nom] = entree.etat
+            }
+        }
+
+        /**
+         * Les messages qui ne concernent PAS les chemins retentés —
+         * les deux formats historiques (illisible « chemin : raison »,
+         * écriture « écriture impossible (chemin) : raison ») partent,
+         * l'issue NEUVE de la retentée recréera le sien.
+         */
+        private fun List<String>.sansMessagesDe(chemins: Set<String>): List<String> =
+            filter { message ->
+                chemins.none { chemin ->
+                    message.startsWith("$chemin :") ||
+                        message.startsWith("écriture impossible ($chemin)")
+                }
+            }
 
         /** B2 : marque une entrée comme ACTIF (début de traitement). */
         fun marquerActif(chemin: String) {

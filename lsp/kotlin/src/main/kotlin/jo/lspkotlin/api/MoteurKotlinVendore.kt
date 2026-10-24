@@ -22,7 +22,8 @@ public class MoteurKotlinVendore : MoteurLangageKotlin {
      * toutes les sessions du moteur (un projet = un moteur côté façade
      * hôte) : segments disque par empreinte, un jar inchangé n'est
      * jamais redécodé (ADR 0111 §3 pour l'esprit, l'identité vient de
-     * l'hôte W6).
+     * l'hôte W6) ; cache MÉMOIRE et garde d'empreintes depuis l'ADR
+     * 0211.
      */
     private val indexAppelables = jo.lspkotlin.index.IndexAppelablesKotlin()
 
@@ -32,6 +33,15 @@ public class MoteurKotlinVendore : MoteurLangageKotlin {
      * racines changent ; les documents OUVERTS dominent côté session).
      */
     private val scanProjet = jo.lspkotlin.session.ScanProjet(parseur)
+
+    /**
+     * Pilote des passages d'indexation (ADR 0211/0213/0214 — demandes
+     * D1/D3/D4/D5 de CodeIDE) : nourrissage UNE fois par sync sur fil
+     * dédié, événements de progression, annulation coopérative,
+     * reprise ciblée des échecs.
+     */
+    private val passeur =
+        jo.lspkotlin.index.PasseurIndexationKotlin(indexAppelables, scanProjet)
 
     private val descripteur: Map<String, String> by lazy { lireDescripteurPack() }
 
@@ -54,6 +64,21 @@ public class MoteurKotlinVendore : MoteurLangageKotlin {
 
     override fun creerSession(): SessionLangageKotlin =
         jo.lspkotlin.session.SessionLangageKotlinParse(parseur, indexAppelables, scanProjet)
+
+    /** ADR 0211 (D1) — nourrissage moteur, une fois par sync, fil dédié. */
+    override fun definirClasspath(classpath: ClasspathKotlin): Boolean =
+        passeur.definirClasspath(classpath)
+
+    /** ADR 0213 (D3) — progression observable (types neutres du SPI). */
+    override fun enregistrerObservateurIndexation(
+        observateur: jo.lspkotlin.api.ObservateurIndexationKotlin,
+    ): java.io.Closeable = passeur.enregistrer(observateur)
+
+    /** ADR 0214 (D5) — annulation coopérative du passage en vol. */
+    override fun annulerPassage(): Boolean = passeur.annulerPassage()
+
+    /** ADR 0214 (D4) — reprise ciblée des échecs du dernier passage. */
+    override fun reesayerEchecs(): Boolean = passeur.reesayerEchecs()
 
     private fun lireDescripteurPack(): Map<String, String> {
         val chemin = "jo/lspkotlin/pack/version.properties"

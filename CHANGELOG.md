@@ -1,5 +1,78 @@
 # Changelog — codeide-lsp
 
+## 1.8.0 (2026-10-24)
+
+- **Chantier « demandes CodeIDE » D1–D5 — ADR 0211/0212/0213/0214**
+  (réponse à `CodeIDE/docs/DEMANDES_CODEIDE_LSP.md`, écran d'indexation
+  multi-moteurs v0.178.0 ; 1 237 tests verts : 267 moteur Kotlin +
+  258 XML + 82 index + 409 Java + 221 hôte dont 71 scénarios E2E
+  transport réel qui empruntent désormais le NOUVEAU flux
+  `etatIndexation` de bout en bout).
+  - **ADR 0211 — nourrissage moteur UNE fois par sync, supplier de
+    connexion sans E/S (demande D1)** : `MoteurLangageKotlin/
+    MoteurLangageXml.definirClasspath` (SPI, défaut `false` = packs
+    anciens) nourrit l'état PARTAGÉ sur un fil de fond dédié ;
+    `IndexAppelablesKotlin` gagne la GARDE d'empreintes (mêmes
+    empreintes dans l'ordre = no-op chaud), un CACHE MÉMOIRE par
+    empreinte (un segment lu ne retourne jamais au disque ; un échec
+    n'y vit jamais — la reprise le retente) et le contrat `couvre`/
+    `nourrissageParMoteur` ; les sessions se BRANCHENT sans re-lire
+    (chaque changement d'onglet `.kt` devient un no-op chaud, l'ANR
+    disparaît structurellement). Sous-lecture honnête : pendant la
+    passe en vol, les diagnostics `kt.unresolved` se TAISENT sur le
+    classpath (index non couvert, recalculé à CHAQUE requête) et les
+    documents ouverts se REPUBLIENT quand la passe aboutit
+    (`KotlinLanguageServer`/`XmlLanguageServer.republierDocumentsOuverts`,
+    branchés sur l'événement final). XML (annexe D1-d) : même loi —
+    `IndexRessources` observe ses passages, un AAR/values échoué n'est
+    JAMAIS mis en cache mtime, la purge ne s'exécute pas sur
+    annulation (le dernier-connu-bon survit), et le catalogue XE2 est
+    PRÉCHAUFFÉ dans la passe (son coût quitte la première frappe).
+  - **ADR 0212 — le serveur Kotlin ne bloque plus (demande D2)** : le
+    FILET de scan synchrone sous verrou est SUPPRIMÉ — `declarations()`
+    JOINT le WARM en vol, sinon rend le snapshot et AMORCE (une requête
+    précoce répond honnêtement moins riche, jamais en bloquant tout le
+    serveur) ; le drapeau `pret` distingue « passage abouti » (même
+    VIDE — un projet sans `.kt` est un état légitime) d'une
+    invalidation ; la marche du scan PRÉCÈDE le parse (vrai X/N). La
+    session passe au verrou LECTURE-ÉCRITURE : diagnostics, complétion,
+    survol et previews de documents DISTINCTS tournent EN PARALLÈLE
+    (audit de pureté : helpers purs ou à état par appel ;
+    `ClassesSynthetiques` synchronisé en interne — le seul point fauve).
+    Deux courses de publication refermées par construction : le
+    résultat du WARM se publie DANS le corps de la tâche (un lecteur
+    qui joint est garanti de le voir) et le vol se libère AVANT
+    l'achèvement (plus de « vol fantôme » bloquant l'amorce suivante).
+  - **ADR 0213 — contrat de progression Kotlin + XML (demande D3)** :
+    `SessionLspKotlin.etatIndexation` et `SessionLspXml.etatIndexation`
+    — `StateFlow<EtatIndexation>`, le MÊME type public que Java,
+    alimentés par les ÉVÉNEMENTS NEUTRES des moteurs (types du SPI, zéro
+    kotlinx-coroutines dans les packs — observateur SAM + poignée
+    `Closeable`) : phases (BIBLIOTHEQUES = segments kidx / catalogue XE2
+    + AAR P3, SOURCES = scan WARM / racines `res/`), liste de travail
+    par entrée (EN_ATTENTE → ACTIF → REPRIS/TERMINE/ECARTE), breakdown
+    par indexeur, durées par phase, bilan du dernier passage,
+    `settled`, `reprises` — la parité avec l'écran Java est TOTALE et
+    l'agrégat CodeIDE branche le flux SANS autre changement côté hôte.
+    Fenêtres de repli pour les packs anciens (`definirClasspath` =
+    `false`) : CONSTRUCTION au départ de sync, PRET après la poussée
+    synchrone — le comportement d'avant, jamais de PARTIEL inventé.
+  - **ADR 0214 — contrôles de passage (demandes D4 + D5)** :
+    `SessionLsp/SessionLspKotlin/SessionLspXml.annulerPassage()` et
+    `.reesayerEchecs()` (retour `false` = rien à faire — l'écran
+    retire/grise l'offre, jamais d'exception, packs anciens compris).
+    Annulation COOPÉRATIVE : drapeau testé ENTRE les unités (segments
+    Kotlin, fichiers du scan, AAR/racines XML ; côté Java les
+    `ensureActive` du `Job` existant), le passage publie son ACQUIS et
+    se marque PARTIEL « annulé par l'utilisateur » (`invokeOnCompletion`
+    côté Java — publication sans course). Reprise CIBLÉE : le cache
+    rend les unités saines REPRIS sans re-travail (visible à l'écran) ;
+    côté Java, `ServiceIndexDisque.reesayerEchecs` ne relance QUE les
+    positions ECARTÉES avec statistiques SEMÉES (les messages des
+    retentées partent, la phase finale est recalculée) — les deux
+    boutons de la maquette (« Réindexer » / « Réessayer les entrées
+    échouées ») deviennent enfin DISTINCTS.
+
 ## 1.7.0 (2026-10-24)
 
 - **Panneau GO TO complet et SYMÉTRIQUE Kotlin/Java — ADR 0208/0209/0210**

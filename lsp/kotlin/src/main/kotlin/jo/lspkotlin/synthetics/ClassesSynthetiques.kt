@@ -46,13 +46,23 @@ import java.io.File
  */
 @Suppress("TooManyFunctions")
 internal class ClassesSynthetiques {
-    /** Racines courantes (identité d'invalidation). */
+    /**
+     * Verrou interne du calcul paresseux (ADR 0212) : les requêtes de
+     * session tournent désormais en PARALLÈLE sous verrou de lecture —
+     * le cache paresseux (`racines`/`groupes`/`calcule`) est muté et lu
+     * hors de tout verrou de session, il DOIT se synchroniser lui-même
+     * (le calcul reste paresseux, UNE seule construction à la fois,
+     * les lecteurs parallèles attendent au pire UNE construction).
+     */
+    private val verrouCalcul = Any()
+
+    /** Racines courantes (identité d'invalidation) — sous [verrouCalcul]. */
     private var racines: List<File> = emptyList()
 
-    /** Groupes du dernier calcul (vide avant le premier). */
+    /** Groupes du dernier calcul (vide avant le premier) — sous [verrouCalcul]. */
     private var groupes: List<GroupeSynthetique> = emptyList()
 
-    /** Calcul effectué pour les racines courantes ? */
+    /** Calcul effectué pour les racines courantes ? — sous [verrouCalcul]. */
     private var calcule = false
 
     /**
@@ -60,23 +70,26 @@ internal class ClassesSynthetiques {
      * changement : re-calcul paresseux au prochain [groupes].
      */
     internal fun definirRacines(nouvelles: List<File>) {
-        if (nouvelles == racines) return
-        racines = nouvelles
-        groupes = emptyList()
-        calcule = false
+        synchronized(verrouCalcul) {
+            if (nouvelles == racines) return
+            racines = nouvelles
+            groupes = emptyList()
+            calcule = false
+        }
     }
 
     /**
      * Groupes synthétiques courants — calcul paresseux au premier accès
      * (le coût est celui du parcours des ressources, borné).
      */
-    internal fun groupes(): List<GroupeSynthetique> {
-        if (!calcule) {
-            groupes = construire(racines)
-            calcule = true
+    internal fun groupes(): List<GroupeSynthetique> =
+        synchronized(verrouCalcul) {
+            if (!calcule) {
+                groupes = construire(racines)
+                calcule = true
+            }
+            groupes
         }
-        return groupes
-    }
 
     /**
      * Un groupe synthétique — toutes les déclarations d'UNE classe de

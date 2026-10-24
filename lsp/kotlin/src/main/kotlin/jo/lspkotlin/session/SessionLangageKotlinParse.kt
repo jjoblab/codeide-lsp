@@ -73,10 +73,15 @@ import java.io.File
  * vide, [nombreDocuments] vaut 0 — la session ne retient RIEN (test de
  * fuite).
  *
- * Concurrence : verrou interne — les callbacks LSP4J de l'hôte arrivent
- * sur son pool ; les opérations sont courtes (parse complet d'un
- * document, requêtes sur index en mémoire), la sérialisation est
- * invisible.
+ * Concurrence : verrou LECTURE-ÉCRITURE (ADR 0212, demande D2 de
+ * CodeIDE) — les callbacks LSP4J de l'hôte arrivent sur son pool ;
+ * les MUTATIONS (didOpen/didChange/didClose, definirClasspath,
+ * close) prennent le verrou d'écriture, TOUTES les requêtes celui de
+ * LECTURE : deux documents se diagnosent, se complètent et se
+ * survolent EN PARALLÈLE (l'audit de pureté ADR 0212 a verrouillé les
+ * helpers — purs ou à état par appel — et synchronisé
+ * [ClassesSynthetiques] en interne). Jamais de réentrance
+ * lecture→écriture : aucune requête ne mute l'état de session.
  *
  * Exemption detekt ciblée (règle 16) : TooManyFunctions — la classe
  * IMPLÉMENTE le contrat de session (10 méthodes d'interface K2+K3) +
@@ -98,8 +103,35 @@ internal class SessionLangageKotlinParse(
 ) : SessionLangageKotlin {
     /** Synthétiques Android (K5 : R, BuildConfig, bindings). */
     private val synthetiques = ClassesSynthetiques()
-    /** Verrou de l'état (documents + classpath + fermeture). */
-    private val verrou = Any()
+
+    /**
+     * Verrou de l'état (documents + classpath + fermeture) — LECTURE-
+     * ÉCRITURE (ADR 0212) : mutations en écriture, requêtes en lecture
+     * parallèle.
+     */
+    private val verrou = java.util.concurrent.locks.ReentrantReadWriteLock()
+
+    /** Ouvre le verrou de LECTURE le temps du bloc (requêtes parallèles). */
+    private inline fun <T> enLecture(bloc: () -> T): T {
+        val cadenas = verrou.readLock()
+        cadenas.lock()
+        try {
+            return bloc()
+        } finally {
+            cadenas.unlock()
+        }
+    }
+
+    /** Ouvre le verrou d'ÉCRITURE le temps du bloc (mutations sérialisées). */
+    private inline fun <T> enEcriture(bloc: () -> T): T {
+        val cadenas = verrou.writeLock()
+        cadenas.lock()
+        try {
+            return bloc()
+        } finally {
+            cadenas.unlock()
+        }
+    }
 
     /** Documents ouverts : uri → arbre du dernier texte connu. */
     private val documents = mutableMapOf<String, DocumentOuvert>()
@@ -115,14 +147,14 @@ internal class SessionLangageKotlinParse(
 
     /** Nombre de documents ouverts (observabilité, test de fuite). */
     override val nombreDocuments: Int
-        get() = synchronized(verrou) { documents.size }
+        get() = enLecture { documents.size }
 
     override fun ouvrirDocument(
         uri: String,
         texte: CharSequence,
         script: Boolean,
     ) {
-        synchronized(verrou) {
+        enEcriture {
             if (fermee) return
             documents[uri] = DocumentOuvert(parseur.analyser(texte, script), texte, script)
         }
@@ -139,13 +171,13 @@ internal class SessionLangageKotlinParse(
     }
 
     override fun fermerDocument(uri: String) {
-        synchronized(verrou) {
+        enEcriture {
             documents.remove(uri)
         }
     }
 
     override fun diagnostics(uri: String): List<DiagnosticKotlin> =
-        synchronized(verrou) {
+        enLecture {
             val document = documents[uri] ?: return emptyList()
             val syntaxiques = DiagnosticsSyntaxiques.calculer(document.arbre)
             // K4 : les diagnostics SÉMANTIQUES vivent sous le MÊME verrou
@@ -159,20 +191,35 @@ internal class SessionLangageKotlinParse(
                         contexteNom = contexteNom,
                         resolution = resolution,
                         declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
-                        // Régime sans classpath poussé : AUCUN diagnostic
-                        // non résolu (impossible de prouver une absence).
-                        indexAppelables = if (classpath == null) null else indexAppelables,
+                        // ADR 0211 — garde de sous-lecture : index non
+                        // couvert (passe moteur en vol) ⇒ AUCUN diagnostic
+                        // non résolu sur le classpath (impossible de
+                        // prouver une absence, miroir « index froid =
+                        // silence » du LSP XML) ; recalculé à CHAQUE
+                        // requête — jamais d'état périmé après publication.
+                        indexAppelables = indexSiPret(),
                     ),
                 )
             (syntaxiques + semantiques).sortedWith(compareBy({ it.debut }, { it.code }))
         }
 
     override fun definirClasspath(classpath: ClasspathKotlin) {
-        synchronized(verrou) {
+        enEcriture {
             if (fermee) return
             this.classpath = classpath
             resolution = ResolutionKotlin(classpath.vue)
-            indexAppelables.definir(classpath.entrees, classpath.dossierIndex)
+            // ADR 0211 (demande D1 de CodeIDE) : BRANCHEMENT quand le
+            // moteur possède le nourrissage — passe en vol ou snapshot
+            // couvrant ces empreintes — AUCUNE re-lecture ici (le
+            // supplier de connexion ne paie plus d'E/S lourde). Hors
+            // moteur nourricier (usages directs, packs anciens), le
+            // contrat SYNCHRONE historique tient : la définition
+            // construit le snapshot partagé ici et maintenant.
+            if (!indexAppelables.couvre(classpath.entrees) &&
+                !indexAppelables.nourrissageParMoteur
+            ) {
+                indexAppelables.definir(classpath.entrees, classpath.dossierIndex)
+            }
             // Scan partagé : redéfini si les racines ont changé (un
             // appel identique est un no-op — les documents OUVERTS
             // dominent les déclarations de toute façon).
@@ -187,7 +234,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): List<PropositionCompletionKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             CompletionKotlin.propositions(
@@ -202,7 +249,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): ContenuSurvoleKotlin? =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return null
             val document = documents[uri] ?: return null
             InterrogationsSymboles.survol(
@@ -217,7 +264,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): List<EmplacementKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             InterrogationsSymboles.definitions(
@@ -232,7 +279,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): List<String> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val contexteNom = contexteNomDe(document, uri)
@@ -242,7 +289,10 @@ internal class SessionLangageKotlinParse(
                 contexteNom = contexteNom,
                 resolution = resolution,
                 declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
-                index = if (classpath == null) null else indexAppelables,
+                // ADR 0211 : même garde de sous-lecture que les
+                // diagnostics — un index non couvert n'invente NI
+                // candidat NI absence.
+                index = indexSiPret(),
                 vue = classpath?.vue,
             )
         }
@@ -254,7 +304,7 @@ internal class SessionLangageKotlinParse(
      * document courant. Document inconnu/fermé : liste VIDE.
      */
     override fun symbolesDocument(uri: String): List<SymboleDocumentKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val fichier = KtFile(document.arbre.racine)
@@ -269,7 +319,7 @@ internal class SessionLangageKotlinParse(
      * Document inconnu/fermé : liste VIDE.
      */
     override fun previews(uri: String): List<PreviewKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val paquet = KtFile(document.arbre.racine).directivePackage()?.nomQualifie()
@@ -320,7 +370,7 @@ internal class SessionLangageKotlinParse(
      * courant. Document inconnu/fermé : liste VIDE.
      */
     override fun plagesPliables(uri: String): List<PlagePliableKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             PlisDocumentKotlin.depuis(document.arbre.racine)
@@ -335,7 +385,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): AideSignatureKotlin? =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return null
             val document = documents[uri] ?: return null
             val contexteNom = contexteNomDe(document, uri)
@@ -362,7 +412,7 @@ internal class SessionLangageKotlinParse(
         decalage: Int,
         inclureDeclaration: Boolean,
     ): List<EmplacementKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val cible = cibleAuCurseur(document, uri, decalage) ?: return emptyList()
@@ -387,7 +437,7 @@ internal class SessionLangageKotlinParse(
      * déclaration en écriture, les références en lecture.
      */
     override fun surlignagesDocument(uri: String, decalage: Int): List<PlageSurligneeKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val cible = cibleAuCurseur(document, uri, decalage) ?: return emptyList()
@@ -406,7 +456,7 @@ internal class SessionLangageKotlinParse(
 
     /** Plage renommable (S2) — miroir du prepareRename honnête Java. */
     override fun plageRenommable(uri: String, decalage: Int): PlageRenommableKotlin? =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return null
             val document = documents[uri] ?: return null
             OccurrencesKotlin.plageRenommable(
@@ -423,7 +473,7 @@ internal class SessionLangageKotlinParse(
      * reviennent ordonnées par fichier (document déclarant d'abord).
      */
     override fun renommage(uri: String, decalage: Int): List<EmplacementKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val cible = cibleAuCurseur(document, uri, decalage) ?: return emptyList()
@@ -446,7 +496,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         tailleIndentation: Int,
     ): List<EditionSourceKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             FormateurKotlin.editer(document.arbre, document.texte, tailleIndentation)
@@ -463,7 +513,7 @@ internal class SessionLangageKotlinParse(
         finPlage: Int,
         tailleIndentation: Int,
     ): List<EditionSourceKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             FormateurKotlin.editer(document.arbre, document.texte, tailleIndentation, debutPlage, finPlage)
@@ -479,7 +529,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): List<EmplacementKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             TypesKotlin.definitionsType(
@@ -502,7 +552,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): List<EmplacementKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val cible =
@@ -556,7 +606,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalage: Int,
     ): List<CibleNavigationKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val contexte = contexteInterrogations(document, uri)
@@ -587,7 +637,7 @@ internal class SessionLangageKotlinParse(
         debutPlage: Int,
         finPlage: Int,
     ): List<IndiceEnLigneKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             val contexteNom = contexteNomDe(document, uri)
@@ -625,7 +675,7 @@ internal class SessionLangageKotlinParse(
      * contient, locales exclues, plafonné, ordonné par nom).
      */
     override fun symbolesEspace(requete: String): List<SymboleEspaceKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val declarations = mutableListOf<DeclarationProjet>()
             for ((uriOuvert, document) in documents) {
@@ -644,7 +694,7 @@ internal class SessionLangageKotlinParse(
         uri: String,
         decalages: List<Int>,
     ): List<ChaineSelectionKotlin> =
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return emptyList()
             val document = documents[uri] ?: return emptyList()
             decalages.map { decalage -> SelectionsKotlin.chaine(document.arbre.racine, decalage) }
@@ -658,14 +708,14 @@ internal class SessionLangageKotlinParse(
      * toute façon.
      */
     override fun rafraichirSources() {
-        synchronized(verrou) {
+        enLecture {
             if (fermee) return
         }
         scanProjet.rafraichir()
     }
 
     override fun close() {
-        synchronized(verrou) {
+        enEcriture {
             fermee = true
             documents.clear()
             classpath = null
@@ -676,6 +726,20 @@ internal class SessionLangageKotlinParse(
     }
 
     // ── Contextes de requête ───────────────────────────────────────────
+
+    /**
+     * Index des appelables SI le snapshot partagé COUVERT le classpath
+     * courant (ADR 0211) — `null` sinon : une passe moteur en vol ou
+     * un passage annulé laisse l'index partiel, et les requêtes qui
+     * prouvent par l'ABSENCE (diagnostics `kt.unresolved`, candidats
+     * d'import) doivent se TAIRE plutôt qu'inventer un faux négatif.
+     * Recalculé à CHAQUE requête : la publication de la passe rend
+     * l'index à la requête SUIVANTE, sans redéfinition ni pousse.
+     */
+    private fun indexSiPret(): IndexAppelablesKotlin? {
+        val classpathCourant = classpath ?: return null
+        return if (indexAppelables.couvre(classpathCourant.entrees)) indexAppelables else null
+    }
 
     /** Contexte de complétion (document courant + projet + classpath). */
     private fun contextePour(

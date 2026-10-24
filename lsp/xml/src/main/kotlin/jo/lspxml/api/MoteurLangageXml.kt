@@ -1,6 +1,7 @@
 package jo.lspxml.api
 
 import jo.lspxml.parse.DocumentXml
+import java.io.Closeable
 
 /**
  * SPI mince du moteur XML — LE seul contrat par lequel le reste de
@@ -46,6 +47,66 @@ public interface MoteurLangageXml {
      * fermeture ([SessionLangageXml.close]).
      */
     public fun creerSession(): SessionLangageXml
+
+    /**
+     * Nourrit l'état PARTAGÉ du moteur (ADR 0211 — demande D1 de
+     * CodeIDE, annexe D1-d) : UNE fois par sync, sur un fil de fond du
+     * moteur — l'index des ressources (racines `res/` + AAR des
+     * dépendances, scans incrémentaux mtime) et le catalogue XE2 de la
+     * plateforme (pré-chauffé : son coût quitte la première frappe de
+     * diagnostic). Les sessions créées ensuite se BRANCHENT sans
+     * re-balayage ([SessionLangageXml.definirClasspath] devient un
+     * no-op quand le moteur possède le nourrissage).
+     *
+     * Tolérance de version : défaut `false` — un pack XE antérieur ne
+     * possède pas le nourrissage moteur (la façade retombe sur la
+     * poussée synchrone par session, le monde d'avant, jamais une
+     * exception).
+     *
+     * @param classpath le classpath poussé par la sync.
+     * @return `true` si le moteur a PRIS LA DEMANDE en charge (passe
+     *         asynchrone en route) ; `false` pour un pack ancien.
+     */
+    public fun definirClasspath(classpath: ClasspathXml): Boolean = false
+
+    /**
+     * Enregistre un observateur de l'indexation moteur (ADR 0213 —
+     * demande D3 : écran multi-moteurs de CodeIDE). La poignée
+     * retournée DÉSINSCRIT l'observateur.
+     *
+     * Tolérance de version : défaut = poignée vide, AUCUN événement.
+     *
+     * @param observateur le destinataire des événements (fil de fond
+     *        du moteur — rapide, jamais d'exception).
+     * @return la poignée de désinscription.
+     */
+    public fun enregistrerObservateurIndexation(observateur: ObservateurIndexationXml): Closeable =
+        PoigneeObservationVideXml
+
+    /**
+     * Annule le passage d'indexation EN VOL (ADR 0214 — demande D5) :
+     * drapeau coopératif testé ENTRE les unités (racines, AAR), le
+     * passage publie son acquis et se marque PARTIEL « annulé par
+     * l'utilisateur ».
+     *
+     * Tolérance de version : défaut `false` (pack ancien).
+     *
+     * @return `true` si un passage était en vol ; `false` sinon.
+     */
+    public fun annulerPassage(): Boolean = false
+
+    /**
+     * Retente les ÉCHECS du dernier passage SEULEMENT (ADR 0214 —
+     * demande D4) : les unités saines sont reprises du cache mtime sans
+     * re-lecture, seuls les dossiers/AAR douteux et les pendances d'une
+     * annulation sont re-payés.
+     *
+     * Tolérance de version : défaut `false` (pack ancien).
+     *
+     * @return `true` s'il y avait des échecs/pendances à retenter ;
+     *         `false` sinon.
+     */
+    public fun reesayerEchecs(): Boolean = false
 }
 
 /**

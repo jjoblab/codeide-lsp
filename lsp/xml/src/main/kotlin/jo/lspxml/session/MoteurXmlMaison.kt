@@ -38,6 +38,15 @@ public class MoteurXmlMaison(
      */
     private val indexRessources = jo.lspxml.resources.IndexRessources()
 
+    /**
+     * Pilote des passages d'indexation (ADR 0211/0213/0214 — demandes
+     * D1-annexe/D3/D4/D5 de CodeIDE) : nourrissage UNE fois par sync
+     * sur fil dédié (pré-chauffe XE2 + AAR + racines res), événements
+     * de progression, annulation coopérative, reprise ciblée.
+     */
+    private val passeur =
+        jo.lspxml.session.PasseurIndexationXml(indexRessources, catalogues)
+
     private val descripteur: Map<String, String> by lazy { lireDescripteurPack() }
 
     override val identifiant: String
@@ -52,6 +61,21 @@ public class MoteurXmlMaison(
     override fun analyserSource(texte: CharSequence): jo.lspxml.parse.DocumentXml = parseur.analyser(texte)
 
     override fun creerSession(): SessionLangageXml = SessionLangageXmlImpl(parseur, catalogues, indexRessources)
+
+    /** ADR 0211 (D1-d) — nourrissage moteur, une fois par sync, fil dédié. */
+    override fun definirClasspath(classpath: jo.lspxml.api.ClasspathXml): Boolean =
+        passeur.definirClasspath(classpath)
+
+    /** ADR 0213 (D3) — progression observable (types neutres du SPI). */
+    override fun enregistrerObservateurIndexation(
+        observateur: jo.lspxml.api.ObservateurIndexationXml,
+    ): java.io.Closeable = passeur.enregistrer(observateur)
+
+    /** ADR 0214 (D5) — annulation coopérative du passage en vol. */
+    override fun annulerPassage(): Boolean = passeur.annulerPassage()
+
+    /** ADR 0214 (D4) — reprise ciblée des échecs du dernier passage. */
+    override fun reesayerEchecs(): Boolean = passeur.reesayerEchecs()
 
     private fun lireDescripteurPack(): Map<String, String> {
         val chemin = "jo/lspxml/pack/version.properties"

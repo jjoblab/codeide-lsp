@@ -38,6 +38,13 @@ import java.io.File
  * standard) ; les journaux JUL partent sur stderr.
  */
 public object ServeurStdio {
+    /**
+     * Exemption detekt ciblée (règle 16) : LongMethod — main EST la
+     * chaîne de production répliquée en UN récit linéaire (index → vue
+     * → façade → attente du flux ADR 0213 → serveur stdio) ; la découper
+     * casserait le récit du harnais (même exonération que les scénarios).
+     */
+    @Suppress("LongMethod")
     @JvmStatic
     public fun main(args: Array<String>) {
         val racine = File(System.getenv("HARNAIS_RACINE") ?: error("HARNAIS_RACINE requis"))
@@ -90,6 +97,18 @@ public object ServeurStdio {
                 sessionJava = sessionJava,
             )
         facadeKotlin.appliquerClasspath(resultat, vue)
+        // ADR 0211/0213 : le nourrissage KOTLIN est asynchrone (fil
+        // dédié du moteur) — le serveur attend son ABOUTISSEMENT par le
+        // FLUX d'état (PRET/PARTIEL), exactement comme CodeIDE attendra
+        // le PRET Java avant d'ouvrir l'éditeur. Les scénarios restent
+        // DÉTERMINISTES (aucune fenêtre de sous-lecture).
+        runBlocking {
+            withTimeout(240_000) {
+                facadeKotlin.etatIndexation.first {
+                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
+                }
+            }
+        }
         val serveur = facadeKotlin.serveur()
 
         val lanceur = LSPLauncher.createServerLauncher(serveur, System.`in`, System.out)

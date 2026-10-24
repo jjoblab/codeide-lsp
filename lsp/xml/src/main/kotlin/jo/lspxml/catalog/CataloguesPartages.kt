@@ -34,6 +34,14 @@ internal class CataloguesPartages {
     }
 
     /**
+     * La plateforme est-elle DÉJÀ chargée (ADR 0213 — issue REPRIS du
+     * préchauffage : un catalogue déjà en cache ne re-travaille pas) ?
+     * `false` pour un dossier absent (`null` compris).
+     */
+    internal fun dejaCharge(dossier: File?): Boolean =
+        dossier != null && charges.containsKey(dossier.absolutePath)
+
+    /**
      * Chargement TOUJOURS défensif (un attrs.xml exotique = null).
      *
      * Exemption detekt ciblée (règle 16) : SwallowedException — le

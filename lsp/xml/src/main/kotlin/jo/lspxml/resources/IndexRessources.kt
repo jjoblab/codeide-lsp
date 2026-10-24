@@ -89,6 +89,49 @@ internal class IndexRessources {
     private var aarsAlimentes = false
 
     /**
+     * Le moteur a-t-il PRIS EN MAIN le nourrissage (ADR 0211, annexe
+     * D1-d) ? Posé au premier `definirClasspath` moteur, jamais retiré :
+     * les sessions se branchent alors SANS jamais re-balayer.
+     */
+    @Volatile
+    private var nourrissageMoteur = false
+
+    /** Le moteur possède-t-il le nourrissage (branchement de session). */
+    internal val nourrissageParMoteur: Boolean
+        get() = nourrissageMoteur
+
+    /** Sonne le nourrissage moteur (ADR 0211) — posé par la passe moteur. */
+    internal fun sonnerNourrissageMoteur() {
+        nourrissageMoteur = true
+    }
+
+    /** Issue d'une unité du passage (miroir de l'état public du travail). */
+    internal enum class IssueUnite {
+        /** Reprise sans re-travail (mtime inchangé — cache incrémental). */
+        REPRIS,
+
+        /** Scannée pour la première fois (décodage/parse effectif). */
+        TERMINE,
+
+        /** Écartée honnêtement (illisible — doute X4). */
+        ECARTE,
+    }
+
+    /**
+     * Observation du passage (ADR 0213/0214) — chaque unité (racine
+     * `res/`, AAR) notifiée à son issue ; le retour `false` ANNULE le
+     * passage (l'unité courante reste ACQUISE, les suivantes pendent,
+     * la purge ne s'exécute PAS — le dernier-connu-bon reste vrai
+     * jusqu'à la reprise).
+     */
+    internal fun interface ObservationPassage {
+        fun surUnite(
+            nom: String,
+            issue: IssueUnite,
+        ): Boolean
+    }
+
+    /**
      * (Re)définit les racines sources — scan incrémental (mtime par
      * fichier), idempotent : les mêmes racines ne re-parsent que les
      * fichiers changés.
@@ -104,18 +147,53 @@ internal class IndexRessources {
      * chaque racine teste donc SES deux candidats, dédoublonnés.
      */
     internal fun definir(nouvellesRacines: List<File>) {
+        definir(nouvellesRacines, null)
+    }
+
+    /**
+     * Racines `res/` vivantes du DERNIER passage (identité de reprise —
+     * ADR 0213 : une racine déjà connue qui n'a pas changé est REPRISE).
+     */
+    @Volatile
+    private var racinesResConnues: Set<String> = emptySet()
+
+    /**
+     * (Re)définit les racines sources AVEC observation du passage
+     * (ADR 0213/0214 — usage moteur) : chaque racine `res/` vivante
+     * est une unité (REPRISE si déjà connue du dernier passage) ; le
+     * retour `false` de l'observateur ANNULE en route (l'acquis reste,
+     * la purge ne s'exécute PAS — le dernier-connu-bon survit à
+     * l'annulation, la reprise rafraîchit).
+     */
+    internal fun definir(
+        nouvellesRacines: List<File>,
+        observation: ObservationPassage?,
+    ) {
         racines = nouvellesRacines
         val vues = mutableListOf<File>()
         for (racine in nouvellesRacines) {
             dossierResDe(racine)?.let { vues.add(it) }
         }
+        val distinctes = vues.distinctBy { it.path }
         val vivants = mutableSetOf<String>()
-        for (res in vues.distinctBy { it.path }) {
+        var annule = false
+        for (res in distinctes) {
+            val reprise = res.path in racinesResConnues
             scannerDossierRes(res, vivants)
+            val issue = if (reprise) IssueUnite.REPRIS else IssueUnite.TERMINE
+            if (observation?.surUnite(res.path, issue) == false) {
+                annule = true
+                break
+            }
         }
         // Les déclarants d'un fichier DISPARU partent (l'index ne ment
-        // jamais — une référence résolue doit l'être VRAIMENT).
-        purger(vivants)
+        // jamais) — SAUF si le passage a été ANNULÉ : le dernier-connu-bon
+        // des racines non parcourues reste vrai (ADR 0214, la reprise
+        // rafraîchit).
+        if (!annule) {
+            purger(vivants)
+            racinesResConnues = distinctes.map { it.path }.toSet()
+        }
     }
 
     /**
@@ -137,12 +215,36 @@ internal class IndexRessources {
      * (l'index ne ment jamais).
      */
     internal fun definirAar(nouveauxAars: List<File>) {
+        definirAar(nouveauxAars, null)
+    }
+
+    /**
+     * (Re)définit les ARCHIVES AAR AVEC observation du passage
+     * (ADR 0213/0214) : chaque AAR est une unité ; le retour `false`
+     * ANNULE en route (l'acquis reste, la purge ne s'exécute PAS).
+     */
+    internal fun definirAar(
+        nouveauxAars: List<File>,
+        observation: ObservationPassage?,
+    ) {
         aarsAlimentes = true
         val vivants = mutableSetOf<String>()
+        var annule = false
         for (aar in nouveauxAars.sortedBy { it.path }) {
+            val reprise = aar.isFile && empreintesAar[aar.path] == aar.lastModified()
             scannerAar(aar, vivants)
+            val issue =
+                when {
+                    !aar.isFile || doutesAar.contains(aar.path) -> IssueUnite.ECARTE
+                    reprise -> IssueUnite.REPRIS
+                    else -> IssueUnite.TERMINE
+                }
+            if (observation?.surUnite(aar.path, issue) == false) {
+                annule = true
+                break
+            }
         }
-        purgerAar(vivants)
+        if (!annule) purgerAar(vivants)
     }
 
     /** Résout une entrée PROJET (premier déclarant du type+nom). */
@@ -200,6 +302,7 @@ internal class IndexRessources {
         empreintesAar.clear()
         doutesAar.clear()
         aarsAlimentes = false
+        racinesResConnues = emptySet()
     }
 
     // ── Scan ───────────────────────────────────────────────────────
@@ -262,13 +365,18 @@ internal class IndexRessources {
             // Le fichier a CHANGÉ : ses ANCIENNES entrées partent avant
             // le re-scan (l'index ne garde jamais des entrées périmées).
             retirerFichier(chemin)
-            empreintes[chemin] = mtime
             val document =
                 try {
                     ParseurXml().analyser(fichier.readText())
                 } catch (t: Throwable) {
-                    continue // illisible : ignoré (X4)
+                    // Illisible : IGNORÉ SANS empreinte (ADR 0214 — un
+                    // échec n'est JAMAIS mis en cache, la reprise ciblée
+                    // le retente) ; l'ancien état du fichier reste parti.
+                    continue
                 }
+            // L'empreinte ne marque que le SUCCÈS : un fichier échoué
+            // reste « à retenter » au prochain passage (ADR 0214).
+            empreintes[chemin] = mtime
             for (ressources in document.racines) {
                 if (ressources.nom != "resources") continue
                 for (enfant in ressources.enfants) {
@@ -378,6 +486,10 @@ internal class IndexRessources {
             }
             doutesAar.remove(chemin)
         } catch (t: Throwable) {
+            // AAR illisible : SANS empreinte (ADR 0214 — un échec n'est
+            // JAMAIS mis en cache, la reprise ciblée le retente) ; le
+            // doute marqué reste le signalement X4.
+            empreintesAar.remove(chemin)
             doutesAar.add(chemin)
         }
     }

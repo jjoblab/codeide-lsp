@@ -8,10 +8,14 @@ import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.ProjetLsp
 import jo.codeide.tooling.protocol.ClasspathResult
 import jo.lspxml.api.ClasspathXml
+import jo.lspxml.api.EvenementIndexationXml
 import jo.lspxml.api.MoteurLangageXml
 import jo.lspxml.api.ServiceMoteurLangageXml
 import jo.lspxml.api.SessionLangageXml
 import jo.lspxml.api.VueNomsXml
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams
 import org.eclipse.lsp4j.services.LanguageServer
 import java.io.Closeable
@@ -55,6 +59,7 @@ import java.util.logging.Logger
  *        éditeur) atteignent les serveurs XML VIVANTS par le MÊME chemin
  *        que les serveurs Java. `null` = façade autonome.
  */
+@Suppress("TooManyFunctions")
 public class SessionLspXml(
     racineProjet: File,
     private val moteur: MoteurLangageXml = ServiceMoteurLangageXml.unique(),
@@ -85,6 +90,54 @@ public class SessionLspXml(
      */
     private val desinscriptionSurveillance: Closeable? =
         sessionJava?.enregistrerDestinataireFichiers(::diffuserEvenementsFichiers)
+
+    /**
+     * Miroir public de l'état d'indexation du MOTEUR XML (ADR 0213 —
+     * demande D3 de CodeIDE) : le MÊME type public que
+     * [SessionLsp.etatIndexation] côté Java et [SessionLspKotlin.etatIndexation].
+     */
+    private val etatIndexationMutable = MutableStateFlow(EtatIndexation.INITIAL)
+
+    /** État d'indexation XML observable (type public commun aux trois langues). */
+    public val etatIndexation: StateFlow<EtatIndexation>
+        get() = etatIndexationMutable.asStateFlow()
+
+    /**
+     * Désinscription de l'observateur moteur (ADR 0213) — fermée à
+     * [close] ; un pack ancien rend la poignée vide du SPI (les
+     * FENÊTRES de [appliquerModele] prennent le relais).
+     */
+    private val desinscriptionObservateur: Closeable =
+        try {
+            moteur.enregistrerObservateurIndexation { evenement ->
+                etatIndexationMutable.value = traduire(evenement)
+                // ADR 0211/0213 : la passe ABOUTIT — les documents ouverts
+                // pendant la fenêtre de sous-lecture (index froid) se
+                // REPUBLIENT avec les VRAIS diagnostics.
+                if (evenement.phase == jo.lspxml.api.PhaseIndexationXml.PRET ||
+                    evenement.phase == jo.lspxml.api.PhaseIndexationXml.PARTIEL
+                ) {
+                    republierServeursVivants()
+                }
+            }
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "observateur d'indexation refusé par le moteur (fenêtres seules)", t)
+            java.io.Closeable { }
+        }
+
+    /**
+     * Republie les documents ouverts de CHAQUE serveur vivant (ADR
+     * 0211/0213) — un serveur fautif n'empêche pas les autres.
+     */
+    private fun republierServeursVivants() {
+        for (serveur in serveursVivants) {
+            try {
+                serveur.republierDocumentsOuverts()
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "republication d'un serveur XML échouée (ignorée)", t)
+            }
+        }
+    }
 
     private var fermee = false
 
@@ -181,6 +234,28 @@ public class SessionLspXml(
                 )
             classpathCourant = classpath
         }
+        // ADR 0211 (annexe D1-d) : nourrissage MOTEUR une fois par sync,
+        // sur le fil dédié — le supplier de connexion ne paie plus rien.
+        // `false` = pack ancien : la poussée SYNCHRONE ci-dessous reste
+        // LE nourrissage (monde d'avant, tolérance de version).
+        val prisEnCharge =
+            try {
+                moteur.definirClasspath(classpathCourant!!)
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "nourrissage moteur refusé (poussée par session)", t)
+                false
+            }
+        // ADR 0213 (demande D3) : fenêtre CONSTRUCTION au départ de sync —
+        // le premier événement moteur (s'il y en a) reprend la main.
+        etatIndexationMutable.value =
+            EtatIndexation(
+                phase = PhaseIndexation.CONSTRUCTION,
+                faits = 0,
+                total = 0,
+                entreeCourante = null,
+                avertissements = emptyList(),
+                erreurs = emptyList(),
+            )
         // Poussé HORS verrou : les sessions moteur sérialisent en
         // interne, la façade reste responsive (le push est idempotent).
         sessionsVivantes.forEach { session ->
@@ -190,7 +265,125 @@ public class SessionLspXml(
                 LOGGER.log(Level.WARNING, "poussée de classpath à une session XML échouée (ignorée)", t)
             }
         }
+        if (!prisEnCharge) {
+            // Pack ancien : la poussée ci-dessus a nourri SYNCHRONEMENT —
+            // fenêtre PRET honnête (jamais de PARTIEL inventé).
+            etatIndexationMutable.value =
+                EtatIndexation(
+                    phase = PhaseIndexation.PRET,
+                    faits = 0,
+                    total = 0,
+                    entreeCourante = null,
+                    avertissements = emptyList(),
+                    erreurs = emptyList(),
+                )
+        }
     }
+
+    /**
+     * Annule le passage d'indexation XML EN VOL (ADR 0214 — demande
+     * D5) ; `false` si aucun passage n'est en vol (ou pack ancien).
+     */
+    public fun annulerPassage(): Boolean =
+        try {
+            moteur.annulerPassage()
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "annulation refusée par le moteur (ignorée)", t)
+            false
+        }
+
+    /**
+     * Retente les ÉCHECS du dernier passage XML SEULEMENT (ADR 0214 —
+     * demande D4) : les unités saines sont reprises du cache mtime,
+     * seuls les dossiers/AAR douteux et les pendances sont re-payés.
+     * `false` s'il n'y a rien à retenter (ou pack ancien).
+     */
+    public fun reesayerEchecs(): Boolean =
+        try {
+            moteur.reesayerEchecs()
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "reprise des échecs refusée par le moteur (ignorée)", t)
+            false
+        }
+
+    /**
+     * Traduit un événement moteur XML (types neutres du pack, ADR
+     * 0213) en [EtatIndexation] public — MÊME patron de découplage
+     * que [SessionLsp.traduireEtatIndex] (Java) et
+     * [SessionLspKotlin.traduire] (Kotlin).
+     *
+     * Exemption detekt ciblée (règle 8 : exception commentée) :
+     * LongMethod/CyclomaticComplexMethod — traduction EXHAUSTIVE par
+     * construction, miroir assumé de `traduireEtatIndex` (SessionLsp).
+     */
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
+    private fun traduire(evenement: EvenementIndexationXml): EtatIndexation =
+        EtatIndexation(
+            phase =
+                when (evenement.phase) {
+                    jo.lspxml.api.PhaseIndexationXml.INITIAL -> PhaseIndexation.INITIAL
+                    jo.lspxml.api.PhaseIndexationXml.CONSTRUCTION -> PhaseIndexation.CONSTRUCTION
+                    jo.lspxml.api.PhaseIndexationXml.PRET -> PhaseIndexation.PRET
+                    jo.lspxml.api.PhaseIndexationXml.PARTIEL -> PhaseIndexation.PARTIEL
+                    jo.lspxml.api.PhaseIndexationXml.ERREUR -> PhaseIndexation.ERREUR
+                },
+            faits = evenement.faits,
+            total = evenement.total,
+            entreeCourante = evenement.entreeCourante,
+            avertissements = evenement.avertissements,
+            erreurs = evenement.erreurs,
+            phaseDetaillee =
+                when (evenement.phaseDetaillee) {
+                    jo.lspxml.api.PhaseDetailleeIndexationXml.AUCUNE -> PhaseDetailleeIndexation.AUCUNE
+                    jo.lspxml.api.PhaseDetailleeIndexationXml.BIBLIOTHEQUES -> PhaseDetailleeIndexation.BIBLIOTHEQUES
+                    jo.lspxml.api.PhaseDetailleeIndexationXml.SOURCES -> PhaseDetailleeIndexation.SOURCES
+                },
+            listeTravail =
+                evenement.listeTravail.map { entree ->
+                    EntreeTravailIndexation(
+                        nom = entree.nom,
+                        etat =
+                            when (entree.etat) {
+                                jo.lspxml.api.EtatEntreeTravailXml.EN_ATTENTE -> EtatEntreeTravailIndexation.EN_ATTENTE
+                                jo.lspxml.api.EtatEntreeTravailXml.ACTIF -> EtatEntreeTravailIndexation.ACTIF
+                                jo.lspxml.api.EtatEntreeTravailXml.TERMINE -> EtatEntreeTravailIndexation.TERMINE
+                                jo.lspxml.api.EtatEntreeTravailXml.REPRIS -> EtatEntreeTravailIndexation.REPRIS
+                                jo.lspxml.api.EtatEntreeTravailXml.ECARTE -> EtatEntreeTravailIndexation.ECARTE
+                            },
+                    )
+                },
+            breakdownIndexeurs =
+                evenement.breakdownIndexeurs.map { breakdown ->
+                    BreakdownIndexeurIndexation(
+                        identifiant = breakdown.identifiant,
+                        libelle = breakdown.libelle,
+                        millisecondesCumulees = breakdown.millisecondesCumulees,
+                        nombreEntrees = breakdown.nombreEntrees,
+                    )
+                },
+            dureesPhases =
+                evenement.dureesPhases?.let { durees ->
+                    DureesPhasesIndexation(
+                        bibliothequesMs = durees.bibliothequesMs,
+                        sourcesMs = durees.sourcesMs,
+                    )
+                },
+            bilanDernierPassage =
+                evenement.bilanDernierPassage?.let { bilan ->
+                    BilanDernierPassageIndexation(
+                        dureeMs = bilan.dureeMs,
+                        artefactsTotal = bilan.artefactsTotal,
+                        artefactsRepris = bilan.artefactsRepris,
+                        artefactsReconstruits = bilan.artefactsReconstruits,
+                        fichiersParcourus = bilan.fichiersParcourus,
+                        fichiersReanalyses = bilan.fichiersReanalyses,
+                        indexeurPlusCouteux = bilan.indexeurPlusCouteux,
+                        horodatageMs = bilan.horodatageMs,
+                    )
+                },
+            settled = evenement.settled,
+            reprises = evenement.reprises,
+        )
 
     /**
      * Archives AAR des DÉPENDANCES du projet (P3, racine de XP1) — la
@@ -244,7 +437,8 @@ public class SessionLspXml(
 
     /** Arrêt exhaustif : sessions des connexions jamais arrêtées refermées,
      * décompte vidé, désinscription au surveillant de la session Java
-     * (lot L1 — la façade morte ne reçoit plus d'événements).
+     * (lot L1 — la façade morte ne reçoit plus d'événements) et à
+     * l'observateur d'indexation du moteur (ADR 0213).
      * Idempotente (le Java/Kotlin le sont aussi). */
     public override fun close() {
         synchronized(this) {
@@ -257,6 +451,11 @@ public class SessionLspXml(
             } catch (t: Throwable) {
                 LOGGER.log(Level.WARNING, "désinscription du surveillant échouée (ignorée)", t)
             }
+        }
+        try {
+            desinscriptionObservateur.close()
+        } catch (t: Throwable) {
+            LOGGER.log(Level.WARNING, "désinscription de l'observateur d'indexation échouée (ignorée)", t)
         }
         serveursVivants.clear()
         sessionsVivantes.forEach { session ->

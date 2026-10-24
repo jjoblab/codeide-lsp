@@ -472,6 +472,27 @@ class OrchestrateurLspTest {
         }
     }
 
+    // ── ADR 0214 (demandes D4/D5 de CodeIDE) ───────────────────────────
+
+    @Test
+    fun `controles de passage - refus honnetes hors vol et sans ecart`() {
+        val (session, _, _, _) = sessionSurFixture()
+        // Le fixture s'indexe PROPREMENT et VITE (jar sain) : après le
+        // passage PRÊT, RIEN n'est à retenter ni à annuler — l'écran
+        // retire/grise les deux offres (le chemin « vrai » de
+        // l'annulation vit à :lsp:index, déterministe, avec analyseur
+        // réglable — ici on éprouve la PLOMBERIE de la façade).
+        assertFalse(session.reesayerEchecs())
+        assertFalse(session.annulerPassage())
+        // L'API publique de SessionLsp (D4/D5) répond sans exception
+        // après fermeture ? NON — refus explicite comme reindexer.
+        session.close()
+        org.junit.jupiter.api.Assertions
+            .assertThrows(IllegalStateException::class.java) { session.annulerPassage() }
+        org.junit.jupiter.api.Assertions
+            .assertThrows(IllegalStateException::class.java) { session.reesayerEchecs() }
+    }
+
     private companion object {
         /** 64 × 512 Kio = 32 Mio — dépasse le plancher de 30 Mio. */
         private const val NB_ENTREES_BUDGET: Int = 64

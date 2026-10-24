@@ -310,6 +310,35 @@ public class SessionLsp(
         orchestrateur.reindexer()
     }
 
+    /**
+     * Annule le passage de construction EN VOL (ADR 0214 — demande D5
+     * de CodeIDE, maquette de l'écran d'indexation) : annulation
+     * coopérative, l'état devient PARTIEL « annulé par l'utilisateur »
+     * (l'acquis reste interrogable, jamais de faux PRÊT).
+     *
+     * @return `false` si aucune construction n'est en vol (l'écran
+     *         retire l'offre).
+     */
+    public fun annulerPassage(): Boolean {
+        verifierOuverte()
+        return orchestrateur.annulerPassage()
+    }
+
+    /**
+     * Reprise ciblée : ne RETENTE que les entrées ÉCARTÉES du dernier
+     * passage (ADR 0214 — demande D4 de CodeIDE) — les deux boutons de
+     * la maquette (« Réindexer » / « Réessayer les entrées échouées »)
+     * deviennent ENFIN distincts : la reprise est visible et bon
+     * marché, les segments sains ne sont pas revalidés.
+     *
+     * @return `false` sans écart à retenter ou pendant une construction
+     *         en vol (l'écran grise le bouton).
+     */
+    public fun reesayerEchecs(): Boolean {
+        verifierOuverte()
+        return orchestrateur.reesayerEchecs()
+    }
+
     /** Configuration COURANTE de la session (lot LSP-1) — l'écran L3
      *  affiche les valeurs réelles, jamais devinées. */
     public fun configuration(): ConfigurationLsp = config

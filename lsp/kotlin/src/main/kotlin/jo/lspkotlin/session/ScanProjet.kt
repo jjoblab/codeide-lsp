@@ -17,19 +17,28 @@ import java.util.concurrent.FutureTask
  *
  * CORRECTIF 0.134.32 (rapport « l'application buggue quand j'ouvre un
  * fichier .kt ») : le scan paresseux parsait TOUT le corpus de façon
- * SYNCHRONE à la PREMIÈRE requête après la sync — des secondes de CPU
- * + E/S sur le fil de la requête, tous les appels suivants (diagnostics,
- * complétion, survol) bloqués derrière. Deux leviers :
+ * SYNCHRONE à la PREMIÈRE requête après la sync. Deux leviers
+ * historiques : l'amorce WARM à la sync et l'incrémental par mtime.
  *
- * 1. **Amorce WARM** : `definirRacines` lance le scan sur un fil DÉDIÉ
- *    AU MOMENT de la sync — le coût part des secondes avant la première
- *    frappe ; les lecteurs S'Y JOIGNENT ([declarations] attend la tâche
- *    en vol, jamais de double scan).
- * 2. **Incrémental par mtime** : un fichier inchangé n'est JAMAIS
- *    re-parsé (miroir ADR 0111 — le même jar inchangé n'est jamais
- *    redécodé) : chaque re-définition des racines (nouvelle sync) ne
- *    re-parse que les fichiers réellement modifiés — le « scan complet
- *    à chaque sync » n'existe plus.
+ * ADR 0212 (demande D2 de CodeIDE) — le FILET SYNCHRONE est SUPPRIMÉ :
+ * plus AUCUN chemin de requête ne parse le projet sur le fil appelant.
+ * `declarations()` JOINT le WARM en vol (attente bornée par le fil de
+ * fond lancé à la sync), sinon rend le snapshot courant — et si un
+ * passage n'a pas encore abouti pour les racines courantes, AMORCE le
+ * WARM et rend le snapshot (sous-lecture honnête d'UNE requête, « une
+ * requête précoce répond honnêtement moins riche, jamais en bloquant
+ * tout le serveur »). Le drapeau [pret] distingue « un passage a
+ * ABOUTI pour ces racines » (même résultat VIDE — un projet sans `.kt`
+ * est un état légitime, pas une invalidation) d'un snapshot vide par
+ * invalidation : sans lui, chaque requête ré-amorcerait un WARM.
+ *
+ * ADR 0212/0213 — le scanner MARCHE D'ABORD puis PARSE : le listage
+ * complet précède le traitement, la progression devient un VRAI X/N
+ * (total connu) et l'observation par fichier ([ObservationScan])
+ * alimente l'écran d'indexation ; retour `false` de l'observateur =
+ * ANNULATION coopérative (ADR 0214) : le passage s'arrête ENTRE deux
+ * fichiers, publie son PARTIEL et se marque `pret` (l'acquis est
+ * exploitable, la reprise ADR 0214 le complète).
  *
  * PARTAGÉ par le moteur (toutes les sessions d'un projet) : les
  * connexions LSP successives ne re-scannent pas ; le scan est
@@ -48,7 +57,14 @@ import java.util.concurrent.FutureTask
  * (résolution, complétion auto-import, survol — bascule Java↔Kotlin
  * dans un même projet) ; les déclarations portent le marqueur
  * `estJava` (le contrôle d'arité les ignore, D3).
+ *
+ * Exemption detekt ciblée (règle 16) : TooManyFunctions — UN verbe par
+ * demande de CodeIDE (lire/rafraîchir D2, observer/attendre/stats D1
+ * et D3, l'amorce et le scan WARM) : le compte épouse le CONTRAT
+ * ADR 0212/0213, pas une dérive (même patron que
+ * [jo.lspkotlin.index.IndexAppelablesKotlin]).
  */
+@Suppress("TooManyFunctions")
 internal class ScanProjet(
     private val parseur: ParseurKotlin,
 ) {
@@ -59,6 +75,27 @@ internal class ScanProjet(
     /** Déclarations du dernier scan (vide avant le premier). @Volatile : KP6. */
     @Volatile
     private var scannees: List<DeclarationProjet> = emptyList()
+
+    /**
+     * Un passage a-t-il ABOUTI pour les racines courantes (ADR 0212) ?
+     * Posé à la publication d'un passage dont les racines sont les
+     * courantes (même VIDE/PARTIEL), abaissé à chaque invalidation
+     * (nouvelles racines, rafraîchissement).
+     */
+    @Volatile
+    private var pret = false
+
+    /** Statistiques du dernier passage (progression, re-parses). */
+    @Volatile
+    private var statsPassage = StatsPassage(0, 0, 0)
+
+    /**
+     * Observateur du passage (ADR 0213) — posé par le moteur avant
+     * d'amorcer, `null` = silence (sessions seules). Consulté entre
+     * chaque fichier ; son retour `false` ANNULE le passage (ADR 0214).
+     */
+    @Volatile
+    private var observateur: ObservationScan? = null
 
     /** Verrou de la paire (racines, scannees, enVol) — scan unique sous verrou. */
     private val verrouScan = Any()
@@ -82,6 +119,27 @@ internal class ScanProjet(
         }
 
     /**
+     * Observation du passage de scan (ADR 0213/0214) — appelée APRÈS
+     * chaque fichier traité, retour `false` = annulation coopérative
+     * (le passage s'arrête avant le fichier suivant, l'acquis est
+     * publié).
+     */
+    internal fun interface ObservationScan {
+        fun surFichier(
+            faits: Int,
+            total: Int,
+            nom: String,
+        ): Boolean
+    }
+
+    /** Statistiques d'un passage de scan (bilan ADR 0213). */
+    internal class StatsPassage(
+        internal val faits: Int,
+        internal val total: Int,
+        internal val reanalyses: Int,
+    )
+
+    /**
      * (Re)définit les racines — un appel aux MÊMES racines est un NO-OP
      * chaud (sync redondante) ; un changement INVALIDE le snapshot puis
      * AMORCE le scan sur le fil dédié (le coût part à la sync, jamais à
@@ -92,6 +150,7 @@ internal class ScanProjet(
             if (nouvelles == racines) return
             racines = nouvelles
             scannees = emptyList()
+            pret = false
         }
         amorcerScan()
     }
@@ -109,22 +168,23 @@ internal class ScanProjet(
         if (racines.isEmpty()) return
         synchronized(verrouScan) {
             scannees = emptyList()
+            pret = false
         }
         amorcerScan()
     }
 
     /**
-     * Déclarations de toutes les racines — le snapshot COURANT, en
-     * S'Y JOIGNANT au scan WARM en vol s'il y en a un (jamais de double
-     * scan) ; sans tâche en vol et sans snapshot, le scan tolérable
-     * historique (sous le fil appelant) reste le filet.
+     * Déclarations de toutes les racines — le snapshot COURANT après
+     * [assurerSnapshot] : JOINT le WARM en vol s'il y en a un, sinon
+     * rend l'état publié (jamais de scan sur le fil appelant — ADR
+     * 0212, le filet historique est supprimé).
      *
      * @param exclureUri URI à EXCLURE (le document courant vit son
      *        propre arbre côté session — son doublon du scan serait
      *        périmé).
      */
     internal fun declarations(exclureUri: String? = null): List<DeclarationProjet> {
-        scannerAuBesoin()
+        assurerSnapshot()
         val courantes = scannees
         if (exclureUri == null) return courantes
         return courantes.filter { it.uri != exclureUri }
@@ -162,13 +222,88 @@ internal class ScanProjet(
         return resultat
     }
 
-    // ── Scan (WARM + filet synchrone) ─────────────────────────────
+    /**
+     * Garantit qu'un snapshot existe SANS JAMAIS scanner sur le fil
+     * appelant (ADR 0212) : JOINT le WARM en vol (attente bornée par le
+     * fil de fond déjà lancé), sinon si un passage a ABOUTI pour les
+     * racines courantes (`pret`) rend le snapshot tel quel (même VIDE
+     * ou PARTIEL — c'est la vérité), sinon AMORCE le WARM et rend le
+     * snapshot courant (sous-lecture honnête d'UNE requête, le WARM
+     * publie pour les suivantes).
+     *
+     * Exemption detekt ciblée (règle 16) : SwallowedException — joindre
+     * une tâche périmée/tombée n'est pas une perte : la boucle re-lit
+     * l'état et la prochaine requête ré-amorce (X4).
+     */
+    @Suppress("SwallowedException")
+    private fun assurerSnapshot() {
+        if (racines.isEmpty()) return
+        val enCours = synchronized(verrouScan) { enVol }
+        if (enCours != null) {
+            try {
+                enCours.get()
+            } catch (t: Throwable) {
+                // Périmée ou tombée : l'état est relu ci-dessous.
+            }
+        }
+        if (pret) return
+        amorcerScan()
+    }
+
+    /**
+     * Attend la fin du passage COURANT des racines courantes — usage
+     * MOTEUR (ADR 0211 : la passe d'indexation séquence segments puis
+     * scan avant de publier son événement final). Ne scanne JAMAIS sur
+     * le fil appelant : joint le vol en cours, ré-amorce si un passage
+     * n'a pas abouti. Retour immédiat quand tout est abouti.
+     *
+     * Exemption detekt ciblée (règle 16) : SwallowedException — une
+     * tâche périmée/tombée relance la boucle qui ré-amorce (X4) ;
+     * LoopWithTooManyJumpStatements — les issues de la boucle
+     * (vol joint, pret, racines vides) sont ses bornes.
+     */
+    @Suppress("SwallowedException", "LoopWithTooManyJumpStatements")
+    internal fun attendrePassageCourant() {
+        while (true) {
+            if (racines.isEmpty()) return
+            val enCours = synchronized(verrouScan) { enVol }
+            if (enCours != null) {
+                try {
+                    enCours.get()
+                } catch (t: Throwable) {
+                    // Périmée ou tombée : la boucle re-lit l'état.
+                }
+                continue
+            }
+            if (pret) return
+            amorcerScan()
+        }
+    }
+
+    /** Pose l'observateur du prochain passage (ADR 0213 — usage moteur). */
+    internal fun definirObservateur(obs: ObservationScan?) {
+        observateur = obs
+    }
+
+    /** Statistiques du dernier passage (progression + re-parses — bilan ADR 0213). */
+    internal fun statsDernierPassage(): StatsPassage = statsPassage
+
+    // ── Scan (WARM — le seul fil qui parse) ────────────────────────
 
     /**
      * Amorce le scan des racines courantes sur le fil dédié : le coût
      * part AU MOMENT de la sync (definirRacines) — quand la première
      * requête lit, le travail est déjà en route, souvent fini. Un seul
      * vol à la fois (single-flight) ; les racines EMPTY n'amorcent pas.
+     *
+     * ADR 0212 : la PUBLICATION et la LIBÉRATION du vol vivent DANS le
+     * corps de la tâche (avant son achèvement) — un lecteur qui JOINT
+     * le vol est garanti de voir le résultat publié ET le vol libéré
+     * (happens-before du FutureTask) ; un `finally` côté EXECUTOR ne
+     * garantirait RIEN (il court APRÈS l'achèvement : `get()` peut
+     * rendre avant la libération, et l'amorce suivante serait bloquée
+     * par un vol fantôme — la fenêtre de course est fermée par
+     * construction, leçon des 4 échecs du harnais).
      */
     private fun amorcerScan() {
         synchronized(verrouScan) {
@@ -176,84 +311,47 @@ internal class ScanProjet(
             val racinesDuScan = racines
             val tache =
                 FutureTask<List<DeclarationProjet>> {
-                    scanner(racinesDuScan)
+                    try {
+                        val resultat = scanner(racinesDuScan)
+                        publierResultat(racinesDuScan, resultat)
+                        resultat
+                    } finally {
+                        synchronized(verrouScan) { enVol = null }
+                    }
                 }
             enVol = tache
-            executeur.execute {
-                try {
-                    tache.run()
-                } finally {
-                    poseResultat(tache, racinesDuScan)
-                }
-            }
+            executeur.execute { tache.run() }
         }
     }
 
     /**
      * Publie le résultat du scan WARM si les racines n'ont pas bougé
-     * depuis le lancement (sinon le résultat est PÉRIMÉ — le snapshot
-     * reste vide, la prochaine lecture ré-amorcera). La tâche tombe
-     * dans tous les cas (une tâche finie ne doit jamais masquer un
-     * nouveau vol).
-     *
-     * Exemption detekt ciblée (règle 16) : SwallowedException — la
-     * tâche ne meurt que sur une panne hors donnée (scanner est
-     * tolérant par fichier) ; l'absence de publication EST le signal,
-     * le filet synchrone reprend (X4).
+     * depuis le lancement (sinon le résultat est PÉRIMÉ — il n'est PAS
+     * publié, la prochaine lecture ré-amorcera). Le drapeau `pret`
+     * suit l'aboutissement (ADR 0212 — un résultat VIDE ou PARTIEL
+     * annulé est un état abouti, pas une invalidation).
      */
-    @Suppress("SwallowedException")
-    private fun poseResultat(
-        tache: FutureTask<List<DeclarationProjet>>,
+    private fun publierResultat(
         racinesDuScan: List<File>,
+        resultat: List<DeclarationProjet>,
     ) {
         synchronized(verrouScan) {
-            enVol = null
             if (racines == racinesDuScan) {
-                scannees =
-                    try {
-                        tache.get()
-                    } catch (t: Throwable) {
-                        // La tâche n'est pas tombée sur une donnée
-                        // (scanner est tolérant par fichier) — le filet
-                        // synchrone reprendra. X4 : sous-rapport.
-                        emptyList()
-                    }
+                scannees = resultat
+                pret = true
             }
-        }
-    }
-
-    /**
-     * Garantit un snapshot lisible : joint le WARM en vol s'il y en a
-     * un, sinon re-scanne sous le verrou (filet historique — le fil
-     * appelant paie le scan au plus UNE fois par invalidation, et le
-     * cache mtime le rend court dès la seconde passe).
-     *
-     * Exemption detekt ciblée (règle 16) : SwallowedException — joindre
-     * une tâche périmée/tombée n'est pas une perte : le filet
-     * re-scanne (X4).
-     */
-    @Suppress("SwallowedException")
-    private fun scannerAuBesoin() {
-        if (racines.isEmpty()) return
-        val enCours = synchronized(verrouScan) { enVol }
-        if (enCours != null) {
-            try {
-                enCours.get()
-            } catch (t: Throwable) {
-                // Périmée ou tombée : le filet ci-dessous reprend.
-            }
-        }
-        if (scannees.isNotEmpty()) return
-        synchronized(verrouScan) {
-            if (scannees.isEmpty()) scannees = scanner(racines)
         }
     }
 
     /**
      * Parcours complet des racines (fichiers .kt ET .java, ordre
-     * déterministe), INCRÉMENTAL par mtime : un fichier inchangé rend
-     * ses déclarations EN CACHE sans re-parse ; les fichiers disparus
-     * sont purgés à la fin de la passe.
+     * déterministe) — ADR 0212 : la MARCHE (listage borné) précède le
+     * PARSE, la progression est un VRAI X/N et l'annulation coopérative
+     * (ADR 0214) coupe ENTRE les fichiers. INCRÉMENTAL par mtime : un
+     * fichier inchangé rend ses déclarations EN CACHE sans re-parse ;
+     * les fichiers disparus sont purgés à la fin de la passe (sur les
+     * VIVANTS DE LA MARCHE, même si le parse a été annulé en route —
+     * un fichier sain n'est jamais purgé par une annulation).
      *
      * SwallowedException ciblé (règle 16) : fichier illisible = absent
      * (D3) ; LoopWithTooManyJumpStatements ciblé (règle 16) : le
@@ -262,28 +360,49 @@ internal class ScanProjet(
      */
     @Suppress("SwallowedException", "LoopWithTooManyJumpStatements")
     private fun scanner(racinesDuScan: List<File>): List<DeclarationProjet> {
-        val resultat = mutableListOf<DeclarationProjet>()
-        val vivants = mutableSetOf<String>()
+        // 1. MARCHE d'abord — total connu (ADR 0212/0213).
+        val fichiers = mutableListOf<File>()
         for (racine in racinesDuScan) {
-            val fichiers = mutableListOf<File>()
             parcourir(racine, fichiers)
-            for (fichier in fichiers) {
-                val chemin = fichier.path
-                vivants.add(chemin)
-                val mtime = fichier.lastModified()
-                val enCache = cacheFichiers[chemin]
-                if (enCache != null && enCache.first == mtime) {
-                    // Inchangé : JAMAIS re-parsé (miroir ADR 0111).
-                    resultat += enCache.second
-                    continue
+        }
+        val vivants = fichiers.map { it.path }.toMutableSet()
+        // 2. PARSE ensuite — incrémental mtime, observation par fichier.
+        val resultat = mutableListOf<DeclarationProjet>()
+        var reanalyses = 0
+        var traites = 0
+        for ((index, fichier) in fichiers.withIndex()) {
+            val chemin = fichier.path
+            val mtime = fichier.lastModified()
+            val enCache = cacheFichiers[chemin]
+            if (enCache != null && enCache.first == mtime) {
+                // Inchangé : JAMAIS re-parsé (miroir ADR 0111).
+                resultat += enCache.second
+            } else {
+                val declarations = declarer(fichier)
+                if (declarations != null) {
+                    cacheFichiers[chemin] = mtime to declarations
+                    resultat += declarations
+                    reanalyses++
                 }
-                val declarations = declarer(fichier) ?: continue
-                cacheFichiers[chemin] = mtime to declarations
-                resultat += declarations
+            }
+            traites = index + 1
+            val obs = observateur
+            if (obs != null && !obs.surFichier(traites, fichiers.size, fichier.name)) {
+                // Annulation coopérative (ADR 0214) : l'acquis est
+                // publié, le passage se marquera PARTIEL côté moteur.
+                break
             }
         }
-        // L'index ne ment jamais : les fichiers disparus partent.
+        // L'index ne ment jamais : les fichiers disparus partent (sur
+        // les vivants de la MARCHE — l'annulation ne purge jamais un
+        // fichier sain non encore parcouru par le parse).
         cacheFichiers.keys.retainAll(vivants)
+        statsPassage =
+            StatsPassage(
+                faits = traites,
+                total = fichiers.size,
+                reanalyses = reanalyses,
+            )
         return resultat
     }
 

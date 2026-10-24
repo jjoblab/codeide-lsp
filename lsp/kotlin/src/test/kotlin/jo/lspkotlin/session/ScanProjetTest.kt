@@ -193,6 +193,77 @@ class ScanProjetTest {
         assertEquals("aucun fil ne doit lever", emptyList<Throwable>(), erreurs)
     }
 
+    // ── ADR 0212/0213/0214 (demandes D2/D3/D5 de CodeIDE) ──────────────
+
+    /** Racine à N fichiers distincts (progression observable). */
+    private fun racineAvecFichiers(nombre: Int): File {
+        val racine = dossierTemporaire.newFolder("src-progression")
+        (1..nombre).forEach { indice ->
+            File(racine, "F$indice.kt").writeText("val f$indice = $indice\n")
+        }
+        return racine
+    }
+
+    @Test
+    fun `progression - chaque fichier notifie, le total est connu (marche d abord)`() {
+        val racine = racineAvecFichiers(5)
+        val notifications = mutableListOf<Pair<Int, Int>>()
+        scan.definirObservateur { faits, total, _ ->
+            synchronized(notifications) { notifications.add(faits to total) }
+            true
+        }
+        scan.definirRacines(listOf(racine))
+        scan.attendrePassageCourant()
+        scan.definirObservateur(null)
+        assertTrue("chaque fichier notifie", notifications.size >= 5)
+        // ADR 0212 : la MARCHE précède le parse — le total est connu du
+        // PREMIER tick (vrai X/N, demande D3).
+        assertEquals(5, notifications.first().second)
+        assertEquals(5, notifications.last().first)
+        assertEquals(5, scan.declarations().size)
+    }
+
+    @Test
+    fun `annulation - l acquis est publie, le passage est abouti-meme-en-partiel`() {
+        val racine = racineAvecFichiers(4)
+        scan.definirObservateur { _, _, _ -> false } // annule après le 1er fichier
+        scan.definirRacines(listOf(racine))
+        scan.attendrePassageCourant()
+        scan.definirObservateur(null)
+        // L'ACQUIS (le premier fichier traité) est publié ; `pret` suit
+        // l'aboutissement : le PARTIEL annulé est un état LÉGITIME, pas
+        // une invalidation (pas de ré-amorce en boucle).
+        assertEquals(1, scan.declarations().size)
+        assertEquals(1, scan.statsDernierPassage().faits)
+        assertEquals(4, scan.statsDernierPassage().total)
+    }
+
+    @Test
+    fun `reprise apres annulation - rafraichir complete le passage`() {
+        val racine = racineAvecFichiers(3)
+        scan.definirObservateur { _, _, _ -> false }
+        scan.definirRacines(listOf(racine))
+        scan.attendrePassageCourant()
+        scan.definirObservateur(null)
+        assertEquals(1, scan.declarations().size)
+        // La REPRISE (ADR 0214) : le cache mtime épargne l'acquis, la
+        // RAFRAÎCHISSANCE complète le reste.
+        scan.rafraichir()
+        scan.attendrePassageCourant()
+        assertEquals(3, scan.declarations().size)
+    }
+
+    @Test
+    fun `projet sans sources - passage abouti, pas de boucle d amorcage`() {
+        val vide = dossierTemporaire.newFolder("src-vide")
+        scan.definirRacines(listOf(vide))
+        scan.attendrePassageCourant()
+        assertTrue("un projet sans .kt est un état légitime", scan.declarations().isEmpty())
+        // `pret` ferme la boucle : attendre retourne immédiatement.
+        scan.attendrePassageCourant()
+        assertTrue(scan.declarations().isEmpty())
+    }
+
     private companion object {
         /** Fils concurrents (transitions d'onglets simulées). */
         private const val NB_FILS: Int = 4
