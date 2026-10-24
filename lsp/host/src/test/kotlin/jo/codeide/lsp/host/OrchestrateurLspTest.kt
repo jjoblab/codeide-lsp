@@ -476,12 +476,31 @@ class OrchestrateurLspTest {
 
     @Test
     fun `controles de passage - refus honnetes hors vol et sans ecart`() {
-        val (session, _, _, _) = sessionSurFixture()
-        // Le fixture s'indexe PROPREMENT et VITE (jar sain) : après le
-        // passage PRÊT, RIEN n'est à retenter ni à annuler — l'écran
-        // retire/grise les deux offres (le chemin « vrai » de
-        // l'annulation vit à :lsp:index, déterministe, avec analyseur
-        // réglable — ici on éprouve la PLOMBERIE de la façade).
+        // Flaky CI (v1.8.0/v1.9.0, retour §14) : le test héritait du
+        // stockage `index` PARTAGÉ de la classe (TempDir unique) — les
+        // segments d'un test antérieur pouvaient porter des ENTRÉES
+        // ÉCARTÉES que reesayerEchecs() relève légitimement, et le refus
+        // se jugeait avant l'aboutissement du passage (runner 2 vCPU).
+        // Stockage VIERGE propre au test + attente de l'état stable :
+        // les deux refus attendus (rien à retenter, rien en vol) ne
+        // sont un INVARIANT que sur un passage OBSERVÉ.
+        val racine = Files.createDirectories(tmp.resolve("projet-controles"))
+        val fixture = ProjetFixture(racine)
+        val jar = fixture.construireJarFixture(tmp.resolve("fixture-controles"))
+        val session =
+            SessionLsp(
+                racineProjet = racine.toFile(),
+                stockageIndex = Files.createDirectories(tmp.resolve("index-controles")).toFile(),
+            )
+        session.appliquerClasspath(fixture.resultatClasspath(jar))
+        runBlocking {
+            withTimeout(60_000) {
+                session.etatIndexation.first {
+                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL ||
+                        it.phase == PhaseIndexation.ERREUR
+                }
+            }
+        }
         assertFalse(session.reesayerEchecs())
         assertFalse(session.annulerPassage())
         // L'API publique de SessionLsp (D4/D5) répond sans exception

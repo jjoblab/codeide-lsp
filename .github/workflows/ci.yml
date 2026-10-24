@@ -49,6 +49,39 @@ jobs:
       - name: Accepter les licences du SDK Android
         run: yes | sdkmanager --licenses >/dev/null || true
 
+      # v1.9.0 (retour §14) : les images runner ubuntu-24.04 n'embarquent
+      # PLUS sdkmanager au PATH (le rite ci-dessus échoue en silence) et
+      # le checkout CI n'a PAS de local.properties — le harnais E2E
+      # (OutilsHarnais.androidJar) ne trouvait donc JAMAIS la plateforme,
+      # et les scénarios qui dépendent du classpath Android (survols
+      # String alias JVM, TextView, les projets Java/Kotlin du chantier
+      # ADR 0215/0216) échouaient EN CI alors qu'ils passent partout
+      # ailleurs (CI rouge dès v1.8.0, avant même ces changements).
+      # Fix : assurer la plateforme android-37.2 (téléchargée si absente)
+      # et écrire local.properties — le même contrat que le développeur.
+      - name: SDK Android 37.2 + local.properties (harnais E2E)
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android-sdk}}"
+          if [ ! -d "$SDK/platforms/android-37.2" ]; then
+            SDMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+            if [ ! -x "$SDMGR" ]; then
+              echo "cmdline-tools absents — téléchargement"
+              curl -sSLo /tmp/tools.zip \
+                https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+              rm -rf /tmp/outils "$SDK/cmdline-tools/latest"
+              mkdir -p /tmp/outils
+              unzip -q /tmp/tools.zip -d /tmp/outils
+              mkdir -p "$SDK/cmdline-tools"
+              mv /tmp/outils/cmdline-tools "$SDK/cmdline-tools/latest"
+              SDMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+            fi
+            yes | "$SDMGR" --sdk_root="$SDK" --licenses >/dev/null || true
+            "$SDMGR" --sdk_root="$SDK" "platforms;android-37.2" >/dev/null
+          fi
+          echo "sdk.dir=$SDK" > local.properties
+          echo "local.properties → $(cat local.properties)"
+          ls "$SDK/platforms/android-37.2/android.jar"
+
       - name: Vérification complète (sans clean — caches Gradle)
         run: ./gradlew spotlessCheck detekt checkModuleDependencies lintDebug testDebugUnitTest koverVerify assembleRelease --stacktrace
 
