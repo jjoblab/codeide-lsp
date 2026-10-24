@@ -194,8 +194,13 @@ internal object TypesKotlin {
         return resultat
     }
 
-    /** Entrées de la clause de supertypes d'un nœud classe/objet. */
-    private fun superTypesDe(noeud: NoeudSyntaxique): List<String> {
+    /** Entrées de la clause de supertypes d'un nœud classe/objet.
+     *
+     * Aussi consommée par [SuperKotlin] (ADR 0210 — GO TO Super) : la
+     * clause ÉCRITE est la source des supertypes DIRECTS prouvables
+     * (le scan projet ne porte pas les supertypes, seul l'arbre les
+     * prouve). */
+    internal fun superTypesDe(noeud: NoeudSyntaxique): List<String> {
         val clause =
             noeud.sousNoeuds.firstOrNull { it.type == KtNodeTypes.SUPER_TYPE_LIST } ?: return emptyList()
         return clause.sousNoeuds
@@ -226,24 +231,35 @@ internal object TypesKotlin {
      * une ISSUE distincte.
      */
     @Suppress("ReturnCount")
-    private fun supertypeResoutVers(
+    internal fun supertypeResoutVers(
         supertype: String,
         fqcnCible: String,
         contexteFichier: OccurrencesKotlin.ContexteFichier,
         resolution: ResolutionKotlin,
     ): Boolean {
-        var nom = supertype.trim()
-        val parenthese = nom.indexOf('(')
-        if (parenthese >= 0) nom = nom.substring(0, parenthese)
-        val generique = nom.indexOf('<')
-        if (generique >= 0) nom = nom.substring(0, generique)
-        nom = nom.trimEnd('?').trim()
+        val nom = nomSupertypeNettoye(supertype)
         if (nom.isEmpty()) return false
         if ('.' in nom) {
             // Nom qualifié écrit : la cible porte-t-elle CE fqcn ?
             return nom == fqcnCible
         }
         return resolution.fqcnDuNomEcrit(nom, contexteFichier.contexteNom) == fqcnCible
+    }
+
+    /**
+     * Nom SIMPLE nettoyé d'un supertype ÉCRIT — arguments de
+     * construction, génériques et nullabilité retirés (`Base()` →
+     * `Base`, `Iface<String>` → `Iface`, `Vue?` → `Vue`). Politique
+     * PARTAGÉE avec [SuperKotlin.fqcnSupertype] (ADR 0210) : le
+     * nettoyage vit ICI, une seule source de vérité.
+     */
+    internal fun nomSupertypeNettoye(supertype: String): String {
+        var nom = supertype.trim()
+        val parenthese = nom.indexOf('(')
+        if (parenthese >= 0) nom = nom.substring(0, parenthese)
+        val generique = nom.indexOf('<')
+        if (generique >= 0) nom = nom.substring(0, generique)
+        return nom.trimEnd('?').trim()
     }
 
     /**
@@ -254,8 +270,11 @@ internal object TypesKotlin {
      * déclaration portant CE fqcn est servie. Sans preuve (homonymie
      * ambiguë sans import, type du classpath sans source) : `null` —
      * jamais la première homonyme venue.
+     *
+     * Aussi consommée par [SuperKotlin] (ADR 0210) — le type en
+     * contexte du GO TO Super est la MÊME preuve que typeDefinition.
      */
-    private fun typeProjet(
+    internal fun typeProjet(
         nom: String,
         uri: String,
         contexte: InterrogationsSymboles.Contexte,

@@ -43,6 +43,16 @@ internal object InterrogationsSymboles {
         val declarationsProjet: List<DeclarationProjet>,
         val index: jo.lspkotlin.index.IndexAppelablesKotlin,
         val vue: jo.lspkotlin.api.VueClasspathKotlin?,
+        /**
+         * Port KDoc CROSS-FICHIER (ADR 0208 — option 2 de l'ADR 0207) :
+         * rend la KDoc d'une déclaration TIERCE (vivant dans un autre
+         * fichier du projet). La SESSION l'injecte — document OUVERT →
+         * arbre vif (aucun re-parse), fichier fermé → lecture disque +
+         * parse bornés (même coût que le balayage d'occurrences). Le
+         * moteur reste SANS E/S ; `null` (défaut : tests moteur purs,
+         * packs K3) sous-rapporte honnêtement (signature seule).
+         */
+        val kdocDeclaration: ((DeclarationProjet) -> String?)? = null,
     )
 
     /**
@@ -53,7 +63,9 @@ internal object InterrogationsSymboles {
      *
      * [uri] identifie le document COURANT (ADR 0207 : la KDoc de la
      * déclaration élue accompagne AUSSI les sites d'usage quand elle
-     * vit dans ce document — l'arbre vif est déjà en mémoire).
+     * vit dans ce document — l'arbre vif est déjà en mémoire ; ADR
+     * 0208 : quand elle vit dans un AUTRE fichier du projet, le port
+     * [Contexte.kdocDeclaration] de la session relit sa déclaration).
      */
     internal fun survol(
         racine: NoeudSyntaxique,
@@ -142,12 +154,16 @@ internal object InterrogationsSymboles {
             }
 
     /** Survol d'une DÉCLARATION du projet portant ce nom (première) —
-     * ADR 0207 : quand la déclaration élue vit dans le document
-     * COURANT, sa KDoc VIVE (recherche par plage du nom dans l'arbre
-     * en mémoire — aucun re-parse) accompagne la signature aux sites
-     * d'USAGE, miroir du survol du nom déclaré ; les déclarations du
-     * SCAN (autres fichiers) gardent la signature seule (choix K3
-     * documenté — l'option 2 de l'ADR rouvrira le dossier).
+     * ADR 0207 (usage du document courant) PUIS ADR 0208 (option 2 :
+     * cross-fichier) : quand la déclaration élue vit dans le document
+     * COURANT, sa KDoc VIVE (recherche par plage du nom dans l'arbre en
+     * mémoire — aucun re-parse) accompagne la signature, miroir du
+     * survol du nom déclaré ; quand elle vit dans un AUTRE fichier du
+     * projet, le PORT [Contexte.kdocDeclaration] (injected par la
+     * session — arbre vif du document ouvert, sinon lecture disque +
+     * parse bornées) porte la même exigence : Android Studio, jdt.ls
+     * et le LSP JetBrains servent la doc aux usages SANS sauter à la
+     * déclaration, fichier declaring ouvert ou non.
      *
      * Exemption detekt ciblée (règle 16) : ReturnCount — la chaîne
      * élue → rendu → KDoc conditionnelle est une ISSUE par étape,
@@ -167,22 +183,30 @@ internal object InterrogationsSymboles {
                         declaration.genre != GenreDeclaration.LOCALE
                 } ?: return null
         val base = survolDeclaration(elue) ?: return null
-        // KDoc UNIQUEMENT pour la déclaration du document courant —
-        // l'arbre vif est déjà en mémoire (choix K3 documenté pour le
-        // scan : aucun re-parse de fichier tiers).
-        if (elue.uri != uri) return base
-        val documentation =
-            declarationViveAPlage(racine, elue)?.let { declaration ->
-                DocumentationKotlin.kdocDe(declaration)
-            }
-        return base.copy(documentation = documentation)
+        // KDoc du document COURANT — l'arbre vif est déjà en mémoire.
+        if (elue.uri == uri) {
+            val documentation =
+                declarationViveAPlage(racine, elue)?.let { declaration ->
+                    DocumentationKotlin.kdocDe(declaration)
+                }
+            return base.copy(documentation = documentation)
+        }
+        // ADR 0208 (option 2 de l'ADR 0207) : KDoc CROSS-FICHIER —
+        // le port de la session relit la déclaration tierce (arbre vif
+        // du document OUVERT d'abord, lecture disque bornée sinon) ;
+        // port ABSENT (tests moteur purs, pack K3) ou lecture sans
+        // KDoc → signature seule (sous-rapport honnête D3).
+        val documentationTierce = contexte.kdocDeclaration?.invoke(elue) ?: return base
+        return base.copy(documentation = documentationTierce)
     }
 
     /**
      * Déclaration VIVE du document courant portant EXACTEMENT la
      * plage du nom de [elue] (recherche à début du nom — la plus
      * profonde gagne, plage ET nom vérifiés : jamais de jumelage
-     * approximatif).
+     * approximatif). Aussi consommée par le PORT KDoc cross-fichier
+     * de la session (ADR 0208) — le même jumelage exact sert l'arbre
+     * vif du document TIERS ouvert.
      *
      * Exemption detekt ciblée (règle 16) : ReturnCount/
      * LoopWithTooManyJumpStatements — chaque garde du parcours (pas
@@ -190,7 +214,7 @@ internal object InterrogationsSymboles {
      * même patron que declarationViveAuCurseur.
      */
     @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
-    private fun declarationViveAPlage(
+    internal fun declarationViveAPlage(
         racine: NoeudSyntaxique,
         elue: DeclarationProjet,
     ): KtDeclaration? {

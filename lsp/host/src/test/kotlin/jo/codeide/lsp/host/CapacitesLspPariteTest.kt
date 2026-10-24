@@ -437,6 +437,10 @@ class CapacitesLspPariteTest {
                 "indices en ligne" to "oui",
                 "symboles d'espace" to "oui",
                 "plage de sélection" to "oui",
+                // ADR 0210 : GO TO « Super » — méthode personnalisée
+                // textDocument/superDefinition, annoncée dans
+                // experimental (pattern jdt.ls, miroir du LSP Java).
+                "super-définition (expérimental)" to "oui",
             )
 
         /**

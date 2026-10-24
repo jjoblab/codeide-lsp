@@ -1,6 +1,6 @@
 # ADR 0207 — Rendre la KDoc aux sites d'usage du survol
 
-- **Statut** : appliqué (24/10/2026 — audit E2E du serveur LSP Kotlin, découverte D3, scénario S4 ; mise en œuvre v1.6.0 : correctif moteur + tests, sondes S4 du harnais verrouillées sur le comportement corrigé au fil du transport réel).
+- **Statut** : appliqué (24/10/2026 — audit E2E du serveur LSP Kotlin, découverte D3, scénario S4 ; mise en œuvre v1.6.0 : correctif moteur + tests, sondes S4 du harnais verrouillées sur le comportement corrigé au fil du transport réel). **Option 2 appliquée le même jour — voir [ADR 0208](0208-kdoc-cross-fichier-survol.md)** : la KDoc est désormais servie aux usages CROSS-FICHIERS aussi (port injecté session → moteur, lecture bornée à la demande), S4/D1/S13 du harnais verrouillent le comportement complet.
 - **Contexte** : la chaîne de survol n'attache la KDoc que par `survolNomDeclare` — quand
   le curseur est **sur le nom déclaré**. Un usage, même dans le **document ouvert**,
   passe par `survolDeclarationProjet`, qui rend la signature seule : l'audit a caractérisé
@@ -42,5 +42,7 @@
     (`SessionLangageKotlinK3Test`), « survol usage dans le document courant avec KDoc de
     la déclaration vive » ; conserver « déclaration du SCAN : signature seule » comme
     garde du comportement cross-file tant que l'option 2 n'est pas décidée.
-  - L'option 2 rouvrira ce dossier pour le cross-fichier ; elle exigera sa propre ADR
-    (coût du re-parse, budget mémoire du pack).
+  - L'option 2 est APPLIQUÉE par l'ADR 0208 (KDoc cross-fichier, port
+    injecté — le re-parse borné par survol de déclaration tierse a été
+    profilé par le budget du balayage d'occurrences, aucun état
+    inter-requêtes : la contrainte mémoire du pack n'est plus en jeu).

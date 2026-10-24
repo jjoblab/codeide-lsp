@@ -2,6 +2,7 @@ package jo.lspkotlin.session
 
 import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ChaineSelectionKotlin
+import jo.lspkotlin.api.CibleNavigationKotlin
 import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
@@ -19,6 +20,7 @@ import jo.lspkotlin.api.SymboleEspaceKotlin
 import jo.lspkotlin.completion.CompletionKotlin
 import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
+import jo.lspkotlin.documentation.DocumentationKotlin
 import jo.lspkotlin.format.FormateurKotlin
 import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
@@ -36,6 +38,7 @@ import jo.lspkotlin.resolve.OccurrencesKotlin
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SelectionsKotlin
 import jo.lspkotlin.resolve.SignaturesAppels
+import jo.lspkotlin.resolve.SuperKotlin
 import jo.lspkotlin.resolve.SymbolesProjet
 import jo.lspkotlin.resolve.SymbolesEspaceKotlin
 import jo.lspkotlin.resolve.TypesKotlin
@@ -79,8 +82,15 @@ import java.io.File
  * IMPLÉMENTE le contrat de session (10 méthodes d'interface K2+K3) +
  * les 2 constructeurs de contextes : le compte épouse le CONTRAT, pas
  * une dérive (même patron que les sessions du LSP Java).
+ * LargeClass — la session est le DÉPOSITAIRE unique des documents
+ * ouverts + du classpath poussé ; chaque requête LSP y vit comme UN
+ * bloc synchronisé lisant l'état (documents, scan, synthétiques) —
+ * l'éclater serait un partage d'état entre objets, leçon inverse du
+ * contrat K2/K3. Les chantiers ADR 0208 (port KDoc cross-fichier) et
+ * 0210 (port GO TO Super) y ajoutent les DEUX ports de lecture
+ * bornée, même frontière.
  */
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LargeClass")
 internal class SessionLangageKotlinParse(
     private val parseur: ParseurKotlin,
     private val indexAppelables: IndexAppelablesKotlin,
@@ -531,6 +541,41 @@ internal class SessionLangageKotlinParse(
         }
 
     /**
+     * Cibles GO TO « Super » (ADR 0210) — les DEUX chemins du moteur
+     * [SuperKotlin] : (1) MEMBRE au curseur (cible occurrences —
+     * déclaration outrepassante ou usage résolu) → le même-nommé
+     * dans chaque supertype TRANSITIF projet du type déclarant ;
+     * (2) sinon le TYPE en contexte (référence de type, à défaut la
+     * classe englobante — miroir contextType ecj) → ses supertypes
+     * DIRECTS. Chaque maillon projet est lu par le PORT de fichier
+     * (arbre vif du document ouvert, sinon lecture disque bornée —
+     * même budget que le KDoc cross-fichier ADR 0208) et prouve sa
+     * clause ÉCRITE par les imports de SON fichier.
+     */
+    override fun superDefinition(
+        uri: String,
+        decalage: Int,
+    ): List<CibleNavigationKotlin> =
+        synchronized(verrou) {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val contexte = contexteInterrogations(document, uri)
+            val port = portFichierDeclaration(contexte.declarationsProjet)
+            // 1) CHEMIN MEMBRE — la cible occurrences prouve le membre
+            //    visé (conteneur FQCN — jamais d'homonymie).
+            val cible = OccurrencesKotlin.cibleAuCurseur(document.arbre.racine, decalage, uri, contexte)
+            if (cible != null && cible.conteneur != null && cible.genre in SuperKotlin.GENRES_MEMBRES) {
+                SuperKotlin.superDuMembre(cible, port, contexte.declarationsProjet, resolution)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { return it }
+            }
+            // 2) CHEMIN TYPE — supertypes DIRECTS du type en contexte.
+            SuperKotlin.typeEnContexte(document.arbre.racine, decalage, uri, contexte)
+                ?.let { return SuperKotlin.superDuType(it, port, contexte.declarationsProjet, resolution) }
+            emptyList()
+        }
+
+    /**
      * Indices en ligne d'une plage (L2) — noms de paramètres aux
      * appels POSITIONNELS prouvés (chaîne de l'aide à la signature)
      * et types CERTAINS des déclarations sans type écrit (littéraux
@@ -647,7 +692,13 @@ internal class SessionLangageKotlinParse(
         )
     }
 
-    /** Contexte d'interrogation (survol/définition). */
+    /** Contexte d'interrogation (survol/définition).
+     *
+     * ADR 0208 (option 2 de l'ADR 0207) : le contexte porte le PORT
+     * KDoc cross-fichier — la déclaration élue d'un AUTRE fichier du
+     * projet retrouve sa KDoc (document ouvert → arbre vif, fichier
+     * fermé → lecture disque + parse bornées, miroir du coût du
+     * balayage d'occurrences). */
     private fun contexteInterrogations(
         document: DocumentOuvert,
         uri: String,
@@ -659,6 +710,7 @@ internal class SessionLangageKotlinParse(
             declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
             index = indexAppelables,
             vue = classpath?.vue,
+            kdocDeclaration = { declaration -> kdocDeDeclaration(declaration) },
         )
     }
 
@@ -715,6 +767,89 @@ internal class SessionLangageKotlinParse(
         val arbre: ArbreSyntaxiqueKotlin,
         val contexte: OccurrencesKotlin.ContexteFichier,
     )
+
+    /**
+     * KDoc d'une déclaration TIERCE (ADR 0208 — option 2 de l'ADR
+     * 0207, port du [contexteInterrogations]) : document OUVERT → son
+     * arbre VIF (aucun re-parse, miroir du document courant) ; fichier
+     * FERMÉ → lecture disque + parse bornées (le même coût que le
+     * balayage d'occurrences d'UN fichier, une fois par survol tiers —
+     * budget documenté de l'ADR). Une lecture impossible (fichier
+     * disparu, illisible, inanalysable) ou une déclaration sans KDoc
+     * sous-rapportent HONNÊTEMENT (null → signature seule, jamais
+     * d'exception).
+     *
+     * Exemption detekt ciblée (règle 16) : SwallowedException —
+     * l'exception EST le signal du sous-rapport D3 (miroir exact de
+     * [balayerAutresFichiers]).
+     */
+    @Suppress("SwallowedException")
+    private fun kdocDeDeclaration(declaration: DeclarationProjet): String? {
+        // 1. Document OUVERT : l'arbre est déjà en mémoire — jumelage
+        //    EXACT par plage du nom (même garde que le document
+        //    courant), jamais le disque périmé.
+        documents[declaration.uri]?.let { document ->
+            return InterrogationsSymboles.declarationViveAPlage(document.arbre.racine, declaration)
+                ?.let { vive -> DocumentationKotlin.kdocDe(vive) }
+        }
+        // 2. Fichier FERMÉ : lecture disque + parse (plage du scan =
+        //    plage du disque — le scan ne sonde QUE les fichiers
+        //    fermés, jamais un tampon vivant).
+        return try {
+            val texte = File(java.net.URI(declaration.uri)).readText()
+            val arbre = parseur.analyser(texte, script = false)
+            InterrogationsSymboles.declarationViveAPlage(arbre.racine, declaration)
+                ?.let { vive -> DocumentationKotlin.kdocDe(vive) }
+        } catch (t: Throwable) {
+            null // illisible/inanalysable : signature seule (D3)
+        }
+    }
+
+    /**
+     * Port GO TO « Super » (ADR 0210) : le FICHIER DÉCLARANT d'une
+     * déclaration projet — arbre vif du document OUVERT, sinon lecture
+     * disque + parse bornées (même budget que [kdocDeDeclaration]) —
+     * portant SON contexte FQCN (imports de CE fichier, classes
+     * réelles). Un maillon illisible est ABSENT (clôture transitive
+     * partielle honnête D3).
+     *
+     * Exemption detekt ciblée (règle 16) : SwallowedException —
+     * l'exception EST le signal du sous-rapport D3 (miroir exact de
+     * [balayerAutresFichiers]).
+     */
+    private fun portFichierDeclaration(declarations: List<DeclarationProjet>): SuperKotlin.PortFichier =
+        SuperKotlin.PortFichier { declaration -> fichierDeclarationDe(declaration, declarations) }
+
+    @Suppress("SwallowedException")
+    private fun fichierDeclarationDe(
+        declaration: DeclarationProjet,
+        declarations: List<DeclarationProjet>,
+    ): SuperKotlin.FichierDeclaration? {
+        // 1. Document OUVERT : arbre vif (jamais le disque périmé).
+        documents[declaration.uri]?.let { document ->
+            return SuperKotlin.FichierDeclaration(
+                document.arbre,
+                OccurrencesKotlin.ContexteFichier(
+                    contexteNomPourArbre(document.arbre.racine, declarations),
+                    declarations,
+                ),
+            )
+        }
+        // 2. Fichier FERMÉ : lecture disque + parse bornées.
+        return try {
+            val texte = File(java.net.URI(declaration.uri)).readText()
+            val arbre = parseur.analyser(texte, script = false)
+            SuperKotlin.FichierDeclaration(
+                arbre,
+                OccurrencesKotlin.ContexteFichier(
+                    contexteNomPourArbre(arbre.racine, declarations),
+                    declarations,
+                ),
+            )
+        } catch (t: Throwable) {
+            null // illisible/inanalysable : maillon absent (D3)
+        }
+    }
 
     /**
      * Balayage des AUTRES fichiers du projet : documents ouverts (arbres
@@ -790,7 +925,14 @@ internal class SessionLangageKotlinParse(
         uri: String,
     ): ResolutionKotlin.ContexteNom {
         val paquet = KtFile(document.arbre.racine).directivePackage()?.nomQualifie()
-        val reelles = scanProjet.declarations() + declarationsDocument(document, uri, paquet)
+        // Dominance des documents OUVERTS (ADR 0208) : leurs arbres
+        // vivants évincent leurs copies du scan — un type renommé dans un
+        // document ouvert résout par SON nom frais (les FQCN des fichiers
+        // fermés restent au scan).
+        val reelles =
+            scanProjet.declarations().filter { it.uri !in documents.keys } +
+                autresDeclarationsOuvertes(uri) +
+                declarationsDocument(document, uri, paquet)
         return contexteNomPourArbre(document.arbre.racine, reelles + synthetiquesCoupees(reelles))
     }
 
@@ -844,21 +986,45 @@ internal class SessionLangageKotlinParse(
 
     /**
      * Déclarations du projet CONSOMMÉES par les requêtes : celles du
-     * document courant (arbre frais) + celles du scan partagé (fichiers
-     * fermés, `.kt` ET `.java` — multi-langue K5), le document courant
-     * DOMINANT son doublon du scan ; les SYNTHÉTIQUES Android (K5)
-     * ferment la marche, COUPÉES dès qu'une classe réelle homonyme
-     * existe (génération post-build = source de vérité, motif sonde
-     * v0.108.0).
+     * document courant (arbre frais) + celles des AUTRES documents
+     * OUVERTS (arbres vivants — ADR 0208 : leurs copies du scan seraient
+     * PÉRIMÉES dès qu'ils sont édités, plages comprises ; la règle
+     * documentée « les documents OUVERTS dominent » s'applique à TOUS
+     * les documents, pas au seul courant) + celles du scan partagé
+     * (fichiers FERMÉS, `.kt` ET `.java` — multi-langue K5), le document
+     * courant DOMINANT son doublon du scan ; les SYNTHÉTIQUES Android
+     * (K5) ferment la marche, COUPÉES dès qu'une classe réelle
+     * homonyme existe (génération post-build = source de vérité, motif
+     * sonde v0.108.0).
      */
     private fun declarationsProjet(
         document: DocumentOuvert,
         uri: String,
         paquet: String?,
     ): List<DeclarationProjet> {
-        val reelles = declarationsDocument(document, uri, paquet) + scanProjet.declarations(uri)
+        val urisOuverts = documents.keys + uri
+        val reelles =
+            declarationsDocument(document, uri, paquet) +
+                autresDeclarationsOuvertes(uri) +
+                scanProjet.declarations().filter { it.uri !in urisOuverts }
         return reelles + synthetiquesCoupees(reelles)
     }
+
+    /**
+     * Déclarations VIVES des AUTRES documents ouverts (arbres en
+     * mémoire — jamais le disque périmé), chaque fichier portant SON
+     * paquet (miroir de [balayerAutresFichiers]).
+     */
+    private fun autresDeclarationsOuvertes(uriCourant: String): List<DeclarationProjet> =
+        documents.entries
+            .filter { (cle, _) -> cle != uriCourant }
+            .flatMap { (cle, doc) ->
+                SymbolesProjet.declarations(
+                    doc.arbre.racine,
+                    cle,
+                    KtFile(doc.arbre.racine).directivePackage()?.nomQualifie(),
+                )
+            }
 
     /**
      * Synthétiques hors des classes réelles — la COUPURE retire le

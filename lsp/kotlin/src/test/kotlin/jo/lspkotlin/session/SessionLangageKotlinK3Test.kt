@@ -309,7 +309,7 @@ class SessionLangageKotlinK3Test {
     }
 
     @Test
-    fun `survol usage déclaration du SCAN - signature seule (garde ADR 0207)`() {
+    fun `survol usage déclaration du SCAN - KDoc cross-fichier fermée (ADR 0208)`() {
         val bibli =
             """
             package outils
@@ -328,11 +328,118 @@ class SessionLangageKotlinK3Test {
         val session = session(racines = listOf(racineTemporaireAvec(bibli)))
         session.ouvrirDocument("fixture://Essai.kt", appelant)
         val survol = session.survol("fixture://Essai.kt", appelant.indexOf("triple") + 2)
-        // Déclaration du SCAN (fichier fermé) : signature seule — le
-        // choix K3 documenté (l'option 2 de l'ADR 0207 rouvrira le
-        // dossier du cross-fichier).
+        // ADR 0208 (option 2 de l'ADR 0207) : la déclaration du SCAN
+        // (fichier FERMÉ) retrouve sa KDoc — lecture disque + parse
+        // bornées, UNE fois par survol tiers (budget documenté).
         assertEquals("fun triple(x: Int): Int", survol?.valeur)
-        assertNull("pas de re-parse du fichier tiers pour sa KDoc", survol?.documentation)
+        assertNotNull(
+            "la KDoc tierce accompagne l'usage (lecture disque)",
+            survol?.documentation,
+        )
+        assertTrue(
+            "la KDoc rendue porte le texte du commentaire du fichier déclarant",
+            survol?.documentation?.contains("Triple la valeur") == true,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `survol usage déclaration TIERCE OUVERTE - KDoc de l'arbre vif, pas du disque (ADR 0208)`() {
+        // Disque : KDoc périmée — le document OUVERT porte la vérité.
+        val bibliDisque =
+            """
+            package outils
+
+            /**
+             * Triple la valeur (version disque).
+             */
+            fun triple(x: Int): Int = x * 3
+            """.trimIndent()
+        val bibliVive =
+            """
+            package outils
+
+            /**
+             * Triple la valeur (version vivante).
+             */
+            fun triple(x: Int): Int = x * 3
+            """.trimIndent()
+        val appelant =
+            """
+            package outils
+
+            fun essai(): Int = triple(2)
+            """.trimIndent()
+        val racine = racineTemporaireAvec(bibliDisque)
+        val session = session(racines = listOf(racine))
+        val uriBibli = File(racine, "Biblio.kt").toURI().toString()
+        session.ouvrirDocument(uriBibli, bibliVive)
+        session.ouvrirDocument("fixture://Essai.kt", appelant)
+        val survol = session.survol("fixture://Essai.kt", appelant.indexOf("triple") + 2)
+        assertEquals("fun triple(x: Int): Int", survol?.valeur)
+        assertNotNull("la KDoc tierce ouverte est servie", survol?.documentation)
+        assertTrue(
+            "la KDoc vient de l'arbre VIF du document tiers (jamais du disque périmé)",
+            survol?.documentation?.contains("version vivante") == true,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `survol usage déclaration tierce SANS KDoc - signature seule (garde ADR 0208)`() {
+        val bibli =
+            """
+            package outils
+
+            fun triple(x: Int): Int = x * 3
+            """.trimIndent()
+        val appelant =
+            """
+            package outils
+
+            fun essai(): Int = triple(2)
+            """.trimIndent()
+        val session = session(racines = listOf(racineTemporaireAvec(bibli)))
+        session.ouvrirDocument("fixture://Essai.kt", appelant)
+        val survol = session.survol("fixture://Essai.kt", appelant.indexOf("triple") + 2)
+        // Pas de KDoc sur la déclaration tierce : signature seule
+        // (règle existante : documentation vide → pas d'enveloppe).
+        assertEquals("fun triple(x: Int): Int", survol?.valeur)
+        assertNull("sans KDoc tierce, pas de documentation", survol?.documentation)
+        session.close()
+    }
+
+    @Test
+    fun `survol usage déclaration tierce ILLISIBLE - signature seule (garde D3 ADR 0208)`() {
+        val bibli =
+            """
+            package outils
+
+            /**
+             * Triple la valeur.
+             */
+            fun triple(x: Int): Int = x * 3
+            """.trimIndent()
+        val appelant =
+            """
+            package outils
+
+            fun essai(): Int = triple(2)
+            """.trimIndent()
+        val racine = racineTemporaireAvec(bibli)
+        val session = session(racines = listOf(racine))
+        session.ouvrirDocument("fixture://Essai.kt", appelant)
+        // Premier survol : JOINT le scan WARM — le snapshot est pris
+        // (déclarations de Biblio.kt présentes, KDoc servie).
+        val avant = session.survol("fixture://Essai.kt", appelant.indexOf("triple") + 2)
+        assertEquals("fun triple(x: Int): Int", avant?.valeur)
+        assertNotNull("KDoc tierce servie avant suppression", avant?.documentation)
+        // Le fichier déclarant DISPARAÎT après le snapshot — le port de
+        // lecture échoue honnêtement : signature seule, jamais d'exception.
+        File(racine, "Biblio.kt").delete()
+        val survol = session.survol("fixture://Essai.kt", appelant.indexOf("triple") + 2)
+        assertEquals("fun triple(x: Int): Int", survol?.valeur)
+        assertNull("fichier déclarant illisible : signature seule", survol?.documentation)
         session.close()
     }
 

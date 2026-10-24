@@ -141,6 +141,31 @@ public object OutilsHarnais {
         class Rond : Forme
         """.trimIndent() + "\n"
 
+    /**
+     * Interface DISTANTE du client harnais — miroir EXACT du pattern
+     * `CodeIdeLanguageServer` de cel-lsp (le client production) : les
+     * méthodes personnalisées vivent AU SOMMET de l'interface avec
+     * `@JsonRequest` (PAS de redéclaration covariante de
+     * `getTextDocumentService` — lsp4j 0.22 lève « Duplicate RPC
+     * method » sur ce pattern, le check est apparu en 0.22). Sans
+     * cette interface, la RÉPONSE d'une requête par nom serait
+     * désérialisée en null (méthode inconnue du proxy LanguageServer
+     * standard) — le serveur Kotlin en est le miroir au fil : même
+     * méthode, mêmes paramètres, même DTO `NavigationTarget` (ADR
+     * 0210).
+     */
+    internal interface NavServeurKotlinHarnais : org.eclipse.lsp4j.services.LanguageServer {
+        /**
+         * Les cibles Super au caret — miroir exact du câble cel-lsp
+         * (`textDocument/superDefinition`, DTO `SuperNavTarget` ↔
+         * `NavigationTarget`, champs publics Gson identiques).
+         */
+        @org.eclipse.lsp4j.jsonrpc.services.JsonRequest("textDocument/superDefinition")
+        fun superDefinition(
+            params: org.eclipse.lsp4j.TextDocumentPositionParams,
+        ): java.util.concurrent.CompletableFuture<List<jo.lspjava.api.NavigationTarget>>
+    }
+
     /** Client LSP collecteur : publications, messages, attente polie. */
     public class ClientCollecteur : LanguageClient {
         public val publications: CopyOnWriteArrayList<PublishDiagnosticsParams> = CopyOnWriteArrayList()
@@ -203,6 +228,7 @@ public object OutilsHarnais {
     public class Connexion(
         public val processus: Process,
         public val distant: LanguageServer,
+        public val endpoint: org.eclipse.lsp4j.jsonrpc.Endpoint,
         public val client: ClientCollecteur,
         public val racine: File,
         public val stderr: StringBuilder,
@@ -256,9 +282,20 @@ public object OutilsHarnais {
             processus.errorStream.bufferedReader().forEachLine { stderr.appendLine(it) }
         }
         val client = ClientCollecteur()
-        val lanceur = LSPLauncher.createClientLauncher(client, processus.inputStream, processus.outputStream)
+        // Miroir du câble cel-lsp : le client CONNAÎT l'interface
+        // distante étendue (méthodes personnalisées comprises) — la
+        // désérialisation des réponses par nom passe par LA carte de
+        // types du remote interface, pas celle du seul LanguageServer.
+        val lanceur =
+            org.eclipse.lsp4j.jsonrpc.Launcher
+                .Builder<NavServeurKotlinHarnais>()
+                .setLocalService(client)
+                .setRemoteInterface(NavServeurKotlinHarnais::class.java)
+                .setInput(processus.inputStream)
+                .setOutput(processus.outputStream)
+                .create()
         lanceur.startListening()
-        val connexion = Connexion(processus, lanceur.remoteProxy, client, racine, stderr)
+        val connexion = Connexion(processus, lanceur.remoteProxy, lanceur.remoteEndpoint, client, racine, stderr)
         if (initialiser) {
             initialiser(connexion)
         }
@@ -422,5 +459,32 @@ public object OutilsHarnais {
         assertEquals(attendue.first.second, plage.start.character, "$contexte — colonne début")
         assertEquals(attendue.second.first, plage.end.line, "$contexte — ligne fin")
         assertEquals(attendue.second.second, plage.end.character, "$contexte — colonne fin")
+    }
+
+    /**
+     * Requête la méthode LSP PERSONNALISÉE `textDocument/superDefinition`
+     * (ADR 0210) par le TRANSPORT RÉEL, appel TYPÉ sur le proxy —
+     * miroir exact du câble cel-lsp (`getExtendedServer()
+     * .superDefinition(params)` sur `CodeIdeLanguageServer`) : le proxy
+     * du harnais porte l'interface étendue [NavServeurKotlinHarnais],
+     * la désérialisation rend des `NavigationTarget` typés (champs
+     * publics Gson).
+     *
+     * @return les cibles (chemin ABSOLU + plage du nom en offsets + libellé)
+     */
+    public fun superDefinitionParTransport(
+        connexion: Connexion,
+        uri: String,
+        position: Position,
+    ): List<jo.lspjava.api.NavigationTarget> {
+        val proxy =
+            connexion.distant as? NavServeurKotlinHarnais
+                ?: return emptyList()
+        val params =
+            org.eclipse.lsp4j.TextDocumentPositionParams(
+                org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                position,
+            )
+        return proxy.superDefinition(params).get(120, TimeUnit.SECONDS) ?: emptyList()
     }
 }

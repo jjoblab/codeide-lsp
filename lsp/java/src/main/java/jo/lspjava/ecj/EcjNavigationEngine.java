@@ -16,9 +16,11 @@ import org.eclipse.jdt.internal.compiler.ast.SingleTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Argument;
 import org.eclipse.jdt.internal.compiler.lookup.Binding;
+import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.BlockScope;
 import org.eclipse.jdt.internal.compiler.lookup.ClassScope;
 import org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope;
@@ -460,13 +462,13 @@ public final class EcjNavigationEngine {
 
             @Override
             public boolean visit(QualifiedNameReference ref, BlockScope s) {
-                consider(ref, ref.binding, null);
+                consider(ref, EcjAst.bindingAuCaret(ref, workOffset), null);
                 return true;
             }
 
             @Override
             public boolean visit(QualifiedNameReference ref, ClassScope s) {
-                consider(ref, ref.binding, null);
+                consider(ref, EcjAst.bindingAuCaret(ref, workOffset), null);
                 return true;
             }
 
@@ -614,6 +616,14 @@ public final class EcjNavigationEngine {
      */
     private SourceDecl locateTypeDeclaration(String fqn, Map<String, String> overlay) {
         if (fqn == null || fqn.isEmpty() || fqn.contains("<")) return null;
+        // BINAIRE (index classpath OU source attachée) : aucune source
+        // projet à localiser — le GUARD évite un balayage complet
+        // inutile (ex. findSuper sur java.lang.Thread).
+        try {
+            if (engine.isBinaryType(fqn)) return null;
+        } catch (Throwable ignored) {
+            // Index indisponible — best-effort, on continue.
+        }
         String[] segments = fqn.split("\\.");
         for (int n = segments.length; n >= 1; n--) {
             StringBuilder rel = new StringBuilder();
@@ -647,7 +657,229 @@ public final class EcjNavigationEngine {
                 }
             }
         }
+        // Repli BALAYAGE BORNÉ (ADR 0209 — audit navigation) : la
+        // convention de chemin échoue quand le fichier porte PLUSIEURS
+        // types top-level ou un type NON PUBLIC sans son nom — la
+        // PREUVE par readableName résout (pré-filtre textuel sur le nom
+        // simple, budget MAX_WALK_FILES/WALK_BUDGET_MS comme le
+        // balayage d'héritiers).
+        return locateTypeDeclarationParBalayage(fqn, overlay);
+    }
+
+    /**
+     * Le repli balayage de {@link #locateTypeDeclaration} : chaque
+     * fichier candidat (pré-filtré sur le nom simple) est résolu et ses
+     * types (imbriqués compris) appariés par FQN exact.
+     */
+    private SourceDecl locateTypeDeclarationParBalayage(String fqn,
+                                                        Map<String, String> overlay) {
+        String simple = simpleName(fqn);
+        if (simple.isEmpty()) return null;
+        Map<String, String> ov = overlay == null ? Map.of() : overlay;
+        long deadline = System.currentTimeMillis() + WALK_BUDGET_MS;
+        int[] resolved = {0};
+        for (Path file : candidateFiles(null)) {
+            if (resolved[0] >= MAX_WALK_FILES) break;
+            if (System.currentTimeMillis() > deadline) break;
+            String abs = file.toAbsolutePath().toString();
+            String content = contentOf(abs, null, null, ov);
+            if (content == null || !content.contains(simple)) continue;
+            resolved[0]++;
+            try {
+                CompilationUnitDeclaration cud = engine.resolveUnit(abs, content, false);
+                if (cud == null) continue;
+                List<TypeDeclaration> types = new ArrayList<>();
+                EcjAst.traverseResilient(cud, typeCollector(types));
+                for (TypeDeclaration td : types) {
+                    if (td == null || td.name == null
+                            || td.name.length == 0 || td.binding == null) {
+                        continue;
+                    }
+                    if (fqn.equals(String.valueOf(td.binding.readableName()))) {
+                        return new SourceDecl(abs, content, td);
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Fichier pathologique — suivant.
+            }
+        }
         return null;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // GO TO — Définition PROJET (cross-fichiers, ADR 0209)
+    // ════════════════════════════════════════════════════════════════
+
+    /**
+     * Une cible de DÉFINITION dans les sources du projet (ADR 0209) : le
+     * chemin du fichier déclarant + la plage du JETON nom — le pendant
+     * multi-fichiers du {@code TextRange} intra-fichier de
+     * {@code EcjCompilerEngine.findDefinition}.
+     */
+    public record CibleDefinition(String chemin, int debut, int fin) {}
+
+    /**
+     * La DÉFINITION du symbole au caret dans un AUTRE fichier des
+     * sources du PROJET (ADR 0209 — comble le vide du chemin
+     * JDT-first, restreint au fichier courant) : le binding ecj prouve
+     * la CIBLE (méthode, champ, type — jamais un nom deviné), la classe
+     * DÉCLARANTE est localisée par {@link #locateTypeDeclaration}
+     * (convention de chemin puis parse, overlay des tampons ouverts
+     * consulté AVANT le disque), et le NOM visé y est borné par
+     * {@link #methodNameRange}/{@link #fieldNameRange}/nameRange.
+     *
+     * <p>Ordre de la façade : intra-fichier d'abord (bindings vifs), ce
+     * chemin ensuite, fallback BINAIRE ({@code jdt://decompiled/…}) en
+     * dernier — une cible PROJET ne doit JAMAIS atterrir dans le stub
+     * décompilé.</p>
+     *
+     * <p>Bornes honnêtes (D3) : locale/paramètre → {@code null} (ils
+     * vivent dans le fichier courant, déjà servi) ; classe déclarante
+     * BINAIRE → {@code null} (le fallback décompilé de la façade prend
+     * le relais) ; type anonyme interne → {@code null}.</p>
+     *
+     * @param filePath chemin du fichier courant
+     * @param source   texte VIVANT du fichier courant
+     * @param offset   offset du caret dans {@code source}
+     * @param overlay  tampons ouverts des AUTRES fichiers (path → source)
+     * @return la cible (chemin + plage du nom), ou null
+     */
+    public CibleDefinition findDefinitionProject(String filePath, String source,
+                                                 int offset, Map<String, String> overlay) {
+        if (EcjCompilerEngine.DISABLED) return null;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            Map<String, String> ov = overlay == null ? Map.of() : overlay;
+            Binding b = ctx.binding;
+            if (b == null) return null;
+            // 1) MÉTHODE (invocation, déclaration, référence) : la
+            //    classe DÉCLARANTE porte la source ; un constructeur
+            //    vise le NOM DE LA CLASSE elle-même.
+            if (b instanceof MethodBinding m && m.declaringClass != null) {
+                if (m.isConstructor()) {
+                    return cibleTypeProjet(m.declaringClass, ov);
+                }
+                SourceDecl sd = classeDeclaranteLocalisee(m.declaringClass, ov);
+                if (sd == null) return null; // binaire — fallback décompilé
+                int arity = m.parameters == null ? 0 : m.parameters.length;
+                int[] name = methodNameRange(sd, String.valueOf(m.selector), arity);
+                return name == null ? null : new CibleDefinition(sd.path, name[0], name[1]);
+            }
+            // 2) CHAMP (référence, déclaration) : la classe déclarante.
+            if (b instanceof FieldBinding f && f.declaringClass != null) {
+                SourceDecl sd = classeDeclaranteLocalisee(f.declaringClass, ov);
+                if (sd == null) return null;
+                int[] name = fieldNameRange(sd, String.valueOf(f.name));
+                return name == null ? null : new CibleDefinition(sd.path, name[0], name[1]);
+            }
+            // 3) TYPE (référence de type au caret) : sa déclaration.
+            if (b instanceof TypeBinding) {
+                return cibleTypeProjet(normalize((TypeBinding) b), ov);
+            }
+            // 4) Locale/paramètre : le fichier COURANT les sert déjà
+            //    (chemin intra-fichier) — null honnête, jamais de saut
+            //    hasardeux.
+            return null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * La déclaration du TYPE du symbole au caret dans un AUTRE fichier
+     * des sources du projet (ADR 0209 — pendant multi-fichiers du
+     * {@code findTypeDefinition} intra-fichier) : le type du symbole —
+     * une référence de type se suffit, une variable/paramètre/champ
+     * donne son type, un appel donne son type de retour (miroir
+     * {@code typeBindingOf} du moteur).
+     *
+     * @return la cible (chemin + plage du nom), ou null (type binaire —
+     *         le fallback décompilé de la façade prend le relais)
+     */
+    public CibleDefinition findTypeDefinitionProject(String filePath, String source,
+                                                     int offset, Map<String, String> overlay) {
+        if (EcjCompilerEngine.DISABLED) return null;
+        try {
+            Context ctx = resolveContext(filePath, source, offset);
+            TypeBinding t = typeDuSymbole(ctx.binding);
+            if (t == null) return null;
+            return cibleTypeProjet(t, overlay == null ? Map.of() : overlay);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Le TYPE du binding au caret (miroir moteur {@code typeBindingOf})
+     * : une référence de type se suffit ; une variable/paramètre/champ
+     * donne son type ; un appel donne son type de retour. Tableau →
+     * élément feuille ; paramétré → original ; base/variable de type →
+     * null (aucune déclaration navigable).
+     */
+    private static TypeBinding typeDuSymbole(Binding b) {
+        if (b == null) return null;
+        try {
+            TypeBinding t = null;
+            if (b instanceof TypeBinding tb) {
+                t = tb;
+            } else if (b instanceof VariableBinding v && v.type != null) {
+                t = v.type;
+            } else if (b instanceof MethodBinding m && m.returnType != null) {
+                t = m.returnType;
+            }
+            if (t == null) return null;
+            if (t.isArrayType()) {
+                t = t.leafComponentType();
+            }
+            if (t.isParameterizedType() && t.original() != null) {
+                t = t.original();
+            }
+            if (t.isBaseType() || t.isTypeVariable() || !t.isValidBinding()) return null;
+            return t;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** La classe déclarante LOCALISÉE dans les sources du projet (ou
+     *  null — binaire ou type interne $ : le fallback décompilé de la
+     *  façade prend le relais, jamais une localisation inventée). */
+    private SourceDecl classeDeclaranteLocalisee(ReferenceBinding classe,
+                                                  Map<String, String> overlay) {
+        String fqn = String.valueOf(classe.readableName());
+        if (fqn.isEmpty() || fqn.contains("<") || fqn.contains("$")) return null;
+        return locateTypeDeclaration(fqn, overlay);
+    }
+
+    /** La DÉCLARATION d'un TYPE projet, bornée au nom (ou null). */
+    private CibleDefinition cibleTypeProjet(TypeBinding t, Map<String, String> overlay) {
+        if (!(t instanceof ReferenceBinding rb)) return null;
+        SourceDecl sd = classeDeclaranteLocalisee(rb, overlay);
+        if (sd == null) return null;
+        try {
+            int[] name = nameRange(sd.content, sd.type.sourceStart, sd.type.sourceEnd,
+                    String.valueOf(sd.type.name));
+            return name == null ? null : new CibleDefinition(sd.path, name[0], name[1]);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** La plage du JETON du champ {@code nom} dans la déclaration de
+     *  type de {@code decl} (premier homonyme — les champs ne se
+     *  surchargent pas). Les CONSTANTES d'enum vivent dans fields. */
+    private static int[] fieldNameRange(SourceDecl decl, String nom) {
+        try {
+            if (decl.type.fields == null) return null;
+            for (FieldDeclaration fd : decl.type.fields) {
+                if (fd == null || fd.name == null) continue;
+                if (!nom.equals(String.valueOf(fd.name))) continue;
+                return nameRange(decl.content, fd.sourceStart, fd.sourceEnd, nom);
+            }
+            return null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════

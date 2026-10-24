@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.lspjava.api.NavigationTarget
 import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ChaineSelectionKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
@@ -78,6 +79,8 @@ import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.WorkspaceSymbolParams
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.jsonrpc.messages.Either3
+import org.eclipse.lsp4j.jsonrpc.services.JsonDelegate
+import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import org.eclipse.lsp4j.services.TextDocumentService
@@ -87,6 +90,39 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
 import java.util.logging.Logger
+
+/**
+ * Service de documents étendu par le GO TO « Super » Kotlin (ADR
+ * 0210) — MÉTHODE LSP PERSONNALISÉE `textDocument/superDefinition`,
+ * miroir exact de [jo.lspjava.lsp.NavTextDocumentService] du LSP Java
+ * (même nom, mêmes paramètres `TextDocumentPositionParams`, même DTO
+ * [NavigationTarget] : le client cel-lsp consomme les DEUX serveurs par
+ * le même câble — il appelle la méthode PAR SON NOM via
+ * `Launcher.getRemoteEndpoint().request(…)` et son miroir DTO porte
+ * les mêmes noms de champs Gson).
+ *
+ * Le PIÈGE LSP4J des méthodes custom (cf. NavTextDocumentService) : la
+ * carte de DÉSÉRIALISATION des paramètres suit les délégués
+ * `@JsonDelegate` via le type de retour DÉCLARÉ de
+ * `getTextDocumentService()` — SANS la redéclaration covariante
+ * annotée, les paramètres arriveraient en LinkedTreeMap brut
+ * (`argument type mismatch`).
+ */
+internal interface ServiceDocumentsNavKotlin : TextDocumentService {
+    /**
+     * Les cibles Super au caret : pour un membre outrepassant, le
+     * même-nommé dans chaque supertype projet du type déclarant
+     * (libellé `« name  ·  Super »`) ; sinon les supertypes DIRECTS
+     * du type en contexte (libellé `« Simple  ·  pkg »`).
+     *
+     * @param params le document + la position (forme standard LSP)
+     * @return les cibles (`NavigationTarget` : chemin ABSOLU, plage du
+     *         nom en OFFSETS, libellé picker) — vide quand rien ne
+     *         s'applique (l'option Super n'apparaît pas)
+     */
+    @JsonRequest("textDocument/superDefinition")
+    fun superDefinition(params: TextDocumentPositionParams): CompletableFuture<List<NavigationTarget>>
+}
 
 /**
  * Serveur LSP4J du moteur Kotlin (K2, LSP_KOTLIN.md §4.1 « session », §4.4
@@ -132,8 +168,8 @@ internal class KotlinLanguageServer(
     /** Textes LSP courants (offsets moteur → positions LSP, versions). */
     private val documents = ConcurrentHashMap<String, DocumentLsp>()
 
-    /** Service de documents (didOpen/didChange/didClose/didSave). */
-    private val serviceDocuments: TextDocumentService = ServiceDocuments()
+    /** Service de documents (didOpen/didChange/didClose/didSave + requêtes). */
+    private val serviceDocuments: ServiceDocumentsNavKotlin = ServiceDocuments()
 
     /** Service d'espace de travail (notifications vides à K2). */
     private val serviceEspace: WorkspaceService = ServiceEspace()
@@ -198,6 +234,14 @@ internal class KotlinLanguageServer(
         capacites.setInlayHintProvider(true)
         capacites.setWorkspaceSymbolProvider(true)
         capacites.setSelectionRangeProvider(true)
+        // ADR 0210 : GO TO « Super » — méthode LSP personnalisée
+        // textDocument/superDefinition (AUCUN équivalent standard),
+        // annoncée via la capability experimental (pattern jdt.ls,
+        // miroir du ServerCapabilitiesProvider Java : le client la
+        // recherche sous la clé « superDefinitionProvider » ; un
+        // serveur tiers qui ne la connaît pas ne l'annonce pas et
+        // l'option Super n'apparaît pas).
+        capacites.setExperimental(mapOf("superDefinitionProvider" to true))
         val result = InitializeResult(capacites)
         val info = ServerInfo()
         info.name = NOM_SERVEUR
@@ -228,7 +272,15 @@ internal class KotlinLanguageServer(
         aLArret()
     }
 
-    override fun getTextDocumentService(): TextDocumentService = serviceDocuments
+    /**
+     * Redéclaration COVARIANTE annotée `@JsonDelegate` (ADR 0210) : le
+     * type de retour DÉCLARÉ porte la méthode personnalisée
+     * `textDocument/superDefinition` dans la carte de désérialisation
+     * (miroir du `NavLanguageServer` Java — le dispatch, lui, traverse
+     * les interfaces de l'objet retourné).
+     */
+    @JsonDelegate
+    override fun getTextDocumentService(): ServiceDocumentsNavKotlin = serviceDocuments
 
     override fun getWorkspaceService(): WorkspaceService = serviceEspace
 
@@ -348,8 +400,15 @@ internal class KotlinLanguageServer(
      * effet (les diagnostics vivent au fil de l'eau). Les requêtes
      * (complétion, hover…) héritent des DÉFAUTS LSP4J — non déclarées
      * dans les capacités, l'éditeur ne les émet pas.
+     *
+     * Exemption detekt ciblée (règle 16) : LargeClass — le service
+     * IMPLÉMENTE le contrat TextDocumentService (une méthode par
+     * requête LSP, toutes miroir mince de la session moteur) ; le
+     * GO TO « Super » (ADR 0210) y ajoute la méthode personnalisée du
+     * même aplomb. Le compte épouse le CONTRAT, pas une dérive.
      */
-    private inner class ServiceDocuments : TextDocumentService {
+    @Suppress("LargeClass")
+    private inner class ServiceDocuments : ServiceDocumentsNavKotlin {
         override fun didOpen(params: DidOpenTextDocumentParams) {
             val document = params.textDocument
             val uri = document.uri
@@ -722,6 +781,33 @@ internal class KotlinLanguageServer(
                 }
             return CompletableFuture.completedFuture(
                 Either.forLeft(emplacements.mapNotNull { emplacement -> locationLspDe(emplacement, uri) }),
+            )
+        }
+
+        /**
+         * GO TO « Super » (ADR 0210, `textDocument/superDefinition` —
+         * méthode personnalisée, miroir du LSP Java) : les cibles du
+         * moteur ([SessionLangageKotlin.superDefinition]) traduites en
+         * [NavigationTarget] — chemin ABSOLU + plage du nom en OFFSETS
+         * + libellé picker (aucun round-trip Position↔offset à risquer
+         * côté client, même contrat que le serveur Java). Liste VIDE
+         * quand rien ne s'applique (l'option Super n'apparaît pas).
+         */
+        override fun superDefinition(params: TextDocumentPositionParams): CompletableFuture<List<NavigationTarget>> {
+            val uri = params.textDocument.uri
+            val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
+            val decalage = decalageDe(params.position, document.texte)
+            val cibles =
+                try {
+                    session.superDefinition(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "superDefinition échoué ($uri)", t)
+                    emptyList()
+                }
+            return CompletableFuture.completedFuture(
+                cibles.map { cible ->
+                    NavigationTarget(cheminAbsoluDe(cible.uri), cible.debutNom, cible.finNom, cible.libelle)
+                },
             )
         }
 
@@ -1144,6 +1230,21 @@ internal class KotlinLanguageServer(
                 else -> 0
             }
         }
+
+        /**
+         * Chemin ABSOLU d'une URI de document (`file:///a/b.kt` comme
+         * `file:/a/b.kt` — [File.toURI] rend la forme À UN slash — →
+         * `/a/b.kt`) — [NavigationTarget.path] du GO TO « Super »
+         * (ADR 0210) porte le CHEMIN, pas l'URI (même contrat que le
+         * serveur Java) ; une URI sans schéma file: passe TELLE
+         * QUELLE (fixture de test — honnête, jamais une exception).
+         */
+        private fun cheminAbsoluDe(uri: String): String =
+            when {
+                uri.startsWith("file://") -> uri.removePrefix("file://")
+                uri.startsWith("file:/") -> uri.removePrefix("file:")
+                else -> uri
+            }
 
         /** Applique un changement par plage (client non conforme, robustesse). */
         private fun appliquerPlage(

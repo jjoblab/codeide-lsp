@@ -6,6 +6,7 @@ import jo.lspjava.api.NavigationTarget;
 import jo.lspjava.api.Severity;
 import jo.lspjava.api.TextRange;
 import jo.lspjava.ecj.EcjCompilerEngine;
+import jo.lspjava.ecj.EcjNavigationEngine;
 import jo.lspjava.engine.CompilationEnvironment;
 import jo.lspjava.services.*;
 import org.eclipse.lsp4j.*;
@@ -528,6 +529,25 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             } catch (Throwable t) {
                 if (server != null) server.logWarning("definition handler failed for " + filePath, t);
             }
+            // Chemin PROJET cross-fichiers (ADR 0209) : la cible vit
+            // dans un AUTRE fichier des sources — le binding ecj
+            // prouve la cible, locateTypeDeclaration la localise
+            // (overlay des tampons ouverts AVANT le disque). AVANT le
+            // fallback binaire : une cible PROJET ne doit JAMAIS
+            // atterrir dans le stub décompilé.
+            try {
+                java.util.Map<String, String> overlay = buildOpenBufferOverlay();
+                EcjNavigationEngine.CibleDefinition hit =
+                        navigationService.findDefinitionProject(filePath, source, offset, overlay);
+                if (hit != null) {
+                    Location location = locationProjetDe(hit, overlay);
+                    if (location != null) {
+                        return Either.<List<? extends Location>, List<? extends LocationLink>>forLeft(List.of(location));
+                    }
+                }
+            } catch (Throwable t) {
+                if (server != null) server.logWarning("definition project path failed for " + filePath, t);
+            }
             // Fallback binaire : la cible n'est pas dans les sources du
             // projet (ex. java.util.HashMap, java.lang.Thread, une classe
             // d'un JAR du classpath). On résout le FQN du type déclarant au
@@ -571,6 +591,22 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             } catch (Throwable t) {
                 if (server != null) server.logWarning("typeDefinition handler failed for " + filePath, t);
             }
+            // Chemin PROJET cross-fichiers (ADR 0209) — même discipline
+            // que definition : intra-fichier, puis projet, puis
+            // binaire décompilé.
+            try {
+                java.util.Map<String, String> overlay = buildOpenBufferOverlay();
+                EcjNavigationEngine.CibleDefinition hit =
+                        navigationService.findTypeDefinitionProject(filePath, source, offset, overlay);
+                if (hit != null) {
+                    Location location = locationProjetDe(hit, overlay);
+                    if (location != null) {
+                        return Either.<List<? extends Location>, List<? extends LocationLink>>forLeft(List.of(location));
+                    }
+                }
+            } catch (Throwable t) {
+                if (server != null) server.logWarning("typeDefinition project path failed for " + filePath, t);
+            }
             // Fallback binaire.
             try {
                 Location decompiled = binaryDefinitionLocation(filePath, source, offset, true);
@@ -582,6 +618,21 @@ public final class JavaTextDocumentService implements NavTextDocumentService {
             }
             return Either.<List<? extends Location>, List<? extends LocationLink>>forLeft(List.of());
         }, Either.forLeft(List.of()));
+    }
+
+    /**
+     * La Location LSP d'une cible de définition PROJET (ADR 0209) : le
+     * texte du fichier déclarant (overlay des tampons ouverts d'abord,
+     * disque ensuite) borne les OFFSETS en positions LSP — le même
+     * contrat que {@code implementation} (le texte du fichier CIBLE,
+     * jamais celui du document courant).
+     */
+    private Location locationProjetDe(EcjNavigationEngine.CibleDefinition hit,
+                                      java.util.Map<String, String> overlay) {
+        String text = textForNavigation(hit.chemin(), overlay);
+        if (text == null) return null;
+        return new Location(pathToUri(hit.chemin()),
+                new Range(toPosition(text, hit.debut()), toPosition(text, hit.fin())));
     }
 
     /**

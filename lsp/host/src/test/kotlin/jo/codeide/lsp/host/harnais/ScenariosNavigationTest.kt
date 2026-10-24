@@ -4,6 +4,7 @@ import jo.codeide.lsp.host.harnais.OutilsHarnais.assertPlage
 import jo.codeide.lsp.host.harnais.OutilsHarnais.demarrerServeur
 import jo.codeide.lsp.host.harnais.OutilsHarnais.ouvrir
 import jo.codeide.lsp.host.harnais.OutilsHarnais.positionDe
+import jo.codeide.lsp.host.harnais.OutilsHarnais.superDefinitionParTransport
 import jo.codeide.lsp.host.harnais.OutilsHarnais.trop
 import org.eclipse.lsp4j.CodeActionContext
 import org.eclipse.lsp4j.CodeActionKind
@@ -331,18 +332,23 @@ class ScenariosNavigationTest {
                     .hover(org.eclipse.lsp4j.HoverParams(TextDocumentIdentifier(uri), curseur))
                     .get(60, TimeUnit.SECONDS)
             assertNotNull(survol, "le survol de additionner ne doit pas être null")
-            // Hors périmètre de l'ADR 0207 (option 1) : la KDoc d'usage
-            // n'est attachée que pour la déclaration du DOCUMENT COURANT
-            // (arbre vif) — ici la déclaration vit dans Calcul.kt (fichier
-            // FERMÉ du scan) : signature seule, PLAINTEXT. Le choix K3
-            // documenté tient ; l'option 2 de l'ADR rouvrira le dossier.
+            // ADR 0208 (option 2 de l'ADR 0207) : la KDoc d'usage est
+            // attachée AUX FICHIERS AUSSI — la déclaration vit dans
+            // Calcul.kt (fichier FERMÉ du scan) : le port de la session
+            // relit sa déclaration sur disque (lecture bornée, UNE fois
+            // par survol) et la KDoc accompagne l'usage, miroir du
+            // document courant (S2) et des serveurs de référence.
             assertEquals(
-                org.eclipse.lsp4j.MarkupKind.PLAINTEXT,
+                org.eclipse.lsp4j.MarkupKind.MARKDOWN,
                 survol.contents.right.kind,
-                "usage cross-file = signature seule (l'ADR 0207 couvre le document courant)",
+                "CORRIGÉ (ADR 0208) : usage cross-fichier = KDoc relue du fichier déclarant",
             )
             val contenu = survol.contents.right.value
             assertTrue(contenu.contains("additionner"), "la signature doit être présente: $contenu")
+            assertTrue(
+                contenu.contains("Additionne"),
+                "la KDoc TIERCE (fichier fermé) est rendue à l'usage: $contenu",
+            )
             connexion.arreter()
         } catch (t: Throwable) {
             connexion.detruire()
@@ -593,6 +599,78 @@ class ScenariosNavigationTest {
         } catch (t: Throwable) {
             connexion.detruire()
             throw AssertionError("E5 échoué — stderr serveur :\n${connexion.stderr.trop}", t)
+        }
+    }
+
+    @Test
+    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario E2E
+    // est UNE séquence d'aller-retours transport (méthode, propriété,
+    // capability, capacité vide sur classe racine) inséparable.
+    @Suppress("LongMethod")
+    fun `E9 - superDefinition par le transport - membre outrepassant, miroir du LSP Java (ADR 0210)`() {
+        // initialize UNE SEULE fois (spéc LSP) avec la réponse capturée —
+        // la négociation de demarrerServeur est différée ici.
+        val connexion = demarrerServeur("e9", initialiser = false)
+        try {
+            val params = org.eclipse.lsp4j.InitializeParams()
+            params.workspaceFolders =
+                listOf(org.eclipse.lsp4j.WorkspaceFolder(connexion.racine.toURI().toString(), "harnais"))
+            // a) La capability experimental annonce le provider (clé que
+            //    le client cel-lsp y recherche — pattern jdt.ls). Le
+            //    champ est un JsonElementTypeAdapter lsp4j : après le
+            //    transport c'est un JsonObject (pas une Map).
+            val capacites =
+                connexion.distant
+                    .initialize(params)
+                    .get(120, TimeUnit.SECONDS)
+                    .capabilities
+            connexion.distant.initialized(org.eclipse.lsp4j.InitializedParams())
+            val experimental = capacites.experimental as? com.google.gson.JsonObject
+            assertTrue(
+                experimental?.get("superDefinitionProvider")?.asBoolean == true,
+                "superDefinitionProvider annoncé dans experimental: $experimental",
+            )
+            // b) Caret sur la DÉCLARATION OUTREPASSANTE « aire » de Cercle
+            //    (Calcul.kt ouvert) : le même-nommé du supertype projet
+            //    Forme — appel TYPÉ sur le proxy étendu, miroir du
+            //    câble cel-lsp (CodeIdeLanguageServer.superDefinition).
+            val uri = ouvrir(connexion, "src/jo/demo/Calcul.kt")
+            connexion.client.attendre(uri)
+            val texte = File(connexion.racine, "src/jo/demo/Calcul.kt").readText()
+            val curseurAire = positionDe(texte, texte.indexOf("override fun aire()") + "override fun ".length)
+            val ciblesAire = superDefinitionParTransport(connexion, uri, curseurAire)
+            assertEquals(1, ciblesAire.size, "UNE cible : aire de Forme — reçues: $ciblesAire")
+            val cibleAire = ciblesAire.single()
+            assertEquals(
+                File(connexion.racine, "src/jo/demo/Calcul.kt").absolutePath,
+                cibleAire.path,
+                "chemin ABSOLU du fichier déclarant (Forme vit dans Calcul.kt)",
+            )
+            assertEquals("aire  ·  Forme", cibleAire.label, "libellé picker (miroir ecj)")
+            assertEquals(
+                texte.indexOf("fun aire()") + "fun ".length,
+                cibleAire.start,
+                "offset du NOM aire dans l'interface Forme",
+            )
+            // c) La PROPRIÉTÉ outrepassante « nom » : même mécanique.
+            val curseurNom = positionDe(texte, texte.indexOf("override val nom") + "override val ".length)
+            val ciblesNom = superDefinitionParTransport(connexion, uri, curseurNom)
+            assertEquals(1, ciblesNom.size, "UNE cible : nom de Forme — reçues: $ciblesNom")
+            assertEquals("nom  ·  Forme", ciblesNom.single().label, "libellé picker propriété")
+            // d) Garde : la classe racine (Forme — aucune clause de
+            //    supertype ÉCRITE) ne rend AUCUNE cible sur son propre
+            //    membre (l'option Super n'apparaît pas, jamais un faux
+            //    jalon).
+            val curseurPerimetre = positionDe(texte, texte.indexOf("fun perimetre()") + "fun ".length)
+            val ciblesPerimetre = superDefinitionParTransport(connexion, uri, curseurPerimetre)
+            assertTrue(
+                ciblesPerimetre.none { it.label == "perimetre  ·  Forme" },
+                "perimetre n'est PAS déclaré dans un supertype : $ciblesPerimetre",
+            )
+            connexion.arreter()
+        } catch (t: Throwable) {
+            connexion.detruire()
+            throw AssertionError("E9 échoué — stderr serveur :\n${connexion.stderr.trop}", t)
         }
     }
 

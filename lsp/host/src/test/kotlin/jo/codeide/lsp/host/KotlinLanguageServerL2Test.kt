@@ -12,6 +12,7 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.SelectionRangeParams
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
+import org.eclipse.lsp4j.TextDocumentPositionParams
 import org.eclipse.lsp4j.TypeDefinitionParams
 import org.eclipse.lsp4j.WorkspaceSymbolParams
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -304,6 +305,49 @@ class KotlinLanguageServerL2Test {
         assertEquals(Position(3, 0), maillon.range.end)
         // Le maillon le plus profond couvre le littéral (le `1` en (1,12)).
         assertEquals(Position(1, 12), chaines.single().range.start)
+        espace.fermer()
+    }
+
+    @Test
+    fun `superDefinition - go to super par le transport, miroir du LSP Java (ADR 0210)`() {
+        val sources = dossierTemp.resolve("sources-super").apply { mkdirs() }
+        val baseTexte = "package p\n\nopen class Base {\n    open fun run() {\n    }\n}\n"
+        val base = sources.resolve("Base.kt")
+        base.writeText(baseTexte)
+        val heritierTexte =
+            "package p\n\nimport p.Base\n\nclass Heritee : Base() {\n    override fun run() {\n    }\n}\n"
+        val heritier = sources.resolve("Heritiers.kt")
+        heritier.writeText(heritierTexte)
+        val uri = heritier.toURI().toString()
+        val espace = espaceAvecRacines(sources)
+        ouvrir(espace, uri, heritierTexte)
+        // La capability experimental annonce le provider (pattern
+        // jdt.ls — le client y cherche la clé « superDefinitionProvider »).
+        val capacites =
+            espace.serveur
+                .initialize(InitializeParams())
+                .join()
+                .capabilities
+        val experimental = capacites.experimental as? Map<*, *>
+        assertTrue(
+            experimental?.get("superDefinitionProvider") == true,
+            "superDefinitionProvider annoncé dans experimental",
+        )
+        // Caret sur « run » de la déclaration OUTREPASSANTE (ligne 5,
+        // « override fun run() » — colonne du nom).
+        val position = Position(5, 17)
+        val cibles =
+            espace.serveur.textDocumentService
+                .superDefinition(TextDocumentPositionParams(TextDocumentIdentifier(uri), position))
+                .join()
+        // UNE cible : run() de Base — chemin ABSOLU, plage du nom en
+        // OFFSETS (aucun round-trip Position↔offset), libellé picker.
+        assertEquals(1, cibles.size)
+        val cible = cibles.single()
+        assertEquals(base.absolutePath, cible.path, "chemin absolu du fichier déclarant")
+        assertEquals(baseTexte.indexOf("run()"), cible.start, "offset du NOM run dans Base.kt")
+        assertEquals(baseTexte.indexOf("run()") + "run".length, cible.end, "fin du nom")
+        assertEquals("run  ·  Base", cible.label, "libellé picker (miroir ecj)")
         espace.fermer()
     }
 

@@ -390,4 +390,57 @@ class ScenariosSondesTest {
             throw AssertionError("S8 échoué — stderr serveur :\n${connexion.stderr.trop}", t)
         }
     }
+
+    @Test
+    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario E2E
+    // est UNE séquence d'aller-retours transport (KDoc disque, édition
+    // du document tiers, re-survol) inséparable sans perdre la lecture.
+    @Suppress("LongMethod")
+    fun `S13 - KDoc TIERCE OUVERTE et modifiee - l arbre VIF gagne sur le disque (ADR 0208)`() {
+        val connexion = demarrerServeur("s13")
+        try {
+            val uriCalcul = ouvrir(connexion, "src/jo/demo/Calcul.kt")
+            val uriMain = ouvrir(connexion, "src/jo/demo/Main.kt")
+            connexion.client.attendre(uriMain)
+            val texteMain = java.io.File(connexion.racine, "src/jo/demo/Main.kt").readText()
+            val curseur = OutilsHarnais.positionDe(texteMain, texteMain.indexOf("additionner(1, 2)"))
+
+            fun survolUsage(): String {
+                val survol =
+                    connexion.distant.textDocumentService
+                        .hover(HoverParams(TextDocumentIdentifier(uriMain), curseur))
+                        .get(60, TimeUnit.SECONDS)
+                assertNotNull(survol, "survol de l'usage additionner")
+                return survol.contents.right.value
+            }
+            // a) Fichier déclarant FERMÉ : KDoc relue du DISQUE (ADR 0208).
+            val avant = survolUsage()
+            println("SONDE S13 (KDoc tierce, fichier fermé) = $avant")
+            assertTrue(avant.contains("Additionne"), "KDoc disque rendue à l'usage: $avant")
+            // b) Le document TIERS est OUVERT puis MODIFIÉ : sa KDoc
+            //    VIVE remplace celle du disque (dominance des documents
+            //    ouverts — jamais le disque périmé).
+            val texteVif =
+                java.io
+                    .File(connexion.racine, "src/jo/demo/Calcul.kt")
+                    .readText()
+                    .replace("Additionne [a] et [b].", "Additionne [a] et [b] — VERSION VIVANTE.")
+            OutilsHarnais.modifier(connexion, uriCalcul, texteVif, 2)
+            connexion.client.attendre(uriCalcul)
+            val apres = survolUsage()
+            println("SONDE S13 (KDoc tierce, document ouvert édité) = $apres")
+            assertTrue(
+                apres.contains("VERSION VIVANTE"),
+                "l'arbre VIF du document tiers gagne (ADR 0208 dominance): $apres",
+            )
+            assertTrue(
+                !apres.contains("Additionne [a] et [b].") || apres.contains("VERSION VIVANTE"),
+                "la KDoc périmée du disque n'est plus rendue telle quelle: $apres",
+            )
+            connexion.arreter()
+        } catch (t: Throwable) {
+            connexion.detruire()
+            throw AssertionError("S13 échoué — stderr serveur :\n${connexion.stderr.trop}", t)
+        }
+    }
 }

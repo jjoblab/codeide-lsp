@@ -1,5 +1,65 @@
 # Changelog — codeide-lsp
 
+## 1.7.0 (2026-10-24)
+
+- **Panneau GO TO complet et SYMÉTRIQUE Kotlin/Java — ADR 0208/0209/0210**
+  (audit du panneau Go To des deux serveurs, caractérisation bout-en-bout,
+  870 tests verts : 249 moteur + 212 hôte dont 71 scénarios E2E transport
+  réel + 409 Java dont 15 scénarios d'audit façade).
+  - **ADR 0208 — KDoc aux usages CROSS-FICHIERS (option 2 de l'ADR 0207)**
+    (Kotlin, survol) : la déclaration d'un AUTRE fichier du projet
+    retrouve sa KDoc au site d'usage — port injecté session → moteur
+    (`Contexte.kdocDeclaration`) : document OUVERT → arbre VIF (aucun
+    re-parse, jumelage exact par plage du nom), fichier FERMÉ → lecture
+    disque + parse bornées (UNE fois par survol, budget du balayage
+    d'occurrences, zéro état inter-requêtes). Correctif de dominance
+    associé : `declarationsProjet`/`contexteNomDe` fusionnent désormais
+    les arbres vivants de TOUS les documents ouverts (les documents
+    tiers ouverts étaient servis par leur copie disque PÉRIMÉE du scan —
+    plages fausses au premier go-to-definition/survol après édition).
+    Sondes : D1 inversé (usage cross-fichier = MARKDOWN + KDoc) et S13
+    (l'arbre vif du document tiers édité gagne sur le disque).
+  - **ADR 0209 — définition/définition de type Java CROSS-FICHIERS**
+    (Java, navigation) : `textDocument/definition` et `typeDefinition`
+    quittaient le confinement intra-fichier — le chemin PROJET par
+    bindings ecj (`findDefinitionProject`/`findTypeDefinitionProject`)
+    localise la classe DÉCLARANTE (convention de chemin puis REPLI
+    BALAYAGE BORNÉ pour les fichiers multi-types), borne le NOM au
+    jeton, et se branche AVANT le fallback binaire (une cible projet ne
+    tombe JAMAIS dans le stub décompilé). Deux bugs latents corrigés :
+    (a) `EcjAst.bindingAuCaret` — la référence qualifiée `a.tag` visait
+    le RÉCEPTEUR (convention ecj : premier segment dans `binding`, champ
+    dans `otherBindings`) : définition, survol et navigation du caret
+    suivent désormais le SEGMENT VISÉ (le renommage portait déjà la
+    preuve — politique unifiée) ; (b) `locateTypeDeclaration` gagne un
+    GUARD binaire (pas de balayage pour un supertype du classpath) et
+    son repli balayage — `findSuper`/hiérarchies en profitent. Audit :
+    `AuditNavigationJavaTest` (15 scénarios façade : méthode, méthode
+    héritée, champ, type, constructeur, import statique, homonymes par
+    bindings, locale intra-fichier, binaire décompilé ×2, ordre des
+    chemins, robustesse).
+  - **ADR 0210 — GO TO « Super » Kotlin (`textDocument/
+    superDefinition`)** : l'option Super du menu contextuel unifié
+    existait pour JAVA uniquement — elle est SYMÉTRIQUE désormais.
+    Moteur `SuperKotlin` : (1) chemin MEMBRE — la cible occurrences
+    prouve le membre (déclaration outrepassante ou usage résolu), la
+    clôture TRANSITIVE des supertypes projet (BFS borné, anti-cycles)
+    contribue ses homonymes de même genre (`« name  ·  Super »`) ;
+    (2) chemin TYPE — les supertypes DIRECTS ÉCRITS du type en contexte
+    (`« Simple  ·  pkg »`). Hôte : interface covariante `@JsonDelegate`
+    (piège LSP4J des méthodes custom), DTO `NavigationTarget` PARTAGÉ
+    avec le serveur Java (chemin absolu + offsets + libellé), capability
+    `experimental.superDefinitionProvider`. E9 du harnais au transport
+    réel par le CÂBLE cel-lsp exact — découverte au passage : les
+    méthodes custom du client production vivent au SOMMET de son
+    interface distante (le check « Duplicate RPC method » de lsp4j
+    0.22 refuse la redéclaration covariante côté client, et la réponse
+    d'une méthode inconnue du proxy se désérialise en null) ; borne O3
+    verrouillée (usage ambigu d'un membre homonyme → vide, jamais un
+    faux jalon).
+  - TABLE_KOTLIN de la parité L0 gains `super-définition (expérimental)` ;
+    baseline parité corpus re-roulée (digeste 5ea7ccb9… → v1.7.0).
+
 ## 1.6.0 (2026-10-24)
 
 - **Audit E2E du serveur LSP Kotlin (harnais stdio JSON-RPC, classpath réel

@@ -136,6 +136,57 @@ public final class NavigationService {
         }
     }
 
+    /**
+     * La DÉFINITION du symbole au caret dans un AUTRE fichier des
+     * sources du projet (ADR 0209) : chemin JDT-first intra-fichier
+     * d'abord ([#findDefinition]), CE chemin cross-fichiers ensuite,
+     * fallback binaire en dernier (la façade orchestre l'ordre).
+     *
+     * @param overlay tampons ouverts (path → source vivante)
+     * @return la cible (chemin + plage du nom), ou null
+     */
+    public EcjNavigationEngine.CibleDefinition findDefinitionProject(String filePath, String source,
+                                                                     int offset,
+                                                                     Map<String, String> overlay) {
+        try {
+            EcjCompilerEngine jdt = environment.jdt();
+            if (!jdt.isLikelyUsable()) return null;
+            return navEngine().findDefinitionProject(filePath, source, offset, overlay);
+        } catch (OperationCanceledException e) {
+            LOG.fine(() -> "findDefinitionProject canceled for " + filePath + " at " + offset);
+            return null;
+        } catch (Throwable t) {
+            LOG.log(java.util.logging.Level.WARNING,
+                    "findDefinitionProject failed for " + filePath + " at offset " + offset, t);
+            return null;
+        }
+    }
+
+    /**
+     * La déclaration du TYPE du symbole au caret dans un AUTRE fichier
+     * des sources du projet (ADR 0209) — même orchestration que
+     * [#findDefinitionProject] pour la voie typeDefinition.
+     *
+     * @param overlay tampons ouverts (path → source vivante)
+     * @return la cible (chemin + plage du nom), ou null
+     */
+    public EcjNavigationEngine.CibleDefinition findTypeDefinitionProject(String filePath, String source,
+                                                                        int offset,
+                                                                        Map<String, String> overlay) {
+        try {
+            EcjCompilerEngine jdt = environment.jdt();
+            if (!jdt.isLikelyUsable()) return null;
+            return navEngine().findTypeDefinitionProject(filePath, source, offset, overlay);
+        } catch (OperationCanceledException e) {
+            LOG.fine(() -> "findTypeDefinitionProject canceled for " + filePath + " at " + offset);
+            return null;
+        } catch (Throwable t) {
+            LOG.log(java.util.logging.Level.WARNING,
+                    "findTypeDefinitionProject failed for " + filePath + " at offset " + offset, t);
+            return null;
+        }
+    }
+
     private EcjNavigationEngine navEngine() {
         EcjNavigationEngine e = navigationEngine;
         if (e == null) {

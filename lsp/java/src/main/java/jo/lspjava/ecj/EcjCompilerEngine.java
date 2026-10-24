@@ -2132,13 +2132,13 @@ public final class EcjCompilerEngine {
 
             @Override
             public boolean visit(QualifiedNameReference ref, BlockScope s) {
-                consider(ref, ref.binding, null);
+                consider(ref, EcjAst.bindingAuCaret(ref, offset), null);
                 return true;
             }
 
             @Override
             public boolean visit(QualifiedNameReference ref, ClassScope s) {
-                consider(ref, ref.binding, null);
+                consider(ref, EcjAst.bindingAuCaret(ref, offset), null);
                 return true;
             }
 

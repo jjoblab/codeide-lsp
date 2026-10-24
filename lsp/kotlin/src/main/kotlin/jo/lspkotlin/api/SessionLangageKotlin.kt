@@ -381,6 +381,31 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun implementations(uri: String, decalage: Int): List<EmplacementKotlin> = emptyList()
 
     /**
+     * Cibles GO TO « Super » (`textDocument/superDefinition`, ADR
+     * 0210 — méthode LSP personnalisée, miroir du LSP Java) : pour un
+     * MEMBRE au curseur (déclaration outrepassante ou usage résolu),
+     * le même-nommé dans chaque supertype TRANSITIF projet du type
+     * déclarant (libellé `« name  ·  Super »`) ; sinon les supertypes
+     * DIRECTS du type en contexte — une référence de type sous le
+     * curseur, à défaut la classe englobante (libellé
+     * `« Simple  ·  pkg »`). Chaque supertype est résolu par les
+     * IMPORTS du fichier déclarant (preuve FQCN, jamais d'homonymie).
+     *
+     * Conservateur (D3) : supertypes du classpath sans source
+     * exclus ; membre non prouvé ⇒ liste VIDE (l'éditeur ne montre
+     * pas l'option Super, jamais de faux jalon).
+     *
+     * Tolérance de version : défaut VIDE — un pack antérieur à
+     * l'ADR 0210 dégrade honnêtement.
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur.
+     * @return les cibles (URI + plage du nom + libellé picker), triées
+     *         par libellé ; liste VIDE sans preuve.
+     */
+    public fun superDefinition(uri: String, decalage: Int): List<CibleNavigationKotlin> = emptyList()
+
+    /**
      * Indices en ligne d'une plage (`textDocument/inlayHint`, L2 —
      * plan 1.3.0) : noms de paramètres aux appels de la plage
      * (arguments POSITIONNELS seulement — un argument nommé porte déjà

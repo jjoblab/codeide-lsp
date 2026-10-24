@@ -288,17 +288,14 @@ public final class EcjRenameEngine {
 
     /**
      * Binding du DERNIER segment d'un {@link QualifiedNameReference} —
-     * {@code ref.binding} porte le PREMIER segment (variable/type du
-     * qualifier) ; les segments suivants vivent dans
-     * {@code otherBindings} (vérifié empiriquement :
-     * {@code config.timeout} → binding=LocalVariableBinding(config),
-     * otherBindings[0]=FieldBinding(timeout)).
+     * DÉLÈGUE à {@link EcjAst#dernierBinding} (ADR 0209 : la politique
+     * vit UNE fois, partagée par le renommage, le survol/définition
+     * scanUnit et le contexte de navigation — le renommage portait la
+     * preuve empirique : {@code config.timeout} → binding=
+     * LocalVariableBinding(config), otherBindings[0]=FieldBinding(timeout)).
      */
     static Binding lastSegmentBinding(QualifiedNameReference ref) {
-        if (ref.otherBindings != null && ref.otherBindings.length > 0) {
-            return ref.otherBindings[ref.otherBindings.length - 1];
-        }
-        return ref.binding;
+        return EcjAst.dernierBinding(ref);
     }
 
     // ─── Clés structurelles (identité entre unités) ───────────────────
