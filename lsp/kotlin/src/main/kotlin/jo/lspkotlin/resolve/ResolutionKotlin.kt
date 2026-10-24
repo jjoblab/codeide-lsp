@@ -3,6 +3,7 @@ package jo.lspkotlin.resolve
 import jo.lspkotlin.api.MembreJvmKotlin
 import jo.lspkotlin.api.MembresTypeKotlin
 import jo.lspkotlin.api.VueClasspathKotlin
+import jo.lspkotlin.index.AppelableKotlin
 
 /**
  * Résolveur CLASSPATH (K3, LSP_KOTLIN.md §4.1 « resolve ») — le pont
@@ -99,6 +100,16 @@ internal class ResolutionKotlin(
      * cycles coupés, cache plat. Vide (fqcn seul) si la classe ne se
      * lit pas — la complétion membre retombe sur les membres DÉCLARÉS
      * (sous-rapport D3).
+     *
+     * ADR 0205 : les octets d'un maillon sont lus via la variante
+     * aliasée JVM au premier échec (`kotlin.String` est une FICTION du
+     * langage — son bytecode vit sous `java.lang.String`) ; le maillon
+     * de chaîne reste le FQCN DEMANDÉ (rendus et clés de cache
+     * inchangés), seul l'accès aux octets passe par l'alias. Sans ce
+     * sondage, la chaîne s'arrêtait au premier maillon pour String,
+     * Int, Long, Boolean, Comparable — aucune méthode DÉCLARÉE de ces
+     * types ne résolvait (les extensions, elles, passent par
+     * `variantesRecepteur` qui sonde déjà les deux clés).
      */
     internal fun chaineSupertypes(fqcn: String): List<String> {
         cacheSupertypes[fqcn]?.let { return it }
@@ -108,7 +119,7 @@ internal class ResolutionKotlin(
             if (courant == null || courant in vus || profondeur > BORN_PROFONDEUR) return
             vus.add(courant)
             chaine.add(courant)
-            val octets = vue?.octetsClasse(courant) ?: return
+            val octets = octetsClasseAvecAlias(courant) ?: return
             val infos = jo.lspkotlin.classpath.LecteurClassBrut.lire(octets) ?: return
             visiter(infos.superFqcn, profondeur + 1)
             infos.interfaces.forEach { visiter(it, profondeur + 1) }
@@ -119,11 +130,54 @@ internal class ResolutionKotlin(
     }
 
     /**
+     * Octets de classe via la vue — variante aliasée JVM sondée au
+     * premier échec (ADR 0205) : `octetsClasse("kotlin.String")` ne
+     * peut JAMAIS répondre (aucun `.class` ne porte ce nom), la
+     * variante `java.lang.String` oui.
+     */
+    private fun octetsClasseAvecAlias(fqcn: String): ByteArray? =
+        vue?.octetsClasse(fqcn) ?: vue?.octetsClasse(aliasJvmDe(fqcn))
+
+    /** Variante aliasée JVM d'un FQCN (lui-même sans alias connu). */
+    private fun aliasJvmDe(fqcn: String): String =
+        ALIAS_KOTLIN_JVM[fqcn] ?: ALIAS_JVM_KOTLIN[fqcn] ?: fqcn
+
+    /**
+     * Appelable indexé EN PORTÉE du fichier (ADR 0203) — paquet
+     * courant, import EXACT du FQCN (`kotlin.math.PI`), JOKER du
+     * paquet, ou paquet PAR DÉFAUT de Kotlin (JVM). Prédicat
+     * PARTAGÉ : le survol d'appelable en portée
+     * (`InterrogationsSymboles.estEnPortee`) et la voie 6 de
+     * `ResolutionReferences.estResolu` (diagnostic `kt.unresolved` +
+     * quick-fix d'import) portent la MÊME sémantique de visibilité —
+     * sans lui, `PI` sans import échappait au diagnostic alors que
+     * la complétion, elle, exigeait l'import.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque
+     * règle de portée est une ISSUE (paquet courant, import exact,
+     * joker, défaut Kotlin).
+     */
+    @Suppress("ReturnCount")
+    internal fun appelableEnPortee(
+        appelable: AppelableKotlin,
+        contexteNom: ContexteNom,
+    ): Boolean {
+        if (appelable.paquet == contexteNom.paquet) return true
+        if (contexteNom.importsParNom.values.any { it == "${appelable.paquet}.${appelable.nom}" }) return true
+        if (appelable.paquet in contexteNom.importsJoker) return true
+        if (appelable.paquet in PAQUETS_DEFAUT_KOTLIN) return true
+        return false
+    }
+
+    /**
      * Membres DÉCLARÉS d'un FQCN (premier porteur du classpath) —
      * null si introuvable (la vue est la source de vérité, ADR 0111
-     * §5 `java.members`).
+     * §5 `java.members`). Variante aliasée JVM sondée au premier
+     * échec (ADR 0205) : les membres de `kotlin.String` vivent sous
+     * `java.lang.String`.
      */
-    internal fun membresDe(fqcn: String): MembresTypeKotlin? = vue?.membres(fqcn)
+    internal fun membresDe(fqcn: String): MembresTypeKotlin? =
+        vue?.membres(fqcn) ?: vue?.membres(aliasJvmDe(fqcn))
 
     /**
      * Membres d'un membre par NOM dans la chaîne de supertypes —
@@ -270,6 +324,26 @@ internal class ResolutionKotlin(
     private companion object {
         /** Profondeur maximale de la chaîne de supertypes. */
         private const val BORN_PROFONDEUR: Int = 6
+
+        /** Paquets importés PAR DÉFAUT par Kotlin sur JVM (ADR 0203 —
+         *  https://kotlinlang.org/docs/packages.html#default-imports) :
+         *  un appelable top-level de ces paquets résout un nom NU sans
+         *  import écrit (println, emptyList, trim…). Partagé par le
+         *  survol en portée et la voie 6 de `kt.unresolved` (prédicat
+         *  `appelableEnPortee`). */
+        private val PAQUETS_DEFAUT_KOTLIN: Set<String> =
+            setOf(
+                "kotlin",
+                "kotlin.annotation",
+                "kotlin.collections",
+                "kotlin.comparisons",
+                "kotlin.io",
+                "kotlin.ranges",
+                "kotlin.sequences",
+                "kotlin.text",
+                "kotlin.jvm",
+                "java.lang",
+            )
 
         /** Importants par défaut du Kotlin (JVM) — noms usuels.
          *  Source : https://kotlinlang.org/docs/packages.html#default-imports

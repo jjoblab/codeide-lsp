@@ -215,9 +215,11 @@ internal object CompletionKotlin {
         val fqcn = typeValeur ?: typeStatique ?: return emptyList()
 
         val propositions = mutableListOf<PropositionCompletionKotlin>()
-        // Membres déclarés le long de la chaîne de supertypes.
+        // Membres déclarés le long de la chaîne de supertypes — via
+        // membresDe (ADR 0205 : les membres d'un maillon ALIASÉ, p.ex.
+        // `kotlin.String`, se lisent sous la variante JVM `java.lang.String`).
         for (courant in contexte.resolution.chaineSupertypes(fqcn)) {
-            val membres = contexte.vue?.membres(courant) ?: continue
+            val membres = contexte.resolution.membresDe(courant) ?: continue
             for (champ in membres.champs) {
                 if (!estOffrable(champ.nom, champ.drapeaux, statiqueSeul = typeStatique != null)) continue
                 if (!champ.nom.startsWith(prefixe)) continue
@@ -338,7 +340,7 @@ Drapeau JVM `protected` (membres offrables). */
             )
         if (recepteurWith != null) {
             for (courant in contexte.resolution.chaineSupertypes(recepteurWith)) {
-                val membres = contexte.vue?.membres(courant) ?: continue
+                val membres = contexte.resolution.membresDe(courant) ?: continue
                 for (champ in membres.champs) {
                     if (!estOffrable(champ.nom, champ.drapeaux, statiqueSeul = false)) continue
                     if (!champ.nom.startsWith(prefixe)) continue

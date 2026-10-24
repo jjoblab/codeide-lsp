@@ -148,12 +148,36 @@ internal object OccurrencesKotlin {
             }
         // 3. Déclarations du projet homonymes — désambiguïsées
         //    (même paquet d'abord ; ambiguë = refus conservateur).
+        //    ADR 0204 : le document COURANT vit son arbre propre ; la
+        //    copie DISQUE du même fichier (URI distincte — convention de
+        //    test fixture://, normalisation d'URI en production) porte
+        //    la MÊME plage : c'est UNE cible, pas une ambiguïté. La
+        //    candidate VIVE domine (l'arbre frais est la source de
+        //    vérité, miroir de la branche plage d'occurrenceJeton) ;
+        //    deux plages DISTINCTES restent deux candidates (homonymes
+        //    réels — ambiguës).
+        val vivantes =
+            contexte.declarationsProjet.filter { declaration ->
+                declaration.nom == nom &&
+                    declaration.uri == uri &&
+                    declaration.genre != GenreDeclaration.PARAMETRE &&
+                    declaration.genre != GenreDeclaration.LOCALE
+            }
         val candidates =
             contexte.declarationsProjet.filter { declaration ->
                 declaration.nom == nom &&
                     declaration.uri.isNotBlank() &&
                     declaration.genre != GenreDeclaration.PARAMETRE &&
                     declaration.genre != GenreDeclaration.LOCALE
+            }.filter { declaration ->
+                // Copie disque d'une candidate VIVE (même nom, même
+                // plage) : périmée, écartée.
+                declaration.uri == uri ||
+                    vivantes.none { vivante ->
+                        vivante.debutNom == declaration.debutNom &&
+                            vivante.finNom == declaration.finNom &&
+                            vivante.nom == declaration.nom
+                    }
             }
         return cibleDesambiguee(candidates, contexte.contexteNom.paquet)
     }
@@ -182,9 +206,23 @@ internal object OccurrencesKotlin {
             val jeton = declaration.nomJeton() ?: continue
             if (jeton.debut > decalage || decalage > jeton.fin) continue
             val regime = regimeDe(chaine, profondeur, contexte.contexteNom.paquet)
-            val genre = genreVif(declaration)
+            val genre =
+                when {
+                    regime is RegimePortee.LOCALE -> GenreDeclaration.LOCALE
+                    // ADR 0206 : paramètre-propriété du constructeur
+                    // primaire — le classement PARAMÈTRE (file-local)
+                    // laissait les usages non qualifiés SANS preuve
+                    // (surlignage/références/renommage incomplets sur la
+                    // forme la plus idiomatique du langage). Sous une
+                    // CLASSE, `val`/`var` en fait une PROPRIÉTÉ membre :
+                    // la preuve passe par occurrenceMembreEnglobant.
+                    regime is RegimePortee.MEMBRE &&
+                        declaration is jo.lspkotlin.parse.kt.KtParameter &&
+                        declaration.estPropriete() -> GenreDeclaration.PROPRIETE
+                    else -> genreVif(declaration)
+                }
             return DeclarationProjet(
-                genre = if (regime is RegimePortee.LOCALE) GenreDeclaration.LOCALE else genre,
+                genre = genre,
                 nom = jeton.texte.toString(),
                 uri = uri,
                 debutNom = jeton.debut,
@@ -603,12 +641,14 @@ internal object OccurrencesKotlin {
         if (preuve.contexte.contexteNom.importsParNom[cible.nom] == fqcnCible) {
             return Occurrence(jeton.debut, jeton.fin, false)
         }
-        // Le fichier D'OCCURRENCE déclare son propre top-level homonyme :
+        // Le fichier D'OCCURRENCE déclare un top-level homonyme :
         // la référence résout vers LUI (ou est ambiguë) — pas la cible.
         // PAR FICHIER (pas partout dans le projet : le scan porte toutes
-        // les déclarations, y compris celle de la cible elle-même).
+        // les déclarations, y compris celle de la cible elle-même — la
+        // cible et sa copie scan ne sont JAMAIS des homonymes : identité
+        // uri + plage du nom, ADR 0204).
         if (preuve.contexte.declarations.any { declaration ->
-                estHomonymeTopLevel(declaration, cible.nom, uri)
+                estHomonymeTopLevel(declaration, cible, uri)
             }
         ) {
             return null
@@ -621,16 +661,24 @@ internal object OccurrencesKotlin {
         return null
     }
 
-    /** Vrai si la déclaration est un top-level homonyme DU FICHIER [uri]. */
+    /** Vrai si la déclaration est un top-level homonyme DU FICHIER [uri]
+     * DISTINCT de la cible — la cible elle-même et sa copie du scan
+     * portent la même uri et la même plage de nom : elles ne comptent
+     * pas (ADR 0204 : sans cette exclusion, TOUT usage same-file d'un
+     * appelable top-level était rejeté — rename produisait du code
+     * cassé, déclaration éditée mais usages du fichier déclarant non). */
     private fun estHomonymeTopLevel(
         declaration: DeclarationProjet,
-        nom: String,
+        cible: Cible,
         uri: String,
     ): Boolean =
-        declaration.nom == nom &&
+        declaration.nom == cible.nom &&
             declaration.conteneur == null &&
             declaration.uri == uri &&
-            !estLocaleOuParam(declaration)
+            !estLocaleOuParam(declaration) &&
+            !(declaration.uri == cible.uri &&
+                declaration.debutNom == cible.debutNom &&
+                declaration.finNom == cible.finNom)
 
     /** Vrai si la déclaration est une LOCALE ou un PARAMÈTRE. */
     private fun estLocaleOuParam(declaration: DeclarationProjet): Boolean =

@@ -270,6 +270,99 @@ class SessionLangageKotlinOccurrencesTest {
         assertEquals(2, surlignages.size)
     }
 
+    // ── Références : appelables top-level du MÊME fichier (ADR 0204) ───
+
+    @Test
+    fun `references fonction top-level - usages du MEME fichier déclarant (ADR 0204)`() {
+        val texte =
+            """
+            fun triple(x: Int): Int = x * 3
+
+            fun essai(): Int = triple(2) + triple(3)
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        // Sur la DÉCLARATION : la déclaration + les DEUX usages du même
+        // fichier — le garde d'homonymie ne confond plus la cible avec
+        // un homonyme (elle-même).
+        val references =
+            session.references("fixture://Main.kt", decalageDe(texte, "triple"), inclureDeclaration = true)
+        assertEquals(3, references.size)
+        assertTrue(references.all { it.uri == "fixture://Main.kt" })
+        // En ordre du document : déclaration, puis les deux usages.
+        assertTrue(references.zipWithNext().all { (a, b) -> a.debut < b.debut })
+        // Curseur sur un USAGE : mêmes occurrences.
+        val depuisUsage =
+            session.references("fixture://Main.kt", decalageDe(texte, "triple", numero = 1))
+        assertEquals(2, depuisUsage.size)
+        // documentHighlight : le surlignage couvre déclaration + usages.
+        val surlignages =
+            session.surlignagesDocument("fixture://Main.kt", decalageDe(texte, "triple"))
+        assertEquals(3, surlignages.size)
+        assertEquals(GenreSurlignageKotlin.ECRITURE, surlignages.first().genre)
+        assertTrue(surlignages.drop(1).all { it.genre == GenreSurlignageKotlin.LECTURE })
+    }
+
+    @Test
+    fun `renommage same-file - déclaration ET usages du fichier déclarant édités (ADR 0204)`() {
+        val texte =
+            """
+            fun triple(x: Int): Int = x * 3
+
+            fun essai(): Int = triple(2) + triple(3)
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        // AVANT le correctif : 1 occurrence (déclaration seule) — le
+        // renommage produisait du code CASSÉ (usages épargnés).
+        val occurrences = session.renommage("fixture://Main.kt", decalageDe(texte, "triple"))
+        assertEquals("le renommage doit couvrir déclaration + usages", 3, occurrences.size)
+        assertTrue(occurrences.all { it.uri == "fixture://Main.kt" })
+    }
+
+    @Test
+    fun `references propriété de constructeur - usage non qualifié prouvé (ADR 0206)`() {
+        val texte =
+            """
+            class Boite(private val contenu: Int) {
+                fun lire(): Int = contenu
+            }
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        // Le paramètre-propriété est DEUX choses (paramètre + PROPRIÉTÉ
+        // membre) : l'usage non qualifié dans lire() prouve la cible.
+        val references =
+            session.references("fixture://Main.kt", decalageDe(texte, "contenu"), inclureDeclaration = true)
+        assertEquals(2, references.size)
+        assertTrue(references.all { it.uri == "fixture://Main.kt" })
+        assertTrue(references.zipWithNext().all { (a, b) -> a.debut < b.debut })
+        // Même preuve depuis l'USAGE.
+        val depuisUsage =
+            session.references("fixture://Main.kt", decalageDe(texte, "contenu", numero = 1))
+        assertEquals(1, depuisUsage.size)
+        // Et le surlignage document (miroir S8 : propriété de corps).
+        val surlignages =
+            session.surlignagesDocument("fixture://Main.kt", decalageDe(texte, "contenu"))
+        assertEquals(2, surlignages.size)
+        assertEquals(GenreSurlignageKotlin.ECRITURE, surlignages.first().genre)
+    }
+
+    @Test
+    fun `renommage propriété de constructeur - déclaration ET usage édités (ADR 0206)`() {
+        val texte =
+            """
+            class Boite(private val contenu: Int) {
+                fun lire(): Int = contenu
+            }
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        val occurrences = session.renommage("fixture://Main.kt", decalageDe(texte, "contenu"))
+        assertEquals("renommage complet du paramètre-propriété", 2, occurrences.size)
+        assertTrue(occurrences.all { it.uri == "fixture://Main.kt" })
+    }
+
     // ── prepareRename / renommage ─────────────────────────────────────
 
     @Test

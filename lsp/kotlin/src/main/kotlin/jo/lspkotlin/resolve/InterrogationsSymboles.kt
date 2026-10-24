@@ -50,10 +50,15 @@ internal object InterrogationsSymboles {
      * paramètre, membre, premier niveau, projet) ; membre qualifié
      * (propriétaire classpath) ; type (FQCN) ; appelable de premier
      * niveau en portée.
+     *
+     * [uri] identifie le document COURANT (ADR 0207 : la KDoc de la
+     * déclaration élue accompagne AUSSI les sites d'usage quand elle
+     * vit dans ce document — l'arbre vif est déjà en mémoire).
      */
     internal fun survol(
         racine: NoeudSyntaxique,
         decalage: Int,
+        uri: String,
         contexte: Contexte,
     ): ContenuSurvoleKotlin? {
         val jeton = identifiantA(racine, decalage) ?: return null
@@ -66,7 +71,7 @@ internal object InterrogationsSymboles {
         return survolNomDeclare(racine, decalage, contexte)
             ?: survolLocale(nom, racine, decalage)
             ?: survolMembreQualifie(nom, chaine, decalage, contexte)
-            ?: survolDeclarationProjet(nom, contexte)
+            ?: survolDeclarationProjet(nom, racine, uri, contexte)
             ?: survolTypeClasspath(nom, contexte)
             ?: survolAppelablePortee(nom, contexte)
     }
@@ -136,18 +141,69 @@ internal object InterrogationsSymboles {
                 )
             }
 
-    /** Survol d'une DÉCLARATION du projet portant ce nom (première). */
+    /** Survol d'une DÉCLARATION du projet portant ce nom (première) —
+     * ADR 0207 : quand la déclaration élue vit dans le document
+     * COURANT, sa KDoc VIVE (recherche par plage du nom dans l'arbre
+     * en mémoire — aucun re-parse) accompagne la signature aux sites
+     * d'USAGE, miroir du survol du nom déclaré ; les déclarations du
+     * SCAN (autres fichiers) gardent la signature seule (choix K3
+     * documenté — l'option 2 de l'ADR rouvrira le dossier).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — la chaîne
+     * élue → rendu → KDoc conditionnelle est une ISSUE par étape,
+     * même patron que le reste de la chaîne de survol. */
+    @Suppress("ReturnCount")
     private fun survolDeclarationProjet(
         nom: String,
+        racine: NoeudSyntaxique,
+        uri: String,
         contexte: Contexte,
-    ): ContenuSurvoleKotlin? =
-        contexte.declarationsProjet
-            .firstOrNull { declaration ->
-                declaration.nom == nom &&
-                    declaration.genre != GenreDeclaration.PARAMETRE &&
-                    declaration.genre != GenreDeclaration.LOCALE
+    ): ContenuSurvoleKotlin? {
+        val elue =
+            contexte.declarationsProjet
+                .firstOrNull { declaration ->
+                    declaration.nom == nom &&
+                        declaration.genre != GenreDeclaration.PARAMETRE &&
+                        declaration.genre != GenreDeclaration.LOCALE
+                } ?: return null
+        val base = survolDeclaration(elue) ?: return null
+        // KDoc UNIQUEMENT pour la déclaration du document courant —
+        // l'arbre vif est déjà en mémoire (choix K3 documenté pour le
+        // scan : aucun re-parse de fichier tiers).
+        if (elue.uri != uri) return base
+        val documentation =
+            declarationViveAPlage(racine, elue)?.let { declaration ->
+                DocumentationKotlin.kdocDe(declaration)
             }
-            ?.let { declaration -> survolDeclaration(declaration) }
+        return base.copy(documentation = documentation)
+    }
+
+    /**
+     * Déclaration VIVE du document courant portant EXACTEMENT la
+     * plage du nom de [elue] (recherche à début du nom — la plus
+     * profonde gagne, plage ET nom vérifiés : jamais de jumelage
+     * approximatif).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount/
+     * LoopWithTooManyJumpStatements — chaque garde du parcours (pas
+     * une déclaration, plage distincte, nom distinct) est une ISSUE,
+     * même patron que declarationViveAuCurseur.
+     */
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
+    private fun declarationViveAPlage(
+        racine: NoeudSyntaxique,
+        elue: DeclarationProjet,
+    ): KtDeclaration? {
+        val chaine = chaineAncetresA(racine, elue.debutNom)
+        for (profondeur in chaine.indices.reversed()) {
+            val declaration = KtElement.depuis(chaine[profondeur]) as? KtDeclaration ?: continue
+            val jeton = declaration.nomJeton() ?: continue
+            if (jeton.debut != elue.debutNom || jeton.fin != elue.finNom) continue
+            if (jeton.texte.toString() != elue.nom) continue
+            return declaration
+        }
+        return null
+    }
 
     /** Survol d'un TYPE classpath (FQCN, vérifié contre la vue). */
     private fun survolTypeClasspath(
@@ -453,36 +509,16 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
             GenreDeclaration.PARAMETRE, GenreDeclaration.LOCALE, GenreDeclaration.ENTREE_ENUM -> null
         }
 
-    /** Appelable de premier niveau en PORTÉE (paquet importé/joker/courant).
- *
+    /**
      * Appelable de premier niveau en PORTÉE (paquet importé/joker/courant).
      *
-     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque règle
-     * de portée est une ISSUE (paquet courant, import exact, joker,
-     * défaut Kotlin, hors portée).
+     * Délègue au prédicat PARTAGÉ `ResolutionKotlin.appelableEnPortee`
+     * (ADR 0203) : le survol et la voie 6 de `kt.unresolved` portent la
+     * MÊME sémantique de visibilité (paquet courant, import exact,
+     * joker, paquets par défaut de Kotlin JVM).
      */
-    @Suppress("ReturnCount")
     private fun estEnPortee(
         appelable: jo.lspkotlin.index.AppelableKotlin,
         contexte: Contexte,
-    ): Boolean {
-        if (appelable.paquet == contexte.contexteNom.paquet) return true
-        if (contexte.contexteNom.importsParNom.values.any { it == "${appelable.paquet}.${appelable.nom}" }) return true
-        if (contexte.contexteNom.importsJoker.any { it == appelable.paquet }) return true
-        // Import par défaut : paquets kotlin usuels toujours en portée.
-        if (appelable.paquet in PAQUETS_DEFAUT) return true
-        return false
-    }
-
-    private val PAQUETS_DEFAUT: Set<String> =
-        setOf(
-            "kotlin",
-            "kotlin.annotation",
-            "kotlin.collections",
-            "kotlin.comparisons",
-            "kotlin.io",
-            "kotlin.ranges",
-            "kotlin.sequences",
-            "kotlin.text",
-        )
+    ): Boolean = contexte.resolution.appelableEnPortee(appelable, contexte.contexteNom)
 }

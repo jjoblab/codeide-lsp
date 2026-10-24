@@ -1,5 +1,74 @@
 # Changelog — codeide-lsp
 
+## 1.6.0 (2026-10-24)
+
+- **Audit E2E du serveur LSP Kotlin (harnais stdio JSON-RPC, classpath réel
+  stdlib 2.4.0 + android.jar 37.2) — 5 découvertes corrigées (ADR 0203–0207)**
+  : les 18 capacités déclarées sont toutes confirmées servies au fil du
+  transport réel ; le harnais d'audit (68 scénarios) est COMMITTÉ dans
+  `lsp/host/src/test/kotlin/jo/codeide/lsp/host/harnais/` et roule en CI
+  comme garde de non-regression E2E.
+  - **ADR 0204 — occurrences : la cible n'est plus son propre homonyme**
+    (P1, le plus grave) : le garde « homonyme top-level local » de
+    `occurrenceTopLevel` rejetait TOUT usage same-file d'un appelable
+    top-level (la cible ELLE-MÊME satisfaisait le prédicat) — `rename`
+    produisait du code CASSÉ (déclaration éditée, usages du fichier
+    déclarant épargnés). Le garde reçoit la cible et exclut son identité
+    (uri + plage du nom) ; la voie 3 de `cibleAuCurseur` dédoublonne par
+    le même fait la copie DISQUE du document ouvert (URI distincte) qui
+    créait une fausse ambiguïté au curseur d'usage.
+  - **ADR 0205 — l'alias JVM↔Kotlin est sondé dans la chaîne de membres**
+    (P1) : `kotlin.String` est une FICTION du langage (aucun `.class` ne
+    porte ce nom — le bytecode vit sous `java.lang.String`) ;
+    `chaineSupertypes`/`membresDe` retentent la variante aliasée au
+    premier échec (le maillon de chaîne et les rendus gardent le FQCN
+    KOTLIN demandé, seul le chargement des octets passe par l'alias).
+    `s.length`, `(1).toString()`, `listOf(...).toString()` résolvent au
+    survol ET à la complétion membre (la complétion passe par
+    `membresDe`, plus jamais la vue nue) ; effet de bord positif : le
+    survol du TYPE `String` reprend la voie `survolTypeClasspath`
+    (`class kotlin.String`, plus la fonction stdlib homonyme). Sont
+    couverts String, Int, Long, Boolean, Comparable — les types les plus
+    sollicités du langage.
+  - **ADR 0203 — `kt.unresolved` exige la preuve d'import pour les
+    appelables du classpath (voie 6)** (P1) : un nom nu ne résout plus
+    par la SEULE présence dans l'index — le nouveau prédicat PARTAGÉ
+    `ResolutionKotlin.appelableEnPortee` (paquet courant, import exact,
+    joker, paquets par défaut de Kotlin JVM — catalogue complet
+    `kotlin.jvm`/`java.lang` compris) sert la voie 6 de
+    `ResolutionReferences.estResolu` ET le survol d'appelable en portée
+    (`InterrogationsSymboles.estEnPortee` délègue) : `PI`/`sqrt` sans
+    import deviennent `kt.unresolved` (parité kotlinc ET parité avec la
+    complétion, qui exigeait déjà l'import) ; `println`/`emptyList`
+    (paquets par défaut) restent silencieux — les extensions homonymes
+    restent sondées (corps de `with`).
+  - **ADR 0206 — les propriétés de constructeur primaire sont des
+    occurrences de plein droit** (P2) : le paramètre-propriété est DEUX
+    choses (paramètre pour l'arité, PROPRIÉTÉ membre pour les
+    occurrences) ; le scan (`SymbolesProjet`) émet l'entrée PROPRIÉTÉ
+    supplémentaire (conteneur qualifié, plage du nom — la liste signée
+    d'arité est conservée) et la lecture vive classe `val`/`var` sous
+    classe englobante en PROPRIÉTÉ (`KtParameter.estPropriete`).
+    Surlignage, références et renommage couvrent enfin
+    `class Vue(private val ctx: Context)` — la forme la plus
+    idiomatique de Kotlin/Android ; effet de bord positif : l'usage non
+    qualifié ne peut plus produire de faux `kt.unresolved` (voie 4).
+  - **ADR 0207 — la KDoc accompagne les usages du document courant**
+    (P3) : `survolDeclarationProjet` reçoit l'uri du document courant ;
+    quand la déclaration élue vit dans CE document, sa KDoc VIVE
+    (recherche par plage du nom dans l'arbre en mémoire — aucun
+    re-parse) accompagne la signature aux sites d'usage, miroir du
+    survol du nom déclaré ; les déclarations du SCAN (autres fichiers)
+    gardent la signature seule (choix K3 documenté — l'option 2 de
+    l'ADR rouvrira le dossier cross-fichier).
+  - +10 tests moteur (K3/K4/Occurrences : stdlib RÉEL en index pour la
+    voie 6, vue factice portée à la vérité JVM pour l'alias) ; les 12
+    sondes différentielles du harnais (S1–S12) verrouillent le
+    comportement CORRIGÉ sur le transport réel ; baseline de parité du
+    corpus roulée délibérément (fichiers=245 — harnais committé).
+    Chaîne locale verte : spotless/detekt/tests des modules touchés
+    (moteur 236, hôte 209).
+
 ## 1.5.0 (2026-10-24)
 
 - **Previews Compose — la découverte remonte la LIGNE de l'annotation**

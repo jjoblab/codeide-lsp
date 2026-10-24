@@ -2,6 +2,8 @@ package jo.lspkotlin.session
 
 import jo.lspkotlin.api.CodesDiagnosticsKotlin
 import jo.lspkotlin.api.ClasspathKotlin
+import jo.lspkotlin.api.EntreeClasspathKotlin
+import jo.lspkotlin.api.KindEntreeKotlin
 import jo.lspkotlin.api.SeveriteKotlin
 import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.VueClasspathKotlin
@@ -13,6 +15,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.io.File
 
 /**
  * Tests du contrat de session K4 (LSP_KOTLIN.md §5, K4 « inférence
@@ -27,10 +30,17 @@ import java.io.DataOutputStream
  *    consommateur projet (fonction, SAM d'interface, initialiseur
  *    typé), `it` implicite compris ;
  *  - DIAGNOSTICS SÉMANTIQUES : un test POSITIF et une garde de
- *    SOUS-RAPPORT par code du catalogue K4 ;
+ *    SOUS-RAPPORT par code du catalogue K4 — ADR 0203 : les appelables
+ *    indexés exigent la preuve d'import/paquet par défaut (index stdlib
+ *    réel, miroir du serveur de production) ;
  *  - QUICK-FIXES : importsCandidats rend les FQCN du classpath portant
  *    exactement le nom non résolu, déjà importés exclus.
+ *
+ * Exemption detekt ciblée (règle 16) : LargeClass — UN test POSITIF +
+ * sa garde par code du catalogue K4 (le contrat COMPLET d'un niveau du
+ * modèle), pas un agrégat hétérogène.
  */
+@Suppress("LargeClass")
 class SessionLangageKotlinK4Test {
     @JvmField
     @Rule
@@ -56,6 +66,32 @@ class SessionLangageKotlinK4Test {
     /** Session SANS classpath (régime dégradé — sous-rapport D3). */
     private fun sessionNue(): jo.lspkotlin.api.SessionLangageKotlin =
         ServiceMoteurLangageKotlin.unique().creerSession()
+
+    /** Session nourrie du jar kotlin-stdlib RÉEL du classpath de test
+     *  (ADR 0203 : la voie 6 exige l'INDEX d'appelables — `kotlin.math.PI`
+     *  et compagnons y vivent, miroir du serveur de production). */
+    private fun sessionAvecStdlib(): jo.lspkotlin.api.SessionLangageKotlin {
+        val session = ServiceMoteurLangageKotlin.unique().creerSession()
+        session.definirClasspath(
+            ClasspathKotlin(
+                entrees =
+                    listOf(
+                        EntreeClasspathKotlin(
+                            KindEntreeKotlin.JAR,
+                            File(
+                                kotlin.jvm.internal.Intrinsics::class.java.protectionDomain
+                                    .codeSource.location.toURI(),
+                            ).path,
+                            "test:stdlib",
+                        ),
+                    ),
+                vue = vue,
+                racinesSources = emptyList(),
+                dossierIndex = null,
+            ),
+        )
+        return session
+    }
 
     // ── Smart casts positionnels (la complétion membre voit le cast) ───
 
@@ -383,6 +419,62 @@ class SessionLangageKotlinK4Test {
             .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
         assertEquals(1, nonResolus.size)
         assertTrue(nonResolus.single().message.contains("ChoseIntrouvable"))
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - appelable du classpath sans import, signale (ADR 0203)`() {
+        val session = sessionAvecStdlib()
+        // `kotlin.math` n'est PAS un paquet par défaut de Kotlin : `PI`
+        // sans import est une erreur GARANTIE par kotlinc — la voie 6
+        // doit exiger la preuve de visibilité (paquet courant, import
+        // exact, joker, paquets par défaut), pas la seule présence dans
+        // l'index.
+        val source = "fun f(): Double {\n  return PI\n}\n"
+        val uri = "file:///math-sans-import.kt"
+        session.ouvrirDocument(uri, source)
+        val nonResolus = session.diagnostics(uri)
+            .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertEquals(1, nonResolus.size)
+        assertEquals(source.indexOf("PI"), nonResolus.single().debut)
+        assertTrue(nonResolus.single().message.contains("PI"))
+        // Le quick-fix d'import reste branché sur la VUE (ADR 0203 :
+        // types du classpath — inchangé) ; pour les APPELABLES indexés,
+        // c'est la COMPLÉTION qui porte l'auto-import (fqnImport —
+        // l'audit l'a éprouvée : elle propose PI avec kotlin.math.PI).
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - appelable du classpath importe, jamais signale (garde ADR 0203)`() {
+        val session = sessionAvecStdlib()
+        // La preuve accepte l'import EXACT : le même code, importé, ne
+        // signale RIEN (kotlinc comme le moteur).
+        val source = "import kotlin.math.PI\n\nfun f(): Double {\n  return PI\n}\n"
+        val uri = "file:///math-importe.kt"
+        session.ouvrirDocument(uri, source)
+        val nonResolus = session.diagnostics(uri)
+            .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertTrue("import exact : rien à signaler — obtenu : ${nonResolus.map { it.message }}", nonResolus.isEmpty())
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - appelables des paquets par defaut, jamais signales (garde ADR 0203)`() {
+        val session = sessionAvecStdlib()
+        // `println` (kotlin.io) et `emptyList` (kotlin.collections) vivent
+        // dans l'index réel SANS import écrit : les paquets par défaut
+        // les gardent en portée — un `kt.unresolved` ici serait un faux
+        // positif (D3 : le diagnostic ment).
+        val source = "fun demo() {\n  println(\"x\")\n  val l = emptyList<String>()\n}\n"
+        val uri = "file:///defauts-appelables.kt"
+        session.ouvrirDocument(uri, source)
+        val nonResolus = session.diagnostics(uri)
+            .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertTrue(
+            "paquets par défaut : zéro faux unresolved — obtenu : ${nonResolus.map { it.message }}",
+            nonResolus.isEmpty(),
+        )
         session.close()
     }
 

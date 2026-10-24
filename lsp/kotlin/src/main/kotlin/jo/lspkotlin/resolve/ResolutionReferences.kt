@@ -16,7 +16,10 @@ import jo.lspkotlin.parse.kt.KtFile
  *  4. déclarations du PROJET (scan — tous genres) ;
  *  5. classes : nom écrit résolvable (imports, paquet courant, imports
  *     par défaut de Kotlin) ou classe homonyme du projet ;
- *  6. appelables de premier niveau du CLASSPATH (index Kotlin, `println`…).
+ *  6. appelables de premier niveau du CLASSPATH **en portée du
+ *     fichier** (index Kotlin, `println`… — ADR 0203 : paquet courant,
+ *     import exact, joker ou paquet par défaut ; le prédicat est
+ *     partagé avec le survol d'appelable en portée).
  *
  * Conservateur (D3) : une voie qui réussit suffit — on ne distingue pas
  * les raisons d'échec, l'appelant tranche (diagnostic ou candidat).
@@ -67,8 +70,17 @@ internal object ResolutionReferences {
         // 5. Classes : nom écrit résolvable ou classe homonyme du projet.
         if (resolution.fqcnDuNomEcrit(nom, contexteNom) != null) return true
         if (contexteNom.classesProjet.values.any { it.endsWith(".$nom") }) return true
-        // 6. Appelables de premier niveau du classpath (println…).
-        if (index?.topParNom(nom)?.isNotEmpty() == true) return true
+        // 6. Appelables de premier niveau du CLASSPATH (println…) —
+        //    EN PORTÉE du fichier (ADR 0203) : paquet courant, import
+        //    exact, joker, ou paquet par défaut de Kotlin. Sans la
+        //    preuve de visibilité, TOUT appelable indexé résolvait un
+        //    nom nu (`PI`/`sqrt` sans import passaient sous silence le
+        //    diagnostic que kotlinc signale) ; le prédicat est le MÊME
+        //    que celui du survol d'appelable en portée — les extensions
+        //    homonymes restent sondées (corps de `with` : un nom nu y
+        //    résout via l'extension importée du récepteur implicite).
+        val appelablesPortee = index?.topParNom(nom).orEmpty()
+        if (appelablesPortee.any { appelable -> resolution.appelableEnPortee(appelable, contexteNom) }) return true
         return false
     }
 }

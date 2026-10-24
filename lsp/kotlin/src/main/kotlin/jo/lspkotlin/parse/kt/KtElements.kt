@@ -338,6 +338,17 @@ public class KtParameter(
      * DEUX formes sont sondées.
      */
     public fun aVararg(): Boolean = contientType(noeud, KtTokens.VARARG_MODIFIER)
+
+    /**
+     * Le paramètre DÉCLARE UNE PROPRIÉTÉ (`val`/`var` — constructeur
+     * primaire, ADR 0206) : le paramètre-propriété est DEUX choses en
+     * sémantique Kotlin — un paramètre (arité, portée du constructeur)
+     * et une PROPRIÉTÉ membre de la classe (occurrences, complétion
+     * membre). Jeton `val`/`var` dans le sous-arbre, les deux formes
+     * de reconstruction sondées comme `aVararg`.
+     */
+    public fun estPropriete(): Boolean =
+        contientType(noeud, KtTokens.VAL_KEYWORD) || contientType(noeud, KtTokens.VAR_KEYWORD)
 }
 
 /**

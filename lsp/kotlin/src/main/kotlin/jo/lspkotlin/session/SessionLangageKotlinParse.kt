@@ -198,6 +198,7 @@ internal class SessionLangageKotlinParse(
             InterrogationsSymboles.survol(
                 document.arbre.racine,
                 decalage,
+                uri,
                 contexteInterrogations(document, uri),
             )
         }

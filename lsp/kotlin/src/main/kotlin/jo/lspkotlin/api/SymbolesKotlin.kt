@@ -81,10 +81,12 @@ public enum class GenreCompletionKotlin {
  *           sections libres + tags `@param`/`@return`… en texte
  *           lisible, extrait du commentaire DOC_COMMENT qui précède
  *           la déclaration, parsé par le KDocParser vendoré) ; `null`
- *           quand la déclaration n'a pas de KDoc (ou que la cible
- *           n'est pas du document courant — les déclarations du SCAN
- *           gardent le survol signature seule : re-parser un fichier
- *           tiers pour son doc n'est pas un coût K3, choix documenté).
+ *           quand la déclaration n'a pas de KDoc. ADR 0207 : la KDoc
+ *           accompagne AUSSI les sites d'usage quand la déclaration
+ *           vit dans le document courant (arbre vif, aucun re-parse) ;
+ *           les déclarations du SCAN (autres fichiers) gardent le
+ *           survol signature seule — re-parser un fichier tiers pour
+ *           son doc n'est pas un coût K3, choix documenté.
  */
 public data class ContenuSurvoleKotlin(
     public val valeur: String,

@@ -11,6 +11,7 @@ import jo.lspkotlin.api.ServiceMoteurLangageKotlin
 import jo.lspkotlin.api.VueClasspathKotlin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -64,6 +65,13 @@ class SessionLangageKotlinK3Test {
             ).path,
             "test:stdlib",
         )
+
+    /** Racine source temporaire contenant UN fichier [contenu] (Biblio.kt). */
+    private fun racineTemporaireAvec(contenu: String): File {
+        val racine = dossierTemporaire.newFolder("src")
+        File(racine, "Biblio.kt").writeText(contenu)
+        return racine
+    }
 
     // ── Complétion de noms ─────────────────────────────────────────────
 
@@ -250,6 +258,84 @@ class SessionLangageKotlinK3Test {
         session.close()
     }
 
+    @Test
+    fun `survol - membre déclaré sur récepteur kotlin String via l'alias JVM (ADR 0205)`() {
+        val session = session()
+        // La vue factice ne porte AUCUNE classe `kotlin.String` (miroir
+        // du classpath réel : le bytecode vit sous java.lang.String) —
+        // sans le sondage d'alias dans chaineSupertypes/membresDe, le
+        // maillon ne se lit jamais et le survol rend null.
+        val source =
+            """
+            fun demo(s: String): Int {
+                return s.length
+            }
+            """.trimIndent().replace("    ", "  ")
+        val uri = "file:///alias-jvm.kt"
+        session.ouvrirDocument(uri, source)
+        val decalage = source.indexOf("length") + 2
+        val survol = session.survol(uri, decalage)
+        // Le propriétaire rendu reste le FQCN KOTLIN demandé (l'alias ne
+        // sert QUE le chargement des octets — ADR 0205 : rendus inchangés).
+        assertEquals("fun length(): Int — kotlin.String", survol?.valeur)
+        session.close()
+    }
+
+    @Test
+    fun `survol usage document courant - KDoc de la déclaration vive (ADR 0207)`() {
+        val session = session()
+        val source =
+            """
+            /**
+             * Calcule le total pondéré.
+             */
+            fun total(x: Int): Int = x * 2
+
+            fun appel(): Int = total(21)
+            """.trimIndent().replace("    ", "  ")
+        val uri = "file:///kdoc-usage.kt"
+        session.ouvrirDocument(uri, source)
+        // Curseur sur l'USAGE de total dans appel() — miroir du survol du
+        // nom déclaré : signature + KDoc de la déclaration VIVE du même
+        // document (arbre déjà en mémoire, aucun re-parse).
+        val survol = session.survol(uri, source.lastIndexOf("total") + 2)
+        assertEquals("fun total(x: Int): Int", survol?.valeur)
+        assertNotNull("la KDoc doit accompagner l'usage dans le document courant", survol?.documentation)
+        assertTrue(
+            "la KDoc rendue porte le texte du commentaire",
+            survol?.documentation?.contains("Calcule le total pondéré") == true,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `survol usage déclaration du SCAN - signature seule (garde ADR 0207)`() {
+        val bibli =
+            """
+            package outils
+
+            /**
+             * Triple la valeur.
+             */
+            fun triple(x: Int): Int = x * 3
+            """.trimIndent()
+        val appelant =
+            """
+            package outils
+
+            fun essai(): Int = triple(2)
+            """.trimIndent()
+        val session = session(racines = listOf(racineTemporaireAvec(bibli)))
+        session.ouvrirDocument("fixture://Essai.kt", appelant)
+        val survol = session.survol("fixture://Essai.kt", appelant.indexOf("triple") + 2)
+        // Déclaration du SCAN (fichier fermé) : signature seule — le
+        // choix K3 documenté (l'option 2 de l'ADR 0207 rouvrira le
+        // dossier du cross-fichier).
+        assertEquals("fun triple(x: Int): Int", survol?.valeur)
+        assertNull("pas de re-parse du fichier tiers pour sa KDoc", survol?.documentation)
+        session.close()
+    }
+
     // ── Définition ─────────────────────────────────────────────────────
 
     @Test
@@ -332,7 +418,10 @@ class SessionLangageKotlinK3Test {
      *  - types `TextView` (android.widget), `Vue` du paquet courant ;
      *  - TextView : champ `texte` (CharSequence) + super `android.view.View`
      *    (méthode `requestLayout`) + super Object ;
-     *  - kotlin.String : méthode `length()` (super Object) ;
+     *  - java.lang.String : méthode `length()` (super Object) — ADR 0205 :
+     *    la vue modélise la VÉRITÉ JVM (aucun `.class` ne porte
+     *    `kotlin.String` : le moteur y accède par l'ALIAS, miroir du
+     *    classpath réel stdlib + android.jar) ;
      *  - paquets android{.widget,.view}, paquet demo vide.
      */
     private class VueClasspathFactice : VueClasspathKotlin {
@@ -354,15 +443,15 @@ class SessionLangageKotlinK3Test {
                         emptyList(),
                         listOf(MembreJvmKotlin(0x0001, "requestLayout", "()V")),
                     ),
-                "kotlin.String" to
-                    MembresTypeKotlin(0x0011, emptyList(), listOf(MembreJvmKotlin(0x0001, "length", "()I"))),
+                "java.lang.String" to
+                    MembresTypeKotlin(0x0021, emptyList(), listOf(MembreJvmKotlin(0x0001, "length", "()I"))),
             )
 
         private val superTypes: Map<String, String?> =
             mapOf(
                 "android.widget.TextView" to "android.view.View",
                 "android.view.View" to "java.lang.Object",
-                "kotlin.String" to "java.lang.Object",
+                "java.lang.String" to "java.lang.Object",
             )
 
         override fun nomsParPrefixe(prefixe: String, limite: Int): List<NomTypeKotlin> =
@@ -389,7 +478,11 @@ class SessionLangageKotlinK3Test {
 
         override fun membres(fqcn: String): MembresTypeKotlin? = membres[fqcn]
 
-        override fun octetsClasse(fqcn: String): ByteArray? = octetsSynthetiques(fqcn, superTypes[fqcn])
+        /** Octets des classes CONNUES uniquement (ADR 0205 : `kotlin.String`
+         * est une fiction du langage — la vue réelle ne fournit AUCUN
+         * `.class` sous ce nom, l'alias `java.lang.String` y pourvoit). */
+        override fun octetsClasse(fqcn: String): ByteArray? =
+            superTypes[fqcn]?.let { superFqcn -> octetsSynthetiques(fqcn, superFqcn) }
 
         /** Classe minimale (cf. LecteurClassBrutTest) au fil de l'eau. */
         private fun octetsSynthetiques(

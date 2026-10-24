@@ -182,6 +182,31 @@ public object SymbolesProjet {
                     parametres = parametresPrimaires(declaration),
                     conteneur = conteneur,
                 )
+                // ADR 0206 : chaque paramètre `val`/`var` du constructeur
+                // primaire est AUSSI une PROPRIÉTÉ membre de la classe —
+                // forme de déclaration la plus idiomatique de Kotlin
+                // (`class Vue(private val ctx: Context)`). L'entrée
+                // supplémentaire porte le conteneur qualifié et la plage
+                // du nom du paramètre : les occurrences (surlignage,
+                // références, renommage) y passent, l'arité garde sa
+                // liste signée ci-dessus. Une propriété de CORPS garde
+                // le même genre/conteneur — miroir exact.
+                parametresPrimairesKt(declaration).forEach { parametre ->
+                    if (!parametre.estPropriete()) return@forEach
+                    val nomParam = parametre.nomJeton() ?: return@forEach
+                    resultat += DeclarationProjet(
+                        genre = GenreDeclaration.PROPRIETE,
+                        nom = nomParam.texte.toString(),
+                        uri = uri,
+                        debutNom = nomParam.debut,
+                        finNom = nomParam.fin,
+                        paquet = paquet,
+                        recepteur = null,
+                        typeRetour = parametre.type(),
+                        parametres = emptyList(),
+                        conteneur = qualifieConteneur,
+                    )
+                }
                 parcourirConteneur(declaration.membres(), uri, paquet, qualifieConteneur, resultat)
             }
 
@@ -256,7 +281,11 @@ public object SymbolesProjet {
      * direct reste sondé en repli, celles des constructeurs
      * secondaires vivent dans SECONDARY_CONSTRUCTOR).
      */
-    private fun parametresPrimaires(classe: KtClass): List<Pair<String?, String?>> {
+    private fun parametresPrimaires(classe: KtClass): List<Pair<String?, String?>> =
+        parametresPrimairesKt(classe).map { parametre -> parametreExtraire(parametre) }
+
+    /** Paramètres KtParameter du constructeur primaire (support ADR 0206). */
+    private fun parametresPrimairesKt(classe: KtClass): List<KtParameter> {
         val liste =
             classe.noeud.sousNoeuds
                 .firstOrNull { it.type == KtNodeTypes.PRIMARY_CONSTRUCTOR }
@@ -267,7 +296,6 @@ public object SymbolesProjet {
         return liste.sousNoeuds
             .filter { it.type == KtNodeTypes.VALUE_PARAMETER }
             .map { KtParameter(it) }
-            .map { parametre -> parametreExtraire(parametre) }
     }
 
     /** Déclaration de PARAMÈTRE (portée du corps de fonction). */
