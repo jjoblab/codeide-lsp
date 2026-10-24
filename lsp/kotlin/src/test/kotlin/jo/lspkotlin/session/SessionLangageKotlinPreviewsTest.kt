@@ -423,6 +423,74 @@ class SessionLangageKotlinPreviewsTest {
         assertEquals(GenreInlineKotlin.AUCUN, (corps[1] as AppelFonctionKotlin).genreInline)
     }
 
+    // ── Ligne d'annotation (marqueur de gouttière, écho picker AS) ───
+
+    @Test
+    fun `ligne annotation - la preview porte la ligne de son arobase Preview`() {
+        val session = session()
+        val source =
+            """
+            $imports
+
+            @Preview
+            @Composable
+            fun ApercuAccueil() {
+                Text("Bonjour")
+            }
+            """.trimIndent()
+        session.ouvrirDocument("file:///apercu.kt", source)
+        val preview = session.previews("file:///apercu.kt").single()
+        // L'annotation vit ligne 4 (imports 1-2, blanc 3) — PAS la ligne
+        // du `fun` (6) : le marqueur de gouttière suit le @Preview.
+        assertEquals(4, preview.ligneAnnotation)
+    }
+
+    @Test
+    fun `ligne annotation multi-lignes - la ligne reste celle du arobase`() {
+        val session = session()
+        val source =
+            """
+            $imports
+
+            @Preview(
+                widthDp = 320,
+                heightDp = 640,
+            )
+            @Composable
+            fun ApercuEcran() {
+            }
+            """.trimIndent()
+        session.ouvrirDocument("file:///apercu.kt", source)
+        val preview = session.previews("file:///apercu.kt").single()
+        // Les arguments s'étalent sur 3 lignes : l'entrée d'annotation
+        // COMMENCE ligne 4 — c'est elle qui porte le marqueur.
+        assertEquals(4, preview.ligneAnnotation)
+    }
+
+    @Test
+    fun `plusieurs previews - lignes distinctes dans l'ordre du document`() {
+        val session = session()
+        val source =
+            """
+            $imports
+
+            @Preview
+            @Composable
+            fun A() {
+            }
+
+            @Preview
+            @Composable
+            fun B() {
+            }
+            """.trimIndent()
+        session.ouvrirDocument("file:///apercu.kt", source)
+        val previews = session.previews("file:///apercu.kt")
+        assertEquals(listOf("A", "B"), previews.map { it.nom })
+        // UN marqueur PAR @Preview, aux lignes de LEURS annotations.
+        assertEquals(listOf(4, 9), previews.map { it.ligneAnnotation })
+    }
+
     // ── Tolérance de fin de vie du SPI ────────────────────────────────
 
     @Test

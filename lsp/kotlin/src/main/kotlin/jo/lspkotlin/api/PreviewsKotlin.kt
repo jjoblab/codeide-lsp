@@ -33,6 +33,13 @@ package jo.lspkotlin.api
  * @param coupureBudget vrai si la marche du corps a été TRONQUÉE par le
  *        budget de nœuds (garde-fou PC4 côté moteur) : le rendu en tire
  *        un bandeau TYPIQUE — jamais un faux rendu complet en silence.
+ * @param ligneAnnotation ligne 1-INDEXÉE de l'annotation `@Preview`
+ *        DANS LE DOCUMENT (le `@` — arguments multi-lignes compris, la
+ *        ligne de départ reste l'entrée d'annotation ; écho
+ *        `PreviewPickerLineMarkerProvider` de la référence : le marqueur
+ *        de gouttière vit sur la ligne de `@Preview`, pas sur celle du
+ *        `fun`). `0` = inconnu (annotation sans plage) — le consommateur
+ *        renonce honnêtement à placer un marqueur pour CETTE preview.
  */
 public data class PreviewKotlin(
     public val nom: String,
@@ -42,6 +49,7 @@ public data class PreviewKotlin(
     public val parametres: List<ParametrePreviewKotlin>,
     public val corps: List<NoeudAppelKotlin>,
     public val coupureBudget: Boolean = false,
+    public val ligneAnnotation: Int = 0,
 )
 
 /**

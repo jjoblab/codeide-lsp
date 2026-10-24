@@ -1,5 +1,27 @@
 # Changelog — codeide-lsp
 
+## 1.5.0 (2026-10-24)
+
+- **Previews Compose — la découverte remonte la LIGNE de l'annotation**
+  (retour propriétaire sur les tests manuels v0.176.0 de CodeIDE : le
+  marqueur de gouttière d'Android Studio vit À LA LIGNE de chaque
+  `@Preview`, jamais sur le caret — écho `PreviewPickerLineMarkerProvider`
+  de la référence : l'ancre du picker est le token « Preview » de
+  l'ANNOTATION, un marqueur PAR annotation, AUCUN marqueur sans
+  `@Preview`).
+  - **`PreviewKotlin.ligneAnnotation`** (champ ADDITIF en queue, défaut
+    `0` = inconnu) : ligne 1-indexée de l'entrée d'annotation
+    `@Preview` DANS LE DOCUMENT — la ligne du `@`, pas celle du `fun` ;
+    les arguments multi-lignes ne déplacent PAS l'ancre (l'entrée
+    commence au `@`). Le consommateur place son marqueur de gouttière
+    sur cette ligne et RENONCE honnêtement pour `0`.
+  - Calcul dans `PreviewsDocumentKotlin` (la marche détient DÉJÀ le
+    texte — `ligneDe(annotation.noeud.debut)`, aucune nouvelle passe) ;
+    transport app-side par le consommateur via l'indice de la preview
+    (CodeIDE enrichit ses rendus au moteur).
+  - +3 tests (ligne simple, arguments multi-lignes, previews multiples
+    aux lignes distinctes).
+
 ## 1.4.0 (2026-10-23)
 
 - **Preview Compose C1 — découverte `@Preview @Composable` par le SPI**

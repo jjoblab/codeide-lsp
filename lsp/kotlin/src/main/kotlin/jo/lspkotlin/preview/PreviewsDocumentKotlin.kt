@@ -202,6 +202,11 @@ internal object PreviewsDocumentKotlin {
             val annotationPreview = annotationPreviewDe(fonction) ?: return null
             val nomJeton = fonction.nomJeton()
             val blocCorps = fonction.corps()?.noeud
+            // Ligne 1-indexée de l'entrée d'annotation `@Preview` (le
+            // marqueur de gouttière vit SUR cette ligne — écho picker de
+            // la référence ; 0 si la plage est inconnue, le consommateur
+            // renonce honnêtement à placer un marqueur).
+            val ligneAnnotation = ligneDe(annotationPreview.noeud.debut)
             // La fonction racine est SEMÉE dans la pile d'inline : son
             // propre rappel (direct ou via un composable inliné) est un
             // CYCLE typé — jamais une récursion infinie (PC4).
@@ -222,6 +227,7 @@ internal object PreviewsDocumentKotlin {
                     },
                 corps = corps,
                 coupureBudget = etat.budget <= 0,
+                ligneAnnotation = ligneAnnotation,
             )
         }
 
