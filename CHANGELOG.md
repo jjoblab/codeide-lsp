@@ -87,7 +87,7 @@
     DEUX sourceDirs : zéro faux positif commonMain/androidMain/usages,
     complétion `Fabrique.` → `creer()`, définitions expect→actual,
     typo `platformNaim` toujours signalée — garde D3).
-  - **Suites** : moteur 322, index 82, hôte 239 — toutes vertes,
+  - **Suites** : moteur 317, index 82, hôte 239 — toutes vertes,
     corpus Compose + Views + KMP branchés.
 
 ## 1.10.0 (2026-10-25)

@@ -68,7 +68,7 @@
     définitions de `platformName` = Platform.kt (commonMain)
     D'ABORD puis Platform.android.kt (miroir Android Studio) ; la
     typo `platformNaim` reste signalée (garde D3).
-  - **Suites complètes vertes** : moteur 322, index 82, hôte 239
+  - **Suites complètes vertes** : moteur 317, index 82, hôte 239
     (corpus Compose + Views + KMP branchés).
 - **Conséquences** :
   - Le monde KMP rejoint Compose et Views au niveau de conformité
