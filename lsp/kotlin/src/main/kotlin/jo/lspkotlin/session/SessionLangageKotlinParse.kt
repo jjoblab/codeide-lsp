@@ -1047,9 +1047,16 @@ internal class SessionLangageKotlinParse(
         // Classes de premier niveau du projet (clé FQCN — correctif K4 :
         // la double garde K3 `!= CLASSE` suivie de `!= INTERFACE`
         // rejetait TOUT, classesProjet restait vide).
+        // ADR 0220 : les OBJETS nommés sont des TYPES référençables
+        // comme les classes (`Fabrique.creer()`, `expect object` KMP,
+        // singletons Kotlin) — sans eux la complétion membre après
+        // `Objet.` était MUETTE (fqcnDuNomEcrit ne résolvait pas).
         val classesProjet = HashMap<String, String>()
         for (declaration in classesSources) {
-            if (declaration.genre != GenreDeclaration.CLASSE && declaration.genre != GenreDeclaration.INTERFACE) {
+            if (declaration.genre != GenreDeclaration.CLASSE &&
+                declaration.genre != GenreDeclaration.INTERFACE &&
+                declaration.genre != GenreDeclaration.OBJET
+            ) {
                 continue
             }
             if (declaration.conteneur != null) continue

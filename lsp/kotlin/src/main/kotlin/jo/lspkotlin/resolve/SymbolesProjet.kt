@@ -6,6 +6,7 @@ import jo.lspkotlin.parse.kt.KtDeclaration
 import jo.lspkotlin.parse.kt.KtElement
 import jo.lspkotlin.parse.kt.KtFile
 import jo.lspkotlin.parse.kt.KtFunction
+import jo.lspkotlin.parse.kt.KtObjectDeclaration
 import jo.lspkotlin.parse.kt.KtParameter
 import jo.lspkotlin.parse.kt.KtProperty
 import jo.lspkotlin.parse.kt.chaineAncetresA
@@ -249,6 +250,28 @@ public object SymbolesProjet {
                     parametres = emptyList(),
                     conteneur = conteneur,
                 )
+            }
+
+            is KtObjectDeclaration -> {
+                // ADR 0220 : les membres d'un `object` (expect compris —
+                // le patron `expect object Fabrique { fun creer() }` de
+                // toute lib KMP, et le singleton Kotlin en général) sont
+                // des déclarations à PART ENTIÈRE — la branche `else`
+                // historique les IGNORAIT : `Fabrique.creer()` était un
+                // faux `kt.unresolved`, la complétion `Fabrique.` muette.
+                resultat += DeclarationProjet(
+                    genre = GenreDeclaration.OBJET,
+                    nom = nom.texte.toString(),
+                    uri = uri,
+                    debutNom = nom.debut,
+                    finNom = nom.fin,
+                    paquet = paquet,
+                    recepteur = null,
+                    typeRetour = null,
+                    parametres = emptyList(),
+                    conteneur = conteneur,
+                )
+                parcourirConteneur(declaration.membres(), uri, paquet, qualifieConteneur, resultat)
             }
 
             else -> {

@@ -229,7 +229,28 @@ public class KtClass(
 /** Déclaration d'objet (`object Foo`, `companion object Bar`). */
 public class KtObjectDeclaration(
     override val noeud: NoeudSyntaxique,
-) : KtElement, KtDeclaration
+) : KtElement, KtDeclaration {
+    /** Corps de l'objet (CLASS_BODY), ou null (en-tête en édition). */
+    public fun corps(): KtNoeud? = premierEnfantParType(KtNodeTypes.CLASS_BODY) as? KtNoeud
+
+    /**
+     * Déclarations immédiatement contenues dans le corps de l'objet —
+     * ADR 0220 : les membres d'un `object` (expect compris — KMP) sont
+     * des déclarations de PREMIER ORDRE pour le scan (même patron que
+     * [KtClass.membres], la branche `else` du scan les ignorait).
+     */
+    public fun membres(): List<KtDeclaration> =
+        corps()?.noeud?.sousNoeuds?.mapNotNull { enfant ->
+            when (enfant.type) {
+                KtNodeTypes.CLASS, KtNodeTypes.OBJECT_DECLARATION, KtNodeTypes.FUN,
+                KtNodeTypes.PROPERTY, KtNodeTypes.TYPEALIAS, KtNodeTypes.ENUM_ENTRY,
+                KtNodeTypes.SECONDARY_CONSTRUCTOR, KtNodeTypes.CLASS_INITIALIZER,
+                -> KtElement.depuis(enfant) as? KtDeclaration
+
+                else -> null
+            }
+        } ?: emptyList()
+}
 
 /** Déclaration de fonction. */
 public class KtFunction(

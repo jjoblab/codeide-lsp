@@ -62,6 +62,33 @@
     factice des 8 maillons réels) + `ReproductionViewBindingTest`.
   - **Suites** : moteur 307, index 82, hôte 238 — toutes vertes,
     corpus Compose ET Views branchés.
+- **Chantier « Kotlin MULTIPLATFORME » — ADR 0220** (le troisième
+  monde : module `shared` à DEUX racines sources — le paquet y vit
+  deux fois, expect dans commonMain, actual dans androidMain).
+  - **Membres d'OBJETS enfin scannés** : la branche `else` du scan
+    (`SymbolesProjet.extraire`) ajoutait la déclaration d'`object`
+    sans JAMAIS parcourir son corps — tout membre de singleton
+    Kotlin (`Fabrique.creer()`, `expect object` des libs KMP) était
+    un faux `kt.unresolved` : complétion et survol muets. La nouvelle
+    branche `KtObjectDeclaration` parcourt le corps (miroir exact de
+    la branche classe) — BONUS pour TOUT projet Kotlin, pas
+    seulement KMP.
+  - **Objets TYPES référençables** : `classesProjet` (la table de
+    `fqcnDuNomEcrit`) n'acceptait que classes et interfaces —
+    `Objet.membre` ne typait pas, la complétion membre après
+    `Fabrique.` était muette. Le genre OBJET rejoint la table.
+  - **Le reste du KMP tenait déjà** (constaté par reproduction
+    verrouillée) : `expect`/`actual` fun/class/val, `actual
+    typealias`, usages croisés des source sets, génériques sur un
+    type expect, définition rendant l'expect D'ABORD puis l'actual
+    (miroir Android Studio).
+  - **Corpus** : `ReproductionKmpTest` + `ReproductionKmpAvanceTest`
+    (moteur, 10 tests) et `ReproductionKmpE2ETest` (E2E production à
+    DEUX sourceDirs : zéro faux positif commonMain/androidMain/usages,
+    complétion `Fabrique.` → `creer()`, définitions expect→actual,
+    typo `platformNaim` toujours signalée — garde D3).
+  - **Suites** : moteur 322, index 82, hôte 239 — toutes vertes,
+    corpus Compose + Views + KMP branchés.
 
 ## 1.10.0 (2026-10-25)
 
