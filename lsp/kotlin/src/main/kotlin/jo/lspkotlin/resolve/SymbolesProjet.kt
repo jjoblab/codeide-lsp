@@ -191,6 +191,16 @@ public object SymbolesProjet {
                     // d'arité des appels de constructeur du projet).
                     parametres = parametresPrimaires(declaration),
                     conteneur = conteneur,
+                    // Retour utilisateurs U1/U3 (25/10/2026) : la candidate
+                    // CONSTRUCTEUR doit connaître ses paramètres À DÉFAUT
+                    // — `Article("Pommes", 4)` sur 6 paramètres dont 4 avec
+                    // valeur par défaut est LÉGAL, le contrôle d'arité des
+                    // appels de classe comptait 0 défaut (la branche
+                    // FONCTION seule remplissait le champ) et produisait
+                    // « 4 fourni(s), 6 attendu(s) » — le faux positif n° 1
+                    // du quotidien Kotlin (data classes à défauts).
+                    nombreParametresDefaut = parametresPrimairesKt(declaration)
+                        .count { parametre -> parametre.aDefaut() },
                 )
                 // ADR 0206 : chaque paramètre `val`/`var` du constructeur
                 // primaire est AUSSI une PROPRIÉTÉ membre de la classe —
@@ -218,6 +228,53 @@ public object SymbolesProjet {
                     )
                 }
                 parcourirConteneur(declaration.membres(), uri, paquet, qualifieConteneur, resultat)
+
+                // Retour utilisateurs U1/U3 (25/10/2026) — membres SYNTHÉTISÉS
+                // des data classes : kotlinc génère `copy(x1 = v1, ...)` (un
+                // paramètre par propriété du constructeur primaire, TOUS à
+                // défaut) et `component1..N` (destructuration). Léa : «
+                // existant.copy(achete = true) — non résolue, sur CHAQUE
+                // data class » ; Nina : idem ×3, et la complétion `article.`
+                // offrait les 6 propriétés mais PAS copy. Miroir de la règle
+                // ADR 0206 (les paramètres val/var deviennent propriétés) :
+                // les membres générés par `data` deviennent des déclarations
+                // membre — mêmes genres/conteneurs que les fonctions écrites.
+                if (declaration.estData()) {
+                    val ktParams = parametresPrimairesKt(declaration)
+                    if (ktParams.isNotEmpty()) {
+                        val paramsExtraits = ktParams.map { parametre -> parametreExtraire(parametre) }
+                        resultat += DeclarationProjet(
+                            genre = GenreDeclaration.FONCTION,
+                            nom = "copy",
+                            uri = uri,
+                            debutNom = nom.debut,
+                            finNom = nom.fin,
+                            paquet = paquet,
+                            recepteur = null,
+                            typeRetour = qualifieConteneur,
+                            parametres = paramsExtraits,
+                            conteneur = qualifieConteneur,
+                            // Tous les paramètres de copy portent un défaut
+                            // (valeur de la propriété courante) : minimum 0.
+                            nombreParametresDefaut = paramsExtraits.size,
+                        )
+                        ktParams.forEachIndexed { index, parametre ->
+                            val nomParam = parametre.nomJeton() ?: return@forEachIndexed
+                            resultat += DeclarationProjet(
+                                genre = GenreDeclaration.FONCTION,
+                                nom = "component${index + 1}",
+                                uri = uri,
+                                debutNom = nomParam.debut,
+                                finNom = nomParam.fin,
+                                paquet = paquet,
+                                recepteur = null,
+                                typeRetour = parametre.type(),
+                                parametres = emptyList(),
+                                conteneur = qualifieConteneur,
+                            )
+                        }
+                    }
+                }
             }
 
             is KtFunction -> {

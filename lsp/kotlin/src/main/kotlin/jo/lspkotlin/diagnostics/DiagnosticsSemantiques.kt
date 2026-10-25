@@ -456,6 +456,21 @@ internal object DiagnosticsSemantiques {
                 }
             }
         }
+        // 3 bis. Type IMBRIQUÉ par nom (retour utilisateurs 25/10/2026 —
+        //    U1 « Icons.Filled », « ViewModelProvider.Factory » ; U2
+        //    « Paint.Cap », « RecyclerView.ViewHolder ») : un sélecteur
+        //    qui désigne une classe imbriquée du récepteur (fqcn$Nom
+        //    présent dans la vue) résout — miroir kotlinc, l'accès
+        //    qualifié aux types imbriqués est légal sans import.
+        if (contexte.resolution.membresDe(typeRecepteur + "\$" + nom) != null) {
+            return SelectionTypes.MEMBRE_TROUVE
+        }
+        // 3 ter. Erasure des génériques (retour utilisateurs 25/10/2026
+        //     — U1 « showSnackbar » après remember { … } typé Object) :
+        //     java.lang.Object est le type EFFACÉ de T — une absence
+        //     « prouvée » sur Object est une absence sur N'IMPORTE quel
+        //     type générique inconnu : jamais prouvable (D3), INCONNU.
+        if (typeRecepteur == "java.lang.Object") return SelectionTypes.INCONNU
         // 4. ABSENCE — conditions cumulatives (D3) : classe LISIBLE
         //    dans la vue + index PORTANT des entrées (une session nue ne
         //    connaît AUCUNE extension : l'absence n'y est pas prouvable)

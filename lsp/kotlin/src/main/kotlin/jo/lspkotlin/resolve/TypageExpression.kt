@@ -139,6 +139,13 @@ internal object TypageExpression {
                 val typeClasse = typeStatiqueDe(recepteur, contexteNom, resolution) ?: return null
                 return typeMembreSur(typeClasse, selecteur, resolution, declarationsProjet, contexteNom)
                     ?: typeMembreCompanionDe(typeClasse, selecteur, resolution, declarationsProjet, contexteNom)
+                    // Type IMBRIQUÉ du récepteur CLASSE (retour
+                    // utilisateurs 25/10/2026 — `Icons.Filled`,
+                    // `Paint.Cap`) : le sélecteur peut désigner une CLASSE
+                    // imbriquée — son type est le fqcn imbriqué, la
+                    // chaîne continue (`Icons.Filled.Delete` → l'extension
+                    // sur Icons$Filled).
+                    ?: typeImbriqueDe(typeClasse, selecteur, resolution)
             }
 
             else -> null
@@ -527,6 +534,24 @@ internal object TypageExpression {
             declaration.typeRetour?.let { ecrit -> return traduireTypeEcrit(ecrit, contexteNom, resolution) }
         }
         return null
+    }
+
+    /**
+     * Type d'une classe IMBRIQUÉE du récepteur classe — `fqcn$Nom` lu
+     * dans la vue (retour utilisateurs 25/10/2026, famille A3).
+     */
+    private fun typeImbriqueDe(
+        typeClasse: String,
+        selecteur: NoeudSyntaxique,
+        resolution: ResolutionKotlin,
+    ): String? {
+        val nomMembre =
+            when (selecteur.type) {
+                KtNodeTypes.CALL_EXPRESSION -> nomAppele(selecteur) ?: return null
+                else -> nomReference(selecteur) ?: return null
+            }
+        val imbrique = typeClasse + "\$" + nomMembre
+        return if (resolution.membresDe(imbrique) != null) imbrique else null
     }
 
     /**

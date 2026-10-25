@@ -34,7 +34,12 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *
  * Les diagnostics sémantiques (résolution, types, surcharges) arrivent
  * K3/K4 avec le modèle de symboles — rien ici ne devine.
+ *
+ * Exemption detekt ciblée (règle 16) : TooManyFunctions — chaque
+ * diagnostic d'imports a SA fonction (utilisés, conflits, noms
+ * effectifs, délégation by — retour utilisateurs 25/10/2026).
  */
+@Suppress("TooManyFunctions")
 internal object DiagnosticsSyntaxiques {
     /**
      * Calcule tous les diagnostics syntaxiques d'un arbre, triés par
@@ -97,7 +102,7 @@ internal object DiagnosticsSyntaxiques {
         val directives = directivesImportDe(racine)
         if (directives.isEmpty()) return emptyList()
         val resultats = mutableListOf<DiagnosticKotlin>()
-        resultats += importsInutilises(directives, identifiantsUtilises(racine))
+        resultats += importsInutilises(directives, identifiantsUtilises(racine), aDelegation(racine))
         resultats += importsConflicts(directives)
         return resultats
     }
@@ -132,15 +137,24 @@ internal object DiagnosticsSyntaxiques {
     /**
      * Imports inutilisés : le nom effectif (alias, sinon dernier segment)
      * n'apparaît pas parmi les identifiants utilisés.
+     *
+     * [aDelegation] (retour utilisateurs 25/10/2026 — U1 « getValue/setValue ») :
+     * le fichier porte une délégation `by` — les OPÉRATEURS de délégation
+     * (getValue/setValue importés de androidx.compose.runtime) sont
+     * APPELÉS IMPLICITEMENT par `var x by remember { }` sans que le jeton
+     * n'apparaisse : un tel import n'est JAMAIS inutilisé si une
+     * délégation vit dans le fichier (le DSL Compose du state).
      */
     private fun importsInutilises(
         directives: List<KtImportDirective>,
         identifiants: Set<String>,
+        aDelegation: Boolean,
     ): List<DiagnosticKotlin> =
         directives.mapNotNull { directive ->
             val nomQualifie = directive.nomQualifie() ?: return@mapNotNull null
             val nomEffectif = nomEffectifDe(directive, nomQualifie) ?: return@mapNotNull null
             if (nomEffectif in identifiants) return@mapNotNull null
+            if (aDelegation && nomEffectif in OPERATEURS_DELEGATION) return@mapNotNull null
             DiagnosticKotlin(
                 code = CodesDiagnosticsKotlin.IMPORT_INUTILISE,
                 severite = SeveriteKotlin.AVERTISSEMENT,
@@ -215,4 +229,38 @@ internal object DiagnosticsSyntaxiques {
         val segment = nomQualifie.substringAfterLast('.')
         return segment.takeIf { it.isNotEmpty() && it != "*" }
     }
+
+    /**
+     * Le fichier porte-t-il une DÉLÉGATION `by` (propriété déléguée —
+     * `var x by remember { }`) : le jeton BY_KEYWORD suffit (retour
+     * utilisateurs 25/10/2026, U1). Parcours local (même marche que
+     * [identifiantsUtilises]).
+     */
+    private fun aDelegation(racine: NoeudSyntaxique): Boolean {
+        fun marcher(noeud: NoeudSyntaxique) {
+            noeud.enfants.forEach { enfant ->
+                when (enfant) {
+                    is JetonSyntaxique ->
+                        if (enfant.type == KtTokens.BY_KEYWORD) throw DelegationTrouvee()
+
+                    is NoeudSyntaxique -> marcher(enfant)
+                }
+            }
+        }
+        // Le signal interne de fin de parcours est AVALE volontairement
+        // (sortie par exception — SwallowedException exemptée, règle 16).
+        @Suppress("SwallowedException")
+        return try {
+            marcher(racine)
+            false
+        } catch (e: DelegationTrouvee) {
+            true
+        }
+    }
+
+    /** Signal interne du parcours [aDelegation] (sortie par exception). */
+    private class DelegationTrouvee : RuntimeException()
+
+    /** Opérateurs de délégation appelés IMPLICITEMENT par `by`. */
+    private val OPERATEURS_DELEGATION = setOf("getValue", "setValue")
 }

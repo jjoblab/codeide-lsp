@@ -85,6 +85,13 @@ internal class ResolutionKotlin(
             contexte.classesProjet["$paquet.$nom"]?.let { return it }
         }
         IMPORTS_DEFAUT[nom]?.let { return it }
+        // Import implicite kotlin.* (retour utilisateurs 25/10/2026 — U1
+        // « OptIn », U2 « Suppress ») : toute CLASSE du paquet racine
+        // kotlin est en portée SANS import écrit — la vue fait foi (des
+        // membres lisibles prouvent la classe). La table ci-dessus ne
+        // portait que les types usuels ; les annotations de compilation
+        // (OptIn, Suppress, Deprecated…) vivaient le même contrat.
+        if (vue?.membres("kotlin.$nom") != null) return "kotlin.$nom"
         // Import joker : le paquet importé porte-t-il CE nom ? La vue
         // répond (typesDansPaquet — ni plus ni moins).
         for (paquetJoker in contexte.importsJoker) {
@@ -223,9 +230,9 @@ internal class ResolutionKotlin(
     ): List<MembreJvmKotlin> =
         chaineSupertypes(fqcn).asSequence()
             .mapNotNull { membresDe(it) }
-            .firstOrNull { membres -> membres.champs.any { it.nom == nom } }
+            .firstOrNull { membres -> membres.champs.any { nomCorrespond(it.nom, nom) } }
             ?.champs
-            ?.filter { it.nom == nom }
+            ?.filter { nomCorrespond(it.nom, nom) }
             ?: emptyList()
 
     /**
@@ -238,7 +245,7 @@ internal class ResolutionKotlin(
     ): List<MemeJvmNomme> {
         for (courant in chaineSupertypes(fqcn)) {
             val membres = membresDe(courant) ?: continue
-            val methodes = membres.methodes.filter { it.nom == nom }
+            val methodes = membres.methodes.filter { nomCorrespond(it.nom, nom) }
             if (methodes.isNotEmpty()) {
                 return methodes.map { MemeJvmNomme(it, proprietaire = courant) }
             }
@@ -294,7 +301,7 @@ internal class ResolutionKotlin(
                 val membres = membresDe(courant) ?: continue
                 val methode =
                     membres.methodes.firstOrNull { m ->
-                        m.nom == candidat && estAccesseurValide(m, unParametre = false)
+                        nomCorrespond(m.nom, candidat) && estAccesseurValide(m, unParametre = false)
                     }
                 if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
             }
@@ -363,9 +370,34 @@ internal class ResolutionKotlin(
         return if (unParametre) {
             traduit.parametres.size == 1
         } else {
-            traduit.parametres.isEmpty() && traduit.retour != "void"
+            // Retour utilisateurs U1 (25/10/2026) — getters COMPILES PAR
+            // LE COMPILATEUR COMPOSE : `getTypography(Composer, int)` porte
+            // DEUX paramètres de runtime (Composer + drapeaux de changement)
+            // que kotlinc AJOUTE à tout @Composable. Un getter sans
+            // paramètre DE SOURCE est soit 0-paramètre JVM, soit cette
+            // forme — la propriété `MaterialTheme.typography` vit ici
+            // (l'absence de cette clause faisait un faux positif sur
+            // CHAQUE membre d'objet MaterialTheme).
+            val composeCompile =
+                traduit.parametres.size == 2 &&
+                    traduit.parametres[0] == "androidx.compose.runtime.Composer" &&
+                    traduit.parametres[1] == "int"
+            (traduit.parametres.isEmpty() || composeCompile) && traduit.retour != "void"
         }
     }
+
+    /**
+     * Correspondance de nom membre ↔ nom cherché, MANGLING des classes
+     * de valeur INCLUS (retour utilisateurs U1 25/10/2026 —
+     * `Arrangement.spacedBy`) : le compilateur Kotlin renomme les
+     * fonctions prenant/rendant une inline class — `spacedBy-0680j_4`
+     * dans le bytecode POUR `spacedBy(Dp)` à la source. Le suffixe après
+     * `-` est opaque : la correspondance est le préfixe AVANT le tiret.
+     */
+    private fun nomCorrespond(
+        nomMembre: String,
+        nomCherche: String,
+    ): Boolean = nomMembre == nomCherche || nomMembre.startsWith("$nomCherche-")
 
     /**
      * NOM de propriété synthétique d'une méthode accesseur — direction

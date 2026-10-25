@@ -192,6 +192,13 @@ public class KtClass(
     /** Vrai si la déclaration est une classe d'énumération (`enum class`). */
     public fun estEnum(): Boolean = jetons().any { it.type == KtTokens.ENUM_MODIFIER }
 
+    /**
+     * Vrai si la déclaration est une data class (`data class`) — le
+     * modificateur doux vit dans le MODIFIER_LIST comme `enum` (retour
+     * utilisateurs U1/U3 25/10/2026 : membres synthétisés copy/componentN).
+     */
+    public fun estData(): Boolean = jetons().any { it.type == KtTokens.DATA_MODIFIER }
+
     /** Corps de la classe (CLASS_BODY), ou null (en-tête en cours d'édition). */
     public fun corps(): KtNoeud? = premierEnfantParType(KtNodeTypes.CLASS_BODY) as? KtNoeud
 
