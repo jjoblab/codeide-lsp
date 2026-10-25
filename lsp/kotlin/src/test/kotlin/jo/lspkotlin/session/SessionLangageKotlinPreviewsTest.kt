@@ -37,8 +37,23 @@ class SessionLangageKotlinPreviewsTest {
     private fun session(): jo.lspkotlin.api.SessionLangageKotlin =
         ServiceMoteurLangageKotlin.unique().creerSession()
 
-    private fun sessionProjet(): Pair<jo.lspkotlin.api.SessionLangageKotlin, File> {
+    /**
+     * Session projet avec racines sources — les fichiers DISQUE passés
+     * en carte sont écrits AVANT `definirClasspath` : le scan WARM
+     * amorcé par la sync est alors GARANTI de les voir dans sa marche
+     * (ADR 0212). Les écrire APRÈS serait une course avec le WARM sans
+     * événement externe pour les rafraîchir (le mécanisme L1 —
+     * `rafraichir()` — relève du moteur hôte, pas des tests) : sur un
+     * runner lent, la marche du dossier peut aboutir AVANT l'écriture
+     * et `pret` fige un snapshot sans eux.
+     */
+    private fun sessionProjet(
+        fichiersDisque: Map<String, String> = emptyMap(),
+    ): Pair<jo.lspkotlin.api.SessionLangageKotlin, File> {
         val racine = dossierTemporaire.newFolder("src")
+        for ((nom, contenu) in fichiersDisque) {
+            File(racine, nom).writeText(contenu)
+        }
         val session = session()
         session.definirClasspath(
             ClasspathKotlin(
@@ -253,18 +268,23 @@ class SessionLangageKotlinPreviewsTest {
 
     @Test
     fun `composable du projet - corps inline depuis le disque`() {
-        val (session, racine) = sessionProjet()
-        File(racine, "CarteProfil.kt").writeText(
-            """
-            package com.ex.app
+        // CarteProfil.kt est un fichier DISQUE NON OUVERT : il passe par
+        // le scan — écrit AVANT la sync (cf. sessionProjet), la course
+        // avec le WARM est fermée par construction.
+        val (session, racine) = sessionProjet(
+            mapOf(
+                "CarteProfil.kt" to
+                    """
+                    package com.ex.app
 
-            import androidx.compose.runtime.Composable
+                    import androidx.compose.runtime.Composable
 
-            @Composable
-            fun CarteProfil() {
-                Texte("Nom")
-            }
-            """.trimIndent(),
+                    @Composable
+                    fun CarteProfil() {
+                        Texte("Nom")
+                    }
+                    """.trimIndent(),
+            ),
         )
         val source =
             """
