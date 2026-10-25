@@ -61,6 +61,9 @@ internal object DiagnosticsSemantiques {
      *        (voie 2-ter « membres hérités », ADR 0216 — `null` = fermeture
      *        limitée aux clauses ÉCRITES du document courant : la session
      *        de production fournit toujours le port, miroir du GO TO Super).
+     * @property script vrai pour un `.kts` (ADR 0221 — le récepteur
+     *        implicite d'un script est le CONTEXTE HÔTE : DSL Gradle,
+     *        arguments du shell… que le moteur ne modélise pas).
      */
     internal data class Contexte(
         val texte: CharSequence,
@@ -69,6 +72,7 @@ internal object DiagnosticsSemantiques {
         val declarationsProjet: List<DeclarationProjet>,
         val indexAppelables: IndexAppelablesKotlin?,
         val portFichier: jo.lspkotlin.resolve.SuperKotlin.PortFichier? = null,
+        val script: Boolean = false,
     )
 
     /**
@@ -137,6 +141,17 @@ internal object DiagnosticsSemantiques {
             // résolution de NOM ne résout pas individuellement : le
             // « beaucoup d'unresolved » des projets Android réels).
             if (estSegmentTypeQualifie(racine, reference, contexte)) return@parcourir
+            // ADR 0221 — SCRIPT (.gradle.kts, .main.kts) : un nom NU
+            // (sans récepteur écrit, sans type qualifié ancêtre) peut
+            // venir du RÉCEPTEUR IMPLICITE DU CONTEXTE HÔTE — le DSL
+            // Gradle injecte `plugins`/`android`/`dependencies`/
+            // `implementation`/`libs`…, un script shell reçoit ses
+            // arguments : l'ABSENCE n'est pas prouvable (D3 symétrique —
+            // miroir Android Studio : jamais de tsunami d'« unresolved
+            // reference » sur un build.gradle.kts sans modèle Gradle).
+            // Les SEGMENTS QUALIFIÉS écrits restent faillibles (garde
+            // dédiée : `java.io.Fichier` reste signalé).
+            if (contexte.script && estNuDansScript(racine, reference)) return@parcourir
             if (estResolu(racine, reference, nom, contexte, index)) return@parcourir
             val jeton = reference.jetonsDescendants().firstOrNull { it.type == KtTokens.IDENTIFIER }
             resultats +=
@@ -160,6 +175,43 @@ internal object DiagnosticsSemantiques {
         return chaine.any {
             it.type == KtNodeTypes.IMPORT_DIRECTIVE || it.type == KtNodeTypes.PACKAGE_DIRECTIVE
         }
+    }
+
+    /**
+     * ADR 0221 : la référence est-elle NUE au sens SCRIPT — sans
+     * récepteur ÉCRIT (aucun ancêtre expression qualifiée), OU le
+     * PREMIER SEGMENT (récepteur racine) d'une chaîne qualifiée — et
+     * sans TYPE QUALIFIÉ ancêtre (les segments de `a.b.Inconnu`
+     * restent faillibles) ? Un tel nom peut vivre dans le récepteur
+     * implicite du contexte hôte (DSL Gradle : `libs`, `JavaVersion`,
+     * `rootProject`…, shell) : l'absence n'est pas prouvable. Les
+     * SÉLECTEURS au-delà du premier segment restent couverts par leur
+     * propre règle (estSelecteurQualifie) — aucune perte de vrai
+     * négatif.
+     */
+    private fun estNuDansScript(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        // TYPE QUALIFIÉ ancêtre : le segment porte le fardeau E4/E4bis
+        // (dernier segment d'un type introuvable = diagnostiqué).
+        val userTypes = chaine.filter { it.type == KtNodeTypes.USER_TYPE }
+        if (userTypes.isNotEmpty()) {
+            val externe = userTypes.last()
+            return !externe.jetonsDescendants().any { it.type == KtTokens.DOT }
+        }
+        val qualifiee =
+            chaine.lastOrNull {
+                it.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
+                    it.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION
+            } ?: return true
+        // Premier segment (récepteur racine) : NU — le contexte hôte
+        // peut l'injecter (version catalog `libs`, imports du DSL).
+        // La référence vit dans le PREMIER ENFANT de l'expression
+        // qualifiée la plus PROCHE (le récepteur — jamais le sélecteur).
+        val recepteur = qualifiee.sousNoeuds.firstOrNull() ?: return true
+        return recepteur.debut <= reference.debut && reference.fin <= recepteur.fin
     }
 
     /**

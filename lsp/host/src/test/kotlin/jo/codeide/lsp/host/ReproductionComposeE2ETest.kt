@@ -52,20 +52,26 @@ class ReproductionComposeE2ETest {
         public val recus: MutableList<org.eclipse.lsp4j.PublishDiagnosticsParams> =
             java.util.concurrent.CopyOnWriteArrayList()
 
-        override fun telemetryEvent(objet: Any?) {}
+        override fun telemetryEvent(objet: Any?) {
+            // Ignoré : la télémétrie ne concerne pas l'espion.
+        }
 
         override fun publishDiagnostics(diagnostics: org.eclipse.lsp4j.PublishDiagnosticsParams) {
             recus.add(diagnostics)
         }
 
-        override fun showMessage(params: org.eclipse.lsp4j.MessageParams) {}
+        override fun showMessage(params: org.eclipse.lsp4j.MessageParams) {
+            // Ignoré : l'espion ne collecte que publishDiagnostics.
+        }
 
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
             java.util.concurrent.CompletableFuture.completedFuture(null)
 
-        override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {}
+        override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
+            // Ignoré : l'espion ne collecte que publishDiagnostics.
+        }
     }
 
     /** ClasspathResult miroir du tooling v8 : UN module :app aux jars Compose. */
@@ -418,7 +424,10 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
                     position("Modifier = Modifier"),
                 ),
             ).join()
-        System.out.println("SONDAGE survol Modifier => " + (survolModifier?.contents?.right?.toString()?.take(220) ?: "null"))
+        System.out.println(
+            "SONDAGE survol Modifier => " +
+                (survolModifier?.contents?.right?.toString()?.take(220) ?: "null"),
+        )
 
         // DÉFINITION sur Text (classpath : FQCN, pas de source).
         val definitionText =

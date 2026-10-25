@@ -89,6 +89,27 @@
     typo `platformNaim` toujours signalée — garde D3).
   - **Suites** : moteur 317, index 82, hôte 239 — toutes vertes,
     corpus Compose + Views + KMP branchés.
+- **Fichiers GRADLE KOTLIN DSL (.gradle.kts) — ADR 0221** (demande
+  explicite du propriétaire ; constat : 41 + 17 = 58 faux
+  `kt.unresolved` sur les build.gradle.kts et settings.gradle.kts
+  du template).
+  - **La règle** : le récepteur implicite d'un SCRIPT est le
+    CONTEXTE HÔTE (DSL Gradle : `plugins`/`android`/`dependencies`/
+    `implementation`/`alias`…, version catalog `libs`, imports du
+    DSL `JavaVersion`/`rootProject`) — un nom NU ou PREMIER SEGMENT
+    ne peut pas être prouvé absent : muet (miroir Android Studio
+    sans modèle Gradle). Les segments QUALIFIÉS écrits restent
+    faillibles (`java.io.Fichier` reste signalé — garde D3).
+  - **Aucune perte de vrai négatif** : les sélecteurs au-delà du
+    premier segment étaient déjà muets (récepteur inconnu) — seuls
+    les nus et récepteurs racines le deviennent.
+  - **Corpus** : `ReproductionGradleKtsTest` (moteur, 5 tests —
+    build + settings du template à zéro, Kotlin standard du script
+    résolu avec survols, garde D3) et `ReproductionGradleKtsE2ETest`
+    (E2E production : le build.gradle.kts du template ouvert dans
+    le serveur LSP → AUCUN faux positif, typo qualifiée signalée).
+  - **Suites** : moteur 322, index 82, hôte 240 — corpus Compose +
+    Views + KMP + script Gradle branchés.
 
 ## 1.10.0 (2026-10-25)
 

@@ -51,20 +51,26 @@ class ReproductionViewsE2ETest {
         public val recus: MutableList<org.eclipse.lsp4j.PublishDiagnosticsParams> =
             java.util.concurrent.CopyOnWriteArrayList()
 
-        override fun telemetryEvent(objet: Any?) {}
+        override fun telemetryEvent(objet: Any?) {
+            // Ignoré : la télémétrie ne concerne pas l'espion.
+        }
 
         override fun publishDiagnostics(diagnostics: org.eclipse.lsp4j.PublishDiagnosticsParams) {
             recus.add(diagnostics)
         }
 
-        override fun showMessage(params: org.eclipse.lsp4j.MessageParams) {}
+        override fun showMessage(params: org.eclipse.lsp4j.MessageParams) {
+            // Ignoré : l'espion ne collecte que publishDiagnostics.
+        }
 
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
             java.util.concurrent.CompletableFuture.completedFuture(null)
 
-        override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {}
+        override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
+            // Ignoré : l'espion ne collecte que publishDiagnostics.
+        }
     }
 
     /** Le projet complet du template : sources + ressources XML. */
@@ -205,7 +211,13 @@ class MainActivity : AppCompatActivity() {
         }
         val racine = dossierTemp.resolve("projet-views")
         val sources = ecrireTemplate(racine)
-        val (sessionJava, facade, serveur, espion) = ouvrirChaine("projet-views", sources, jarsDuCorpus(corpus))
+        // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
+        // QUATRE valeurs (sessions + serveur + espion) — accès nommé.
+        val chaine = ouvrirChaine("projet-views", sources, jarsDuCorpus(corpus))
+        val sessionJava = chaine.premier
+        val facade = chaine.second
+        val serveur = chaine.troisieme
+        val espion = chaine.quatrieme
 
         val fichier = File(sources, "com/example/myapplication/MainActivity.kt")
         val source = fichier.readText()
@@ -299,7 +311,13 @@ class MainActivity : AppCompatActivity() {
         }
         val racine = dossierTemp.resolve("projet-views-neg")
         val sources = ecrireTemplate(racine)
-        val (sessionJava, facade, serveur, espion) = ouvrirChaine("projet-views-neg", sources, jarsDuCorpus(corpus))
+        // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
+        // QUATRE valeurs (sessions + serveur + espion) — accès nommé.
+        val chaine = ouvrirChaine("projet-views-neg", sources, jarsDuCorpus(corpus))
+        val sessionJava = chaine.premier
+        val facade = chaine.second
+        val serveur = chaine.troisieme
+        val espion = chaine.quatrieme
 
         val fichier = File(sources, "com/example/myapplication/MainActivity.kt")
         val source =
@@ -373,7 +391,13 @@ class MainActivity : AppCompatActivity() {
 """.trimIndent()
         val fichier = File(sources, "com/example/myapplication/MainActivity.kt")
         fichier.writeText(source)
-        val (sessionJava, facade, serveur, espion) = ouvrirChaine("projet-views-binding", sources, jarsDuCorpus(corpus))
+        // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
+        // QUATRE valeurs (sessions + serveur + espion) — accès nommé.
+        val chaine = ouvrirChaine("projet-views-binding", sources, jarsDuCorpus(corpus))
+        val sessionJava = chaine.premier
+        val facade = chaine.second
+        val serveur = chaine.troisieme
+        val espion = chaine.quatrieme
 
         val uri = fichier.toURI().toString()
         serveur.textDocumentService.didOpen(

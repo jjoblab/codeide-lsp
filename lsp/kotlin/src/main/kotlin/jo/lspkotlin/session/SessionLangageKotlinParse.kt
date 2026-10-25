@@ -192,6 +192,10 @@ internal class SessionLangageKotlinParse(
                         contexteNom = contexteNom,
                         resolution = resolution,
                         declarationsProjet = declarations,
+                        // ADR 0221 — .gradle.kts/.main.kts : le récepteur
+                        // implicite du CONTEXTE HÔTE (DSL Gradle, shell)
+                        // n'est pas modélisé — les noms NUS y sont muets.
+                        script = document.script,
                         // ADR 0211 — garde de sous-lecture : index non
                         // couvert (passe moteur en vol) ⇒ AUCUN diagnostic
                         // non résolu sur le classpath (impossible de

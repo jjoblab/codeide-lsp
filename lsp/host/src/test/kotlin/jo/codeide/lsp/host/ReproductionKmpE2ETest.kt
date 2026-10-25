@@ -38,20 +38,26 @@ class ReproductionKmpE2ETest {
         public val recus: MutableList<org.eclipse.lsp4j.PublishDiagnosticsParams> =
             java.util.concurrent.CopyOnWriteArrayList()
 
-        override fun telemetryEvent(objet: Any?) {}
+        override fun telemetryEvent(objet: Any?) {
+            // Ignoré : la télémétrie ne concerne pas l'espion.
+        }
 
         override fun publishDiagnostics(diagnostics: org.eclipse.lsp4j.PublishDiagnosticsParams) {
             recus.add(diagnostics)
         }
 
-        override fun showMessage(params: org.eclipse.lsp4j.MessageParams) {}
+        override fun showMessage(params: org.eclipse.lsp4j.MessageParams) {
+            // Ignoré : l'espion ne collecte que publishDiagnostics.
+        }
 
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
             java.util.concurrent.CompletableFuture.completedFuture(null)
 
-        override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {}
+        override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
+            // Ignoré : l'espion ne collecte que publishDiagnostics.
+        }
     }
 
     /** Sème le module shared KMP (commonMain + androidMain). */
@@ -168,12 +174,20 @@ actual class Plateforme actual constructor(actual val nom: String) {
      * LE template KMP : le module shared à deux racines — zéro faux
      * positif dans commonMain ET androidMain (miroir Android Studio).
      */
+    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+    // E2E de production complet (chaîne + corpus + assertions).
+    @Suppress("LongMethod")
     @Test
     public fun `kmp - module shared, deux racines, zero faux positif`() {
         val racine = dossierTemp.resolve("projet-kmp")
         val (common, android) = semerShared(racine)
-        val (sessionJava, facade, serveur, espion) =
-            ouvrirChaine("projet-kmp", listOf(common, android), jarStdlib)
+        // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
+        // QUATRE valeurs (sessions + serveur + espion) — le harnais.
+        val chaine = ouvrirChaine("projet-kmp", listOf(common, android), jarStdlib)
+        val sessionJava = chaine.premier
+        val facade = chaine.second
+        val serveur = chaine.troisieme
+        val espion = chaine.quatrieme
 
         // commonMain/Greeting.kt — les usages de l'EXPECT.
         val fichierCommon = File(common, "Greeting.kt")
@@ -240,9 +254,13 @@ actual class Plateforme actual constructor(actual val nom: String) {
                     position(sourceCommon, "platformName"),
                 ),
             ).join()
-        val urisDefinitions =
-            (definitions?.left ?: emptyList()).map { it.uri } +
-                listOfNotNull((definitions?.right as? List<*>)?.filterIsInstance<org.eclipse.lsp4j.Location>()?.map { it.uri } ?: emptyList()).flatten()
+        val urisGauche = (definitions?.left ?: emptyList()).map { it.uri }
+        val urisDroite =
+            (definitions?.right as? List<*>)
+                ?.filterIsInstance<org.eclipse.lsp4j.Location>()
+                ?.map { it.uri }
+                ?: emptyList()
+        val urisDefinitions = urisGauche + urisDroite
         System.out.println("SONDAGE definitions platformName => $urisDefinitions")
         assertTrue(
             urisDefinitions.any { it.endsWith("Platform.kt") },
