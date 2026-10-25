@@ -1,5 +1,57 @@
 # Changelog — codeide-lsp
 
+## 1.10.0 (2026-10-25)
+
+- **Chantier « parité LSP Kotlin officiel d'Android Studio » — ADR
+  0217/0218** (suite du retour Compose : zéro faux positif sur le
+  template canonique, et chaque capacité répond comme dans l'IDE de
+  référence).
+  - **ADR 0217 — découvertes E1/E2 du rapport Compose** : paramètres
+    EXPLICITES de lambda (`Scaffold { innerPadding -> … }`) enfin en
+    portée (`FUNCTION_LITERAL` collecte sa `VALUE_PARAMETER_LIST` —
+    tout identifiant de paramètre de lambda était un faux
+    `kt.unresolved`) ; noms d'ARGUMENTS nommés (`text = …`,
+    `showBackground = true`) jamais signalés (`estNomArgument` — le
+    compilateur ne résout pas ces noms comme des références, miroir
+    kotlinc/Android Studio).
+  - **ADR 0218 — parité collections et déclarations** : alias
+    JVM↔Kotlin étendus à TOUTE la hiérarchie des collections
+    (Iterable/Collection/List/Set/Map/Iterator/ListIterator/Map.Entry)
+    et aux types usuels (CharSequence/Number/Enum/Throwable/Comparable/
+    Comparator) dans les DEUX sens — `chaineSupertypes` lit enfin les
+    octets d'une fiction Kotlin et `variantesRecepteur` traduit les
+    maillons JAVA parcourus en clés d'extension KOTLIN (`filter`/
+    `map`/`forEach` survolés et complétés depuis `List`/`Set`/`Map`) ;
+    repli Android Studio au MOT-CLÉ (`references`/`documentHighlight`/
+    `renommage` répondent le curseur sur `fun`/`class`/`override` —
+    en-tête borné à la SIGNATURE, le corps et l'initialiseur ne visent
+    jamais la déclaration englobante) ; `chaineAncetresA` préfère un
+    enfant NON VIDE — la `PACKAGE_DIRECTIVE` vide ne capture plus la
+    descente à l'offset 0 (fichiers sans paquet, scripts `.kts`).
+  - **Corpus E2E Compose COMPLET** : les artefacts transitifs
+    manquants du template « Empty Activity » sont téléchargés et
+    extraits (foundation-**layout** 1.7.4 — `padding`/`fillMaxSize` y
+    vivent, SÉPARÉS de foundation depuis Compose 1.5 ; ui-unit 1.7.4 —
+    `dp`/`sp` ; ui-geometry, ui-graphics, ui-text, ui-tooling-preview,
+    ui-util, runtime-saveable, annotation-jvm) : le corpus documente
+    désormais le jeu EXACT d'artefacts que livre le protocole tooling
+    v8 — un artefact manquant = des symboles muets (leçon du
+    débogage : foundation sans foundation-layout laissait `padding`
+    introuvable).
+  - **Sondage des capacités E2E verrouillé par des assertions** :
+    survol `Text`/`Modifier` (signatures réelles material3/ui),
+    complétion membre après `modifier.` (100 items dont `padding`),
+    `signatureHelp` `Text(`, previews, `references` au mot-clé `fun`
+    (déclaration + usage), `documentSymbol` (hiérarchie Either
+    correctement lue) ; la définition d'un symbole CLASSPATH reste
+    vide par contrat K3 (pas de source attachée — le survol porte la
+    signature, D3 documenté).
+  - **Gardes de non-régression** : le VRAI négatif (typo `Texte`)
+    reste signalé au milieu du template (D3 inchangé) ;
+    `plageRenommable`/`renommage` hors identifiant dans un littéral
+    restent SANS cible ; curseur dans le CORPS (`return`) → aucune
+    cible (l'en-tête seul vise la déclaration).
+
 ## 1.9.0 (2026-10-24)
 
 - **Chantier « retour propriétaire E2E » — ADR 0215/0216** (réponse au

@@ -507,6 +507,28 @@ internal class ResolutionKotlin(
                 "java.lang.Long" to "kotlin.Long",
                 "java.lang.Boolean" to "kotlin.Boolean",
                 "java.lang.Comparable" to "kotlin.Comparable",
+                // ADR 0218 — hiérarchie des COLLECTIONS : la chaîne des
+                // supertypes lue dans les OCTETS JVM produit des noms JAVA
+                // (java.util.Collection), mais les clés d'extension de
+                // l'index portent les FQCN KOTLIN (kotlin.collections.
+                // Iterable — le récepteur ÉCRIT dans les métadonnées).
+                // Sans la traduction, `filter`/`map`/`forEach` (extensions
+                // sur Iterable) étaient INTROUVABLES depuis List/Set/Map —
+                // miroir Android Studio : le survol/complétion de tout
+                // appel de collection standard doit répondre.
+                "java.lang.Iterable" to "kotlin.collections.Iterable",
+                "java.util.Collection" to "kotlin.collections.Collection",
+                "java.util.List" to "kotlin.collections.List",
+                "java.util.Set" to "kotlin.collections.Set",
+                "java.util.Map" to "kotlin.collections.Map",
+                "java.util.Iterator" to "kotlin.collections.Iterator",
+                "java.util.ListIterator" to "kotlin.collections.ListIterator",
+                "java.lang.CharSequence" to "kotlin.CharSequence",
+                "java.lang.Number" to "kotlin.Number",
+                "java.lang.Enum" to "kotlin.Enum",
+                "java.lang.Throwable" to "kotlin.Throwable",
+                "java.util.Comparator" to "kotlin.Comparator",
+                "java.util.Map.Entry" to "kotlin.collections.Map.Entry",
             )
 
         private val ALIAS_KOTLIN_JVM: Map<String, String> =
@@ -515,6 +537,25 @@ internal class ResolutionKotlin(
                 "kotlin.Int" to "java.lang.Integer",
                 "kotlin.Long" to "java.lang.Long",
                 "kotlin.Boolean" to "java.lang.Boolean",
+                // ADR 0218 — direction MIROIR : `chaineSupertypes` lit les
+                // octets d'un maillon via CETTE carte (kotlin.collections.
+                // List n'a AUCUN .class — son bytecode vit sous java.util.
+                // List) ; sans elle, la chaîne s'arrêtait au premier
+                // maillon pour TOUTE la hiérarchie des collections.
+                "kotlin.collections.Iterable" to "java.lang.Iterable",
+                "kotlin.collections.Collection" to "java.util.Collection",
+                "kotlin.collections.List" to "java.util.List",
+                "kotlin.collections.Set" to "java.util.Set",
+                "kotlin.collections.Map" to "java.util.Map",
+                "kotlin.collections.Iterator" to "java.util.Iterator",
+                "kotlin.collections.ListIterator" to "java.util.ListIterator",
+                "kotlin.CharSequence" to "java.lang.CharSequence",
+                "kotlin.Number" to "java.lang.Number",
+                "kotlin.Enum" to "java.lang.Enum",
+                "kotlin.Throwable" to "java.lang.Throwable",
+                "kotlin.Comparable" to "java.lang.Comparable",
+                "kotlin.Comparator" to "java.util.Comparator",
+                "kotlin.collections.Map.Entry" to "java.util.Map.Entry",
             )
 
         /** Rendus courts fixes (primitives, java.lang usuels). */

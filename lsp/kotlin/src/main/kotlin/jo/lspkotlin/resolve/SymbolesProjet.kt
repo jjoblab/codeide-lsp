@@ -356,7 +356,46 @@ public object SymbolesProjet {
                     }
                 }
 
-                KtNodeTypes.BLOCK, KtNodeTypes.CLASS_BODY, KtNodeTypes.FUNCTION_LITERAL -> {
+                KtNodeTypes.FUNCTION_LITERAL -> {
+                    // Paramètres EXPLICITES du littéral (découverte E1 du
+                    // rapport Compose, ADR 0217) : `{ innerPadding -> … }`,
+                    // `{ nombre -> … }` — en portée dans TOUT le corps du
+                    // littéral. Sans cette collecte, TOUT paramètre nommé
+                    // de lambda était un faux `kt.unresolved` (le code
+                    // Compose en est saturé : trailing lambdas partout) —
+                    // miroir kotlinc : le paramètre lie TOUTE la fonction.
+                    val liste =
+                        noeud.sousNoeuds.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+                    liste?.sousNoeuds
+                        ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
+                        ?.forEach { parametre ->
+                            parametreDeclarationLocal(jo.lspkotlin.parse.kt.KtParameter(parametre))
+                                ?.let { resultat.add(LocaleEnPortee(it, null)) }
+                        }
+                    for (enfant in noeud.sousNoeuds) {
+                        if (enfant.type != KtNodeTypes.PROPERTY) continue
+                        if (enfant.fin > decalage) continue // pas encore déclarée
+                        val propriete = KtProperty(enfant)
+                        val jeton = propriete.nomJeton() ?: continue
+                        resultat += LocaleEnPortee(
+                            DeclarationProjet(
+                                genre = GenreDeclaration.LOCALE,
+                                nom = jeton.texte.toString(),
+                                uri = "",
+                                debutNom = jeton.debut,
+                                finNom = jeton.fin,
+                                paquet = null,
+                                recepteur = null,
+                                typeRetour = propriete.type(),
+                                parametres = emptyList(),
+                                conteneur = null,
+                            ),
+                            propriete,
+                        )
+                    }
+                }
+
+                KtNodeTypes.BLOCK, KtNodeTypes.CLASS_BODY -> {
                     for (enfant in noeud.sousNoeuds) {
                         if (enfant.type != KtNodeTypes.PROPERTY) continue
                         if (enfant.fin > decalage) continue // pas encore déclarée

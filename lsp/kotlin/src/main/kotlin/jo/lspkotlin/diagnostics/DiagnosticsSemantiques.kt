@@ -119,6 +119,16 @@ internal object DiagnosticsSemantiques {
             // résolution de NOMS ne les concerne pas (quick-fixes et
             // complétion d'import les traitent), jamais `kt.unresolved`.
             if (estDansDirective(racine, reference)) return@parcourir
+            // Nom d'un ARGUMENT NOMMÉ (découverte E2 du rapport Compose,
+            // ADR 0217) : `text = …`, `showBackground = true` — la
+            // grammaire vendorée enveloppe le nom dans un
+            // REFERENCE_EXPRESSION sous VALUE_ARGUMENT_NAME (amont :
+            // parseValueArgument) ; le compilateur Kotlin ne le résout
+            // JAMAIS comme une référence de nom — sa preuve exige la
+            // sélection d'appelé par types complets (hors modèle T1,
+            // LSP_KOTLIN §4.3) ; miroir kotlinc/Android Studio : jamais
+            // « Référence non résolue » sur un nom d'argument (D3).
+            if (estNomArgument(racine, reference)) return@parcourir
             // Sélecteur qualifié : le récepteur peut être inconnu.
             if (estSelecteurQualifie(racine, reference)) return@parcourir
             // E4 (découverte du rapport §14, ADR 0216) : SEGMENT d'un
@@ -150,6 +160,21 @@ internal object DiagnosticsSemantiques {
         return chaine.any {
             it.type == KtNodeTypes.IMPORT_DIRECTIVE || it.type == KtNodeTypes.PACKAGE_DIRECTIVE
         }
+    }
+
+    /**
+     * La référence vit-elle sous un NOM D'ARGUMENT nommé —
+     * `VALUE_ARGUMENT_NAME` (découverte E2, ADR 0217) ? Le nom d'un
+     * argument d'appel ou d'annotation n'est PAS une référence de nom
+     * Kotlin : il se prouve contre les PARAMÈTRES de l'appelé (types
+     * complets) — le modèle conservateur le TAIT (D3 : sous-rapport).
+     */
+    private fun estNomArgument(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        return chaine.any { it.type == KtNodeTypes.VALUE_ARGUMENT_NAME }
     }
 
     /** Genres de déclaration qui SONT des types (miroir SuperKotlin). */
