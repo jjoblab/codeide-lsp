@@ -76,6 +76,19 @@ public final class JavaWorkspaceService implements WorkspaceService {
                     environment.jdtPourFichier(filePath).invalidateParseCache(filePath);
                     LOG.fine("didChangeWatchedFiles: invalidated parse cache for " + filePath);
                 }
+                // v1.9.1 : Created/Deleted — les caches de PRÉSENCE source
+                // (négatifs readSourceOnDisk + walk FQN) doivent tomber pour
+                // qu'une classe créée résolve et apparaisse en complétion
+                // sans attendre les TTL (30 s). Rare : coût nul au repos.
+                if (event.getType() != null
+                        && (event.getType() == FileChangeType.Created
+                                || event.getType() == FileChangeType.Deleted)) {
+                    for (var moteur : environment.moteursVivants()) {
+                        moteur.invalidateSourcePresence();
+                    }
+                    LOG.fine("didChangeWatchedFiles: source presence invalidated ("
+                            + event.getType() + ") " + filePath);
+                }
             } catch (Throwable t) {
                 if (server != null) {
                     server.logWarning("didChangeWatchedFiles failed for " + uri, t);

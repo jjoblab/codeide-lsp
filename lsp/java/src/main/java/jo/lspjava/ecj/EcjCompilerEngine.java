@@ -774,6 +774,20 @@ public final class EcjCompilerEngine {
     }
 
     /**
+     * Invalide les caches de PRÉSENCE source de l'environnement
+     * (négatifs de {@code readSourceOnDisk} + walk FQN des sources) —
+     * v1.9.1 : appelé par {@code didChangeWatchedFiles} sur un événement
+     * Created/Deleted d'un {@code .java} du module. Une classe nouvellement
+     * créée doit résoudre (findType) et apparaître en complétion (walk)
+     * SANS attendre les TTL ; les fichiers ouverts restent servis par
+     * l'overlay, le disque seul est re-sondé.
+     */
+    public void invalidateSourcePresence() {
+        EcjCompilerEnvironment idx = index;
+        if (idx != null) idx.invalidateSourcePresence();
+    }
+
+    /**
      * Arbre focalisé du dernier diagnose RAPIDE, s'il est prouvément
      * valide pour cette requête (P6 étendu, v1.6.0) — hover et signature
      * help sans re-parse.

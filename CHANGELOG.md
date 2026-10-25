@@ -162,6 +162,56 @@
     `plageRenommable`/`renommage` hors identifiant dans un littéral
     restent SANS cible ; curseur dans le CORPS (`return`) → aucune
     cible (l'en-tête seul vise la déclaration).
+## 1.9.1 (2026-10-25)
+
+- **Chantier « complétion Java : rapidité + honnêteté »** (réponse au
+  retour propriétaire : « les suggestions de complétion sont devenues
+  lentes », « le popup de complétion propose des trucs juste après une
+  déclaration de variable ou un retour à la ligne », « est-ce normal
+  d'avoir des suggestions `import com.example.monip.R$style;` ? »).
+  - **Cache négatif de présence source (lenteur)** — chaque
+    `find(fqcn)` de la résolution ecj sondait le disque AVANT TOUT
+    (`Files.isRegularFile` PAR racine source, y compris pour les types
+    du classpath : des centaines d'appels par passe, la seule hiérarchie
+    `View` en touche ~200). Sur le stockage FUSE d'un appareil (0,5 à
+    5 ms par stat), une complétion payait jusqu'à plusieurs secondes de
+    stats — × 3 à 5 splices par requête. Le cache négatif (borné 8192,
+    TTL 30 s) mémorise « ce FQCN n'est pas une source du projet » ; les
+    positifs restent lus à chaque fois (fraîcheur du contenu garantie).
+    Fraîcheur à la CRÉATION : `didChangeWatchedFiles` (Created/Deleted)
+    invalide les caches de présence via `invalidateSourcePresence()` —
+    une nouvelle classe résout sans attendre le TTL ; le walk FQN des
+    sources passe de 10 s à 30 s de TTL pour le même prix.
+  - **Plus de classes internes brutes en complétion (`R$style`,
+    `R$id`, `R$string`)** — trois chemins de l'index disque PRÊT
+    servaient les entrées binaires imbriquées telles quelles : la
+    complétion d'import (`import com.example.monip.|` proposait
+    `R$style`), la complétion de types par préfixe (la clé d'index
+    « style » rendait le FQN `com.example.monip.R$style` — un nom
+    impossible à écrire en Java source) et le quick-fix « Importer »
+    (`fqnsForSimpleName`). Le filtre `$` est posé sur les TROIS chemins
+    disque + le chemin jrt (l'image indexe `NumberFormat$Style`
+    verbatim, attrapé par le matcher substring) — parité retrouvée avec
+    l'index mémoire qui les a toujours exclus. Les imbriquées restent
+    proposées là où elles sont LÉGITIMES : l'accès membre `R.` (forme
+    Java `R.style`, via les bindings ecj).
+  - **Caractères déclencheurs de complétion resserrés à `. @`** — le
+    serveur annonçait `[".", " ", "(", ","]` : le client cel ouvre le
+    popup à préfixe VIDE dès que le caractère précédent est annoncé
+    déclencheur, donc CHAQUE espace (et l'auto-indent du retour à la
+    ligne, qui finit par un espace) ouvrait le popup avec la liste
+    bruyante noms en portée + tous les mots-clés. Discipline de
+    l'éditeur de référence : `.` rouvre (accès membre), `@` rouvre
+    (annotations), tout autre caractère non-identifiant referme. Les
+    `(` et `,` restent déclencheurs de SIGNATURE HELP (leur vrai
+    rôle). Miroir des serveurs Kotlin (`.` `:`) et XML.
+  - Tests : `FuiteClassesImbriqueesTest` (index disque PRÊT factice
+    mimant la production, 4 scénarios — les trois chemins + le
+    contexte annotation), `CachePresenceSourceTest` (négatif TTL,
+    invalidation par événement de surveillance, positifs toujours
+    frais), `PopupSpontaneReproTest` (repro documentée des scénarios du
+    retour), `LatenceCompletionBenchmark` (banc de mesure — 5 à 9 ms à
+    chaud sur module réaliste côté JVM).
 
 ## 1.9.0 (2026-10-24)
 

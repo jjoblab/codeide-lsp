@@ -202,11 +202,27 @@ final class EcjCompilerEnvironment {
      * Index des FQN des sources projet (walk des racines sources), mis
      * en cache avec TTL : un Files.walk complet PAR APPEL serait de l'I/O
      * disque Android à chaque frappe de complétion. Le cache se rafraîchit
-     * au plus toutes les {@link #SOURCE_INDEX_TTL_MS} ms.
+     * au plus toutes les {@link #SOURCE_INDEX_TTL_MS} ms (30 s — v1.9.1 :
+     * le walk sur stockage FUSE coûte des centaines de ms sur un vrai
+     * projet ; la fraîcheur à la CRÉATION de fichier ne passe PAS par le
+     * TTL mais par {@link #invalidateSourcePresence()} sur l'événement de
+     * surveillance correspondant).
      */
     private volatile java.util.List<String> sourceTypeFqns;
     private volatile long sourceTypeFqnsStamp;
-    private static final long SOURCE_INDEX_TTL_MS = 10_000L;
+    private static final long SOURCE_INDEX_TTL_MS = 30_000L;
+
+    /**
+     * Invalide les caches de PRÉSENCE source (négatifs + walk FQN) —
+     * appelé par le moteur sur un événement de surveillance Created/Deleted
+     * d'un {@code .java} : une classe nouvellement créée doit résoudre et
+     * apparaître en complétion SANS attendre l'expiration des TTL. Coût
+     * nul au repos (les événements de création/suppression sont rares).
+     */
+    void invalidateSourcePresence() {
+        sourceMiss.clear();
+        sourceTypeFqnsStamp = 0L;
+    }
 
     /** true si le JDK courant expose une image jrt (desktop/tests). */
     private final boolean jrtAvailable;
@@ -664,7 +680,48 @@ final class EcjCompilerEnvironment {
 
     // ─── Interne ──────────────────────────────────────────────────────
 
+    /**
+     * Cache NÉGATIF de présence source (fqcn → horodatage du sondage).
+     *
+     * <p>Motivation (retour propriétaire v1.9.0 « complétion lente ») :
+     * chaque {@link #find(String)} sonde AVANT TOUT le disque —
+     * {@link #readSourceOnDisk(String)} fait un {@code Files.isRegularFile}
+     * PAR racine source pour TOUT FQCN demandé, y compris les types du
+     * classpath (des centaines par résolution ecj : la hiérarchie View
+     * seule en touche ~200). Sur le stockage FUSE d'Android, chaque stat
+     * coûte 0,5–5 ms : 2 racines × 400 findType × 2 ms ≈ 1,6 s PAR passe
+     * de résolution — et la complétion enchaîne 3 à 5 splices. Le cache
+     * négatif borne ce coût au premier sondage par FQCN ; les négatifs
+     * périment après {@link #SOURCE_MISS_TTL_MS} (une classe créée hors
+     * build devient visible dans la fenêtre) et le cache est borné
+     * ({@link #SOURCE_MISS_MAX} — les FQCN absents sont légion, la carte
+     * ne doit pas croître sans fin).</p>
+     *
+     * <p>Les POSITIFS ne sont pas cachés ici : l'existence d'une source
+     * est stable, mais son CONTENU change à l'édition — servir un texte
+     * périmé casserait la fraîcheur du diagnostic. Le disque est relu à
+     * chaque hit positif (quelques fichiers référencés par frappe, pas
+     * des centaines).</p>
+     */
+    private final java.util.Map<String, Long> sourceMiss =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** TTL des négatifs de présence source — une fenêtre d'auto-guérison. */
+    private static final long SOURCE_MISS_TTL_MS = 30_000L;
+
+    /** Borne du cache négatif (inséré par ordre d'arrivée, purge FIFO). */
+    private static final int SOURCE_MISS_MAX = 8192;
+
     private char[] readSourceOnDisk(String fqcn) {
+        long now = System.currentTimeMillis();
+        Long missStamp = sourceMiss.get(fqcn);
+        if (missStamp != null) {
+            if (now - missStamp < SOURCE_MISS_TTL_MS) {
+                // Négatif mémorisé — pas de stat disque.
+                return null;
+            }
+            sourceMiss.remove(fqcn);
+        }
         String rel = fqcn.replace('.', '/') + ".java";
         for (Path root : sourceRoots) {
             Path p = root.resolve(rel);
@@ -677,7 +734,27 @@ final class EcjCompilerEnvironment {
                 }
             }
         }
+        noterSourceAbsente(fqcn, now);
         return null;
+    }
+
+    /** Mémorise un négatif de présence, purge FIFO à la borne. */
+    private void noterSourceAbsente(String fqcn, long now) {
+        if (sourceMiss.size() >= SOURCE_MISS_MAX) {
+            // Purge FIFO : les plus anciens partent d'abord — ils sont
+            // aussi les plus susceptibles d'être re-sondés (réchauffage
+            // naturel au prochain passage).
+            long cutoff = now - SOURCE_MISS_TTL_MS;
+            sourceMiss.values().removeIf(stamp -> stamp < cutoff);
+            if (sourceMiss.size() >= SOURCE_MISS_MAX) {
+                java.util.List<String> keys =
+                        new ArrayList<>(sourceMiss.keySet());
+                for (int i = 0; i < keys.size() / 2; i++) {
+                    sourceMiss.remove(keys.get(i));
+                }
+            }
+        }
+        sourceMiss.put(fqcn, now);
     }
 
     /**
@@ -1201,11 +1278,22 @@ final class EcjCompilerEnvironment {
         };
         // Côté jars : index disque PRÊT (la requête EXACTE « ni plus ni
         // moins » est native côté index) ou balayage de l'index mémoire.
+        // MÊME FILTRE que le chemin mémoire : l'index disque indexe AUSSI
+        // les classes imbriquées (`R$style.class` vit dans la LIGNE du
+        // paquet com.example.monip) — le contrat `java.packageTypes`
+        // (« ni plus ni moins », premier niveau SEUL) et la règle d'or
+        // n°1 de packageChildren les EXCLUENT : sans ce filtre, la
+        // complétion d'import propose `import com.example.monip.R$style;`
+        // (retour propriétaire v1.9.0) — un nom binaire brut qui ne
+        // compile pas tel quel.
         boolean indexDisqueUtilise = false;
         if (indexDisquePret()) {
             try {
                 for (String fqn : indexNoms.typesDansPaquet(pkg)) {
-                    if (fqn != null) out.add(fqn);
+                    if (fqn == null) continue;
+                    if (fqn.indexOf('$') >= 0) continue;
+                    if (fqn.indexOf('.', pref.length()) >= 0) continue;
+                    out.add(fqn);
                 }
                 indexDisqueUtilise = true;
             } catch (Throwable t) {
@@ -1250,13 +1338,20 @@ final class EcjCompilerEnvironment {
         // puis filtre EXACT — les noms égaux au simpleName trient AVANT
         // leurs extensions lexicographiques, donc dans la fenêtre) ;
         // sinon l'index mémoire (accès direct par clé).
+        // FILTRE `$` : l'index disque clé les imbriquées par segment
+        // après dollar (« style » pour R$style) — un quick-fix « Importer »
+        // ne propose JAMAIS un FQN binaire brut (impossible à écrire en
+        // source Java) ; l'index mémoire les ignore déjà
+        // (indexClassNameLocal saute les « $ »).
         if (indexDisquePret()) {
             try {
                 java.util.Map<String, java.util.List<String>> graines =
                         nomsDepuisIndex(simpleName, Math.max(64, simpleName.length() * 16));
                 java.util.List<String> exact = graines.get(simpleName);
                 if (exact != null) {
-                    dedup.addAll(exact);
+                    for (String fqn : exact) {
+                        if (fqn.indexOf('$') < 0) dedup.add(fqn);
+                    }
                 }
             } catch (Throwable t) {
                 LOG.log(Level.FINE, "fqnsForSimpleName: index a levé — repli mémoire", t);
@@ -1321,7 +1416,17 @@ final class EcjCompilerEnvironment {
                 for (java.util.Map.Entry<String, java.util.List<String>> e
                         : graines.entrySet()) {
                     if (matcher.matches(e.getKey())) {
-                        out.addAll(e.getValue());
+                        for (String fqn : e.getValue()) {
+                            // FILTRE `$` : l'index disque sert aussi les
+                            // imbriquées (clé « style » pour R$style) — le
+                            // FQN brut « com.example.monip.R$style » n'est
+                            // pas un nom de type écrivable (la complétion
+                            // d'accès membre `R.` les propose déjà, en
+                            // forme Java « R.style », via les bindings).
+                            // Parité avec l'index mémoire
+                            // (indexClassNameLocal saute les « $ »).
+                            if (fqn.indexOf('$') < 0) out.add(fqn);
+                        }
                     }
                 }
             } catch (Throwable t) {
@@ -1341,9 +1446,13 @@ final class EcjCompilerEnvironment {
                 }
             }
         }
-        // Aussi le jrt (desktop) si scanné.
+        // Aussi le jrt (desktop) si scanné. FILTRE `$` : l'image jrt
+        // indexe les imbriquées verbatim (java.text.NumberFormat$Style) —
+        // le matcher gradué les attrape par SUBSTRING (requêtes >= 3
+        // caractères) alors qu'elles ne sont pas des noms écrivables.
         if (jrtIndex != null) {
             for (String fqn : jrtIndex.keySet()) {
+                if (fqn.indexOf('$') >= 0) continue;
                 int dot = fqn.lastIndexOf('.');
                 String simple = dot < 0 ? fqn : fqn.substring(dot + 1);
                 if (matcher.matches(simple)) out.add(fqn);
