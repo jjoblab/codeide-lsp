@@ -47,7 +47,8 @@ class ReproductionGradleModeleE2ETest {
             imposé
                 ?: run {
                     val dists = File(System.getProperty("user.home"), ".gradle/wrapper/dists")
-                    dists.walkTopDown()
+                    dists
+                        .walkTopDown()
                         .filter { it.isDirectory && it.name.startsWith("gradle-") }
                         .map { File(it, "lib") }
                         .firstOrNull { it.isDirectory }
@@ -80,7 +81,8 @@ class ReproductionGradleModeleE2ETest {
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
-            java.util.concurrent.CompletableFuture.completedFuture(null)
+            java.util.concurrent.CompletableFuture
+                .completedFuture(null)
 
         override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
             // Ignoré : l'espion ne collecte que publishDiagnostics.
@@ -93,10 +95,11 @@ class ReproductionGradleModeleE2ETest {
     @Suppress("LongMethod")
     @Test
     public fun `gradle modele - JavaVersion statique survol et completion dans un kts`() {
-        val jars = jarsGradle ?: run {
-            System.out.println("[gradle-modele] distribution Gradle absente — suite sautée")
-            return
-        }
+        val jars =
+            jarsGradle ?: run {
+                System.out.println("[gradle-modele] distribution Gradle absente — suite sautée")
+                return
+            }
         val racine = dossierTemp.resolve("projet-gradle-modele")
         val sources = File(racine, "src/main/java")
         sources.mkdirs()

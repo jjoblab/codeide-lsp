@@ -66,7 +66,8 @@ class ReproductionViewsE2ETest {
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
-            java.util.concurrent.CompletableFuture.completedFuture(null)
+            java.util.concurrent.CompletableFuture
+                .completedFuture(null)
 
         override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
             // Ignoré : l'espion ne collecte que publishDiagnostics.
@@ -81,13 +82,15 @@ class ReproductionViewsE2ETest {
         File(res, "layout").mkdirs()
         File(res, "values").mkdirs()
         File(racine, "src/main").resolve("AndroidManifest.xml").writeText(
-            """<?xml version="1.0" encoding="utf-8"?>
+            """
+            <?xml version="1.0" encoding="utf-8"?>
             <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                 package="com.example.myapplication" />
             """.trimIndent(),
         )
         File(res, "layout").resolve("activity_main.xml").writeText(
-            """<?xml version="1.0" encoding="utf-8"?>
+            """
+            <?xml version="1.0" encoding="utf-8"?>
             <androidx.constraintlayout.widget.ConstraintLayout
                 xmlns:android="http://schemas.android.com/apk/res/android"
                 android:layout_width="match_parent"
@@ -103,14 +106,16 @@ class ReproductionViewsE2ETest {
             """.trimIndent(),
         )
         File(res, "values").resolve("strings.xml").writeText(
-            """<resources>
+            """
+            <resources>
                 <string name="app_name">My Application</string>
             </resources>
             """.trimIndent(),
         )
         // MainActivity du template « Empty Views Activity ».
         File(sources, "com/example/myapplication").resolve("MainActivity.kt").writeText(
-            """package com.example.myapplication
+            """
+            package com.example.myapplication
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -121,7 +126,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
     }
 }
-""".trimIndent(),
+            """.trimIndent(),
         )
         return File(racine, "src/main/java")
     }
@@ -190,25 +195,30 @@ class MainActivity : AppCompatActivity() {
         public val quatrieme: D,
     ) {
         public operator fun component1(): A = premier
+
         public operator fun component2(): B = second
+
         public operator fun component3(): C = troisieme
+
         public operator fun component4(): D = quatrieme
     }
 
     /**
      * LE template « Empty Views Activity » : MainActivity AppCompat +
      * setContentView HÉRITÉ + R.layout synthétique — zéro faux positif.
+     *
+     * Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+     * E2E de production complet (chaîne + corpus + assertions), miroir
+     * de ReproductionComposeE2ETest.
      */
-    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
-    // E2E de production complet (chaîne + corpus + assertions), miroir
-    // de ReproductionComposeE2ETest.
     @Suppress("LongMethod")
     @Test
     public fun `views - template Empty Views Activity, zero faux positif`() {
-        val corpus = this.corpus ?: run {
-            System.out.println("REPRO_VIEWS_DIR absent — test ignoré")
-            return
-        }
+        val corpus =
+            this.corpus ?: run {
+                System.out.println("REPRO_VIEWS_DIR absent — test ignoré")
+                return
+            }
         val racine = dossierTemp.resolve("projet-views")
         val sources = ecrireTemplate(racine)
         // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
@@ -249,50 +259,72 @@ class MainActivity : AppCompatActivity() {
 
         // SURVOL du supertype AppCompatActivity (classpath, import exact).
         val survolAppCompat =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("AppCompatActivity()"),
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("AppCompatActivity()"),
+                    ),
+                ).join()
+        System.out.println(
+            "SONDAGE survol AppCompatActivity => " +
+                (
+                    survolAppCompat
+                        ?.contents
+                        ?.right
+                        ?.toString()
+                        ?.take(150) ?: "null"
                 ),
-            ).join()
-        System.out.println("SONDAGE survol AppCompatActivity => " +
-            (survolAppCompat?.contents?.right?.toString()?.take(150) ?: "null"))
+        )
 
         // SURVOL du membre HÉRITÉ setContentView (voie 2-ter ADR 0216 —
         // trois maillons plus haut dans la chaîne AppCompat).
         val survolSetContentView =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("setContentView"),
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("setContentView"),
+                    ),
+                ).join()
+        System.out.println(
+            "SONDAGE survol setContentView (hérité) => " +
+                (
+                    survolSetContentView
+                        ?.contents
+                        ?.right
+                        ?.toString()
+                        ?.take(150) ?: "null"
                 ),
-            ).join()
-        System.out.println("SONDAGE survol setContentView (hérité) => " +
-            (survolSetContentView?.contents?.right?.toString()?.take(150) ?: "null"))
+        )
 
         // COMPLÉTION membre après super. (membres hérités de AppCompatActivity).
         val indexSuper = source.indexOf("super.") + "super.".length
         val lignesSuper = source.substring(0, indexSuper).split('\n')
         val completionSuper =
-            tds.completion(
-                org.eclipse.lsp4j.CompletionParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    org.eclipse.lsp4j.Position(lignesSuper.size - 1, lignesSuper.last().length),
-                ),
-            ).join()
+            tds
+                .completion(
+                    org.eclipse.lsp4j.CompletionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        org.eclipse.lsp4j.Position(lignesSuper.size - 1, lignesSuper.last().length),
+                    ),
+                ).join()
         val itemsSuper = completionSuper?.right?.items ?: emptyList()
-        System.out.println("SONDAGE completion apres super. => ${itemsSuper.size} items — " +
-            itemsSuper.take(10).joinToString { it.label })
+        System.out.println(
+            "SONDAGE completion apres super. => ${itemsSuper.size} items — " +
+                itemsSuper.take(10).joinToString { it.label },
+        )
 
         // RÉFÉRENCES du mot-clé class (ADR 0218).
         val references =
-            tds.references(
-                org.eclipse.lsp4j.ReferenceParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("class MainActivity"),
-                    org.eclipse.lsp4j.ReferenceContext(true),
-                ),
-            ).join()
+            tds
+                .references(
+                    org.eclipse.lsp4j.ReferenceParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("class MainActivity"),
+                        org.eclipse.lsp4j.ReferenceContext(true),
+                    ),
+                ).join()
         System.out.println("SONDAGE references MainActivity => ${references?.size}")
 
         facade.close()
@@ -305,10 +337,11 @@ class MainActivity : AppCompatActivity() {
      */
     @Test
     public fun `views - vrai negatif, toujours signale`() {
-        val corpus = this.corpus ?: run {
-            System.out.println("REPRO_VIEWS_DIR absent — test ignoré")
-            return
-        }
+        val corpus =
+            this.corpus ?: run {
+                System.out.println("REPRO_VIEWS_DIR absent — test ignoré")
+                return
+            }
         val racine = dossierTemp.resolve("projet-views-neg")
         val sources = ecrireTemplate(racine)
         // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
@@ -321,7 +354,8 @@ class MainActivity : AppCompatActivity() {
 
         val fichier = File(sources, "com/example/myapplication/MainActivity.kt")
         val source =
-            """package com.example.myapplication
+            """
+            package com.example.myapplication
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -332,7 +366,7 @@ class MainActivity : AppCompatActivity() {
         setContenuVeu(R.layout.activity_main)
     }
 }
-""".trimIndent()
+            """.trimIndent()
         fichier.writeText(source)
         val uri = fichier.toURI().toString()
         serveur.textDocumentService.didOpen(
@@ -358,21 +392,24 @@ class MainActivity : AppCompatActivity() {
      * La forme VIEWBINDING du monde non-Compose (généré au build par
      * AGP, synthétisé par K5 AVANT build) : ActivityMainBinding depuis
      * le layout activity_main.xml, binding.root/binding.textView.
+     *
+     * Exemption detekt ciblée (règle 16) : LongMethod — scénario E2E
+     * + sondages des capacités verrouillés par assertions (ADR 0219).
      */
-    // Exemption detekt ciblée (règle 16) : LongMethod — scénario E2E
-    // + sondages des capacités verrouillés par assertions (ADR 0219).
     @Suppress("LongMethod")
     @Test
     public fun `views - ViewBinding synthetique, zero faux positif`() {
-        val corpus = this.corpus ?: run {
-            System.out.println("REPRO_VIEWS_DIR absent — test ignoré")
-            return
-        }
+        val corpus =
+            this.corpus ?: run {
+                System.out.println("REPRO_VIEWS_DIR absent — test ignoré")
+                return
+            }
         val racine = dossierTemp.resolve("projet-views-binding")
         val sources = ecrireTemplate(racine)
         // La forme ViewBinding du même écran.
         val source =
-            """package com.example.myapplication
+            """
+            package com.example.myapplication
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -388,7 +425,7 @@ class MainActivity : AppCompatActivity() {
         binding.textView.text = getString(R.string.app_name)
     }
 }
-""".trimIndent()
+            """.trimIndent()
         val fichier = File(sources, "com/example/myapplication/MainActivity.kt")
         fichier.writeText(source)
         // Exemption detekt ciblée (règle 16) : la chaîne E2E porte
@@ -430,16 +467,29 @@ class MainActivity : AppCompatActivity() {
         // layoutInflater nu : le getter getLayoutInflater()
         // (android.app.Activity, maillon 4) porte le type.
         val survolLayoutInflater =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("layoutInflater"),
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("layoutInflater"),
+                    ),
+                ).join()
+        System.out.println(
+            "SONDAGE survol layoutInflater (synthétique) => " +
+                (
+                    survolLayoutInflater
+                        ?.contents
+                        ?.right
+                        ?.toString()
+                        ?.take(150) ?: "null"
                 ),
-            ).join()
-        System.out.println("SONDAGE survol layoutInflater (synthétique) => " +
-            (survolLayoutInflater?.contents?.right?.toString()?.take(150) ?: "null"))
+        )
         assertTrue(
-            survolLayoutInflater?.contents?.right?.toString()?.contains("LayoutInflater") == true,
+            survolLayoutInflater
+                ?.contents
+                ?.right
+                ?.toString()
+                ?.contains("LayoutInflater") == true,
             "le survol de la propriété synthétique doit répondre (ADR 0219) — obtenu : " +
                 survolLayoutInflater?.contents?.right,
         )
@@ -447,16 +497,29 @@ class MainActivity : AppCompatActivity() {
         // SURVOL de la MÉTHODE HÉRITÉE du maillon 7 (ADR 0219 —
         // android.content.Context : la borne de chaîne corrigée).
         val survolGetString =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("getString"),
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("getString"),
+                    ),
+                ).join()
+        System.out.println(
+            "SONDAGE survol getString (maillon 7) => " +
+                (
+                    survolGetString
+                        ?.contents
+                        ?.right
+                        ?.toString()
+                        ?.take(150) ?: "null"
                 ),
-            ).join()
-        System.out.println("SONDAGE survol getString (maillon 7) => " +
-            (survolGetString?.contents?.right?.toString()?.take(150) ?: "null"))
+        )
         assertTrue(
-            survolGetString?.contents?.right?.toString()?.contains("getString") == true,
+            survolGetString
+                ?.contents
+                ?.right
+                ?.toString()
+                ?.contains("getString") == true,
             "le survol du membre du maillon 7 doit répondre (ADR 0219) — obtenu : " +
                 survolGetString?.contents?.right,
         )
@@ -467,15 +530,18 @@ class MainActivity : AppCompatActivity() {
         val indexBinding = source.indexOf("binding.root") + "binding.".length
         val lignesBinding = source.substring(0, indexBinding).split('\n')
         val completionBinding =
-            tds.completion(
-                org.eclipse.lsp4j.CompletionParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    org.eclipse.lsp4j.Position(lignesBinding.size - 1, lignesBinding.last().length),
-                ),
-            ).join()
+            tds
+                .completion(
+                    org.eclipse.lsp4j.CompletionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        org.eclipse.lsp4j.Position(lignesBinding.size - 1, lignesBinding.last().length),
+                    ),
+                ).join()
         val itemsBinding = completionBinding?.right?.items ?: emptyList()
-        System.out.println("SONDAGE completion apres binding. => ${itemsBinding.size} items — " +
-            itemsBinding.take(10).joinToString { it.label })
+        System.out.println(
+            "SONDAGE completion apres binding. => ${itemsBinding.size} items — " +
+                itemsBinding.take(10).joinToString { it.label },
+        )
         assertTrue(
             itemsBinding.any { it.label == "root" } && itemsBinding.any { it.label == "textView" },
             "les champs du layout (root, textView) s'offrent — obtenu : " +

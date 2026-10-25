@@ -67,7 +67,8 @@ class ReproductionComposeE2ETest {
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
-            java.util.concurrent.CompletableFuture.completedFuture(null)
+            java.util.concurrent.CompletableFuture
+                .completedFuture(null)
 
         override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
             // Ignoré : l'espion ne collecte que publishDiagnostics.
@@ -101,23 +102,27 @@ class ReproductionComposeE2ETest {
      * LE scénario du propriétaire : MainActivity Compose canonique
      * (template « New Project → Empty Activity » d'Android Studio),
      * diagnostiquée par la chaîne de production nourrie du VRAI classpath.
+     *
+     * Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+     * E2E de production complet (chaîne + corpus + assertions).
      */
-    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
-    // E2E de production complet (chaîne + corpus + assertions).
     @Suppress("LongMethod")
     @Test
     public fun `compose - MainActivity template, zero faux positif`() {
-        val corpus = this.corpus ?: run {
-            System.out.println("REPRO_COMPOSE_DIR absent — test ignoré")
-            return
-        }
+        val corpus =
+            this.corpus ?: run {
+                System.out.println("REPRO_COMPOSE_DIR absent — test ignoré")
+                return
+            }
         val racine = dossierTemp.resolve("projet-compose")
         val sources = File(racine, "src").apply { mkdirs() }
         // Template « Empty Activity » d'Android Studio : MainActivity + Theme
-        File(sources, "theme").apply { mkdirs() }
+        File(sources, "theme")
+            .apply { mkdirs() }
             .resolve("Theme.kt")
             .writeText(
-                """package com.example.composeapp
+                """
+                package com.example.composeapp
 
 import androidx.compose.runtime.Composable
 
@@ -125,7 +130,7 @@ import androidx.compose.runtime.Composable
 fun ComposeAppTheme(contenu: @Composable () -> Unit) {
   contenu()
 }
-""".trimIndent() + "\n",
+                """.trimIndent() + "\n",
             )
         val stdlib = File(corpus, "kotlin-stdlib-2.2.10.jar")
         val androidJar = File(corpus, "android-36.jar")
@@ -233,16 +238,18 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
      * Garde de non-régression : un VRAI négatif reste signalé — la
      * disparition des faux positifs ne doit JAMAIS museler les vraies
      * erreurs (D3 : un sous-ensemble correct bat un modèle complet faux).
+     *
+     * Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+     * E2E de production complet (chaîne + corpus + assertions).
      */
-    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
-    // E2E de production complet (chaîne + corpus + assertions).
     @Suppress("LongMethod")
     @Test
     public fun `compose - vrai negatif, toujours signale`() {
-        val corpus = this.corpus ?: run {
-            System.out.println("REPRO_COMPOSE_DIR absent — test ignoré")
-            return
-        }
+        val corpus =
+            this.corpus ?: run {
+                System.out.println("REPRO_COMPOSE_DIR absent — test ignoré")
+                return
+            }
         val racine = dossierTemp.resolve("projet-compose-neg")
         val sources = File(racine, "src").apply { mkdirs() }
         val stdlib = File(corpus, "kotlin-stdlib-2.2.10.jar")
@@ -311,22 +318,26 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
      * le LSP Kotlin officiel d'Android Studio rend sur le même fichier) :
      * survol, définition, complétion membre, aide à la signature, previews,
      * références — alimente le rapport d'audit du dépôt.
+     *
+     * Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+     * E2E de production complet (chaîne + corpus + assertions).
      */
-    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
-    // E2E de production complet (chaîne + corpus + assertions).
     @Suppress("LongMethod", "CyclomaticComplexMethod")
     @Test
     public fun `compose - sondage des capacites sur template`() {
-        val corpus = this.corpus ?: run {
-            System.out.println("REPRO_COMPOSE_DIR absent — test ignoré")
-            return
-        }
+        val corpus =
+            this.corpus ?: run {
+                System.out.println("REPRO_COMPOSE_DIR absent — test ignoré")
+                return
+            }
         val racine = dossierTemp.resolve("projet-compose-sondage")
         val sources = File(racine, "src").apply { mkdirs() }
-        File(sources, "theme").apply { mkdirs() }
+        File(sources, "theme")
+            .apply { mkdirs() }
             .resolve("Theme.kt")
             .writeText(
-                """package com.example.composeapp
+                """
+                package com.example.composeapp
 
 import androidx.compose.runtime.Composable
 
@@ -334,7 +345,7 @@ import androidx.compose.runtime.Composable
 fun ComposeAppTheme(contenu: @Composable () -> Unit) {
   contenu()
 }
-""".trimIndent() + "\n",
+                """.trimIndent() + "\n",
             )
         val stdlib = File(corpus, "kotlin-stdlib-2.2.10.jar")
         val androidJar = File(corpus, "android-36.jar")
@@ -396,7 +407,10 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
         )
         TimeUnit.MILLISECONDS.sleep(1000)
 
-        fun position(motif: String, occurrence: Int = 0): org.eclipse.lsp4j.Position {
+        fun position(
+            motif: String,
+            occurrence: Int = 0,
+        ): org.eclipse.lsp4j.Position {
             var index = -1
             repeat(occurrence + 1) { index = source.indexOf(motif, index + 1) }
             check(index >= 0) { "motif introuvable : $motif (occurrence $occurrence)" }
@@ -408,35 +422,52 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
 
         // SURVOL sur l'usage de Text — la signature du composable.
         val survolText =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("Text("),
-                ),
-            ).join()
-        System.out.println("SONDAGE survol Text => " + (survolText?.contents?.right?.toString()?.take(220) ?: "null"))
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("Text("),
+                    ),
+                ).join()
+        System.out.println(
+            "SONDAGE survol Text => " + (
+                survolText
+                    ?.contents
+                    ?.right
+                    ?.toString()
+                    ?.take(220) ?: "null"
+            ),
+        )
 
         // SURVOL sur Modifier (type importé).
         val survolModifier =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("Modifier = Modifier"),
-                ),
-            ).join()
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("Modifier = Modifier"),
+                    ),
+                ).join()
         System.out.println(
             "SONDAGE survol Modifier => " +
-                (survolModifier?.contents?.right?.toString()?.take(220) ?: "null"),
+                (
+                    survolModifier
+                        ?.contents
+                        ?.right
+                        ?.toString()
+                        ?.take(220) ?: "null"
+                ),
         )
 
         // DÉFINITION sur Text (classpath : FQCN, pas de source).
         val definitionText =
-            tds.definition(
-                org.eclipse.lsp4j.DefinitionParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("Text("),
-                ),
-            ).join()
+            tds
+                .definition(
+                    org.eclipse.lsp4j.DefinitionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("Text("),
+                    ),
+                ).join()
         System.out.println("SONDAGE definition Text => " + definitionText)
 
         // COMPLÉTION membre après « Modifier. » — le curseur juste APRÈS le
@@ -445,12 +476,13 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
         val lignesPoint = source.substring(0, indexModifierPoint).split('\n')
         val positionPoint = org.eclipse.lsp4j.Position(lignesPoint.size - 1, lignesPoint.last().length)
         val completion =
-            tds.completion(
-                org.eclipse.lsp4j.CompletionParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    positionPoint,
-                ),
-            ).join()
+            tds
+                .completion(
+                    org.eclipse.lsp4j.CompletionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        positionPoint,
+                    ),
+                ).join()
         val items = completion?.right?.items ?: completion?.left ?: emptyList()
         System.out.println(
             "SONDAGE completion apres modifier. => ${items.size} items — " +
@@ -468,12 +500,13 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
 
         // AIDE À LA SIGNATURE dans l'appel Text(.
         val signature =
-            tds.signatureHelp(
-                org.eclipse.lsp4j.SignatureHelpParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("text ="),
-                ),
-            ).join()
+            tds
+                .signatureHelp(
+                    org.eclipse.lsp4j.SignatureHelpParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("text ="),
+                    ),
+                ).join()
         System.out.println(
             "SONDAGE signatureHelp Text( => " +
                 (signature?.signatures?.joinToString { it.label }?.take(220) ?: "null"),
@@ -487,13 +520,14 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
         // MOT-CLÉ `fun` : miroir Android Studio (Find Usages répond le
         // curseur n'importe où sur la déclaration — ADR 0218).
         val references =
-            tds.references(
-                org.eclipse.lsp4j.ReferenceParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position("fun Greeting"),
-                    org.eclipse.lsp4j.ReferenceContext(true),
-                ),
-            ).join()
+            tds
+                .references(
+                    org.eclipse.lsp4j.ReferenceParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position("fun Greeting"),
+                        org.eclipse.lsp4j.ReferenceContext(true),
+                    ),
+                ).join()
         System.out.println("SONDAGE references Greeting => ${references?.size} : ${references?.map { it.range.start }}")
         org.junit.jupiter.api.Assertions.assertTrue(
             (references?.size ?: 0) >= 2,
@@ -505,11 +539,12 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
         // d'Either<SymbolInformation, DocumentSymbol> : le DocumentSymbol
         // vit dans le DROIT de chaque Either.
         val symboles =
-            tds.documentSymbol(
-                org.eclipse.lsp4j.DocumentSymbolParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                ),
-            ).join()
+            tds
+                .documentSymbol(
+                    org.eclipse.lsp4j.DocumentSymbolParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                    ),
+                ).join()
         val nomsSymboles =
             symboles
                 ?.mapNotNull { it.right?.name }

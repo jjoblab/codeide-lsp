@@ -57,11 +57,12 @@ import java.io.File
     /**
      * Cible du curseur — référence non-framework d'abord, déclarante
      * `values` ensuite ; `null` hors cible.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — les sorties
+     * sont des RÉGIMES distincts (référence framework refusée,
+     * référence projet, déclarante values — la couper brouillerait
+     * la lecture de la chaîne de qualification).
      */
-        // Exemption detekt ciblée (règle 16) : ReturnCount — les sorties
-    // sont des RÉGIMES distincts (référence framework refusée,
-    // référence projet, déclarante values — la couper brouillerait
-    // la lecture de la chaîne de qualification).
     @Suppress("ReturnCount")
     internal fun cibleAuCurseur(
         document: DocumentXml,
@@ -138,9 +139,10 @@ import java.io.File
      * Plage du NOM de la cible au curseur (prepareRename) — la plage
      * de la référence (segment nom) ou de la VALEUR `name` (entre
      * guillemets, exclus) ; `null` hors cible renommable.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — mêmes
+     * régimes que cibleAuCurseur (framework, projet, déclarante).
      */
-        // Exemption detekt ciblée (règle 16) : ReturnCount — mêmes
-    // régimes que cibleAuCurseur (framework, projet, déclarante).
     @Suppress("ReturnCount")
     internal fun plageNomAuCurseur(
         document: DocumentXml,
@@ -190,9 +192,10 @@ import java.io.File
      * @param uriDocument uri du document COURANT (priorité de tri).
      * @param documentsOuverts les documents OUVERTS de la session
      *        (uri → texte) — le bornage du balayage références.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — session
+     * fermée, sans cible, non renommable : trois régimes distincts.
      */
-        // Exemption detekt ciblée (règle 16) : ReturnCount — session
-    // fermée, sans cible, non renommable : trois régimes distincts.
     @Suppress("ReturnCount")
     internal fun occurrences(
         document: DocumentXml,
@@ -215,10 +218,11 @@ import java.io.File
      * Éditions DÉCLARANTES de la cible — chaque fichier déclarant de
      * l'index (plage réelle), tampon ouvert PUIS disque ; le déclarant
      * illisible ou introuvable est OMIS (jamais d'édition fausse).
+     *
+     * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
+     * — les gardes du scan (plage fantôme, tampon illisible, plage
+     * introuvable) sont des états DISTINCTS (miroir IndexRessources).
      */
-        // Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
-    // — les gardes du scan (plage fantôme, tampon illisible, plage
-    // introuvable) sont des états DISTINCTS (miroir IndexRessources).
     @Suppress("LoopWithTooManyJumpStatements")
     private fun declarationsDe(
         cible: Cible,
@@ -265,10 +269,13 @@ import java.io.File
         return emplacements
     }
 
-    /** Texte du déclarant : tampon ouvert (version vive) PUIS disque. */
-        // Exemption detekt ciblée (règle 16) : SwallowedException — la
-    // lecture disque best-effort EST le contrat (miroir locationLspDe :
-    // fichier illisible = déclarant omis, jamais une édition fausse).
+    /**
+     * Texte du déclarant : tampon ouvert (version vive) PUIS disque.
+     *
+     * Exemption detekt ciblée (règle 16) : SwallowedException — la
+     * lecture disque best-effort EST le contrat (miroir locationLspDe :
+     * fichier illisible = déclarant omis, jamais une édition fausse).
+    */
     @Suppress("SwallowedException")
     private fun texteDeclarant(
         fichier: File,
@@ -282,10 +289,13 @@ import java.io.File
         }
     }
 
-    /** Uri OUVERTE d'un fichier (chemins canonisés) — `null` si fermé. */
-        // Exemption detekt ciblée (règle 16) : SwallowedException — la
-    // canonisation best-effort EST le contrat (chemin non canonisable
-    // = comparaison littérale, jamais une correspondance fausse).
+    /**
+     * Uri OUVERTE d'un fichier (chemins canonisés) — `null` si fermé.
+     *
+     * Exemption detekt ciblée (règle 16) : SwallowedException — la
+     * canonisation best-effort EST le contrat (chemin non canonisable
+     * = comparaison littérale, jamais une correspondance fausse).
+    */
     @Suppress("SwallowedException")
     private fun uriDeFichier(
         fichier: File,
@@ -331,10 +341,11 @@ import java.io.File
      * amorçage `@`/`?` est un candidat (une valeur peut porter
      * PLUSIEURS références : sélecteurs `|`, listes `,`) ; les
      * références framework sont ignorées (ressource système).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — les gardes
+     * de valeur (absente, plage absente, hors référence) sont des
+     * états DISTINCTS du protocole de scan.
      */
-        // Exemption detekt ciblée (règle 16) : ReturnCount — les gardes
-    // de valeur (absente, plage absente, hors référence) sont des
-    // états DISTINCTS du protocole de scan.
     @Suppress("ReturnCount")
     private fun occurrencesValeur(
         attribut: jo.lspxml.parse.XmlAttribut,

@@ -41,9 +41,10 @@ internal object FormatXml {
      * Éditions de ré-indentation de [document] (texte [texte],
      * [tailleIndentation] espaces par niveau) — ordonnées, jamais
      * superposées ; liste VIDE si refus ou rien à changer.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — refus honnête
+     * (arbre incomplet) et rien à changer sont des RÉGIMES distincts.
      */
-    // Exemption detekt ciblée (règle 16) : ReturnCount — refus honnête
-    // (arbre incomplet) et rien à changer sont des RÉGIMES distincts.
     @Suppress("ReturnCount")
 internal fun editer(
         document: DocumentXml,

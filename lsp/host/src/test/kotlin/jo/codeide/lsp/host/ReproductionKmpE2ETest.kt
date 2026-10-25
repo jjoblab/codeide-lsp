@@ -53,7 +53,8 @@ class ReproductionKmpE2ETest {
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
-            java.util.concurrent.CompletableFuture.completedFuture(null)
+            java.util.concurrent.CompletableFuture
+                .completedFuture(null)
 
         override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
             // Ignoré : l'espion ne collecte que publishDiagnostics.
@@ -67,7 +68,8 @@ class ReproductionKmpE2ETest {
         common.mkdirs()
         android.mkdirs()
         File(common, "Platform.kt").writeText(
-            """package com.example.kmp
+            """
+            package com.example.kmp
 
 expect fun platformName(): String
 
@@ -78,18 +80,20 @@ expect object Fabrique {
 expect class Plateforme(val nom: String) {
   fun salut(): String
 }
-""".trimIndent(),
+            """.trimIndent(),
         )
         File(common, "Greeting.kt").writeText(
-            """package com.example.kmp
+            """
+            package com.example.kmp
 
 class Greeting {
   fun greet(): String = platformName() + " " + Fabrique.creer()
 }
-""".trimIndent(),
+            """.trimIndent(),
         )
         File(android, "Platform.android.kt").writeText(
-            """package com.example.kmp
+            """
+            package com.example.kmp
 
 actual fun platformName(): String = "Android"
 
@@ -100,7 +104,7 @@ actual object Fabrique {
 actual class Plateforme actual constructor(actual val nom: String) {
   actual fun salut(): String = "Bonjour " + nom
 }
-""".trimIndent(),
+            """.trimIndent(),
         )
         return Pair(common, android)
     }
@@ -157,8 +161,11 @@ actual class Plateforme actual constructor(actual val nom: String) {
         public val quatrieme: D,
     ) {
         public operator fun component1(): A = premier
+
         public operator fun component2(): B = second
+
         public operator fun component3(): C = troisieme
+
         public operator fun component4(): D = quatrieme
     }
 
@@ -166,16 +173,19 @@ actual class Plateforme actual constructor(actual val nom: String) {
     private val jarStdlib: File =
         File(
             checkNotNull(
-                kotlin.jvm.internal.Intrinsics::class.java.protectionDomain?.codeSource?.location,
+                kotlin.jvm.internal.Intrinsics::class.java.protectionDomain
+                    ?.codeSource
+                    ?.location,
             ) { "stdlib introuvable" }.toURI(),
         )
 
     /**
      * LE template KMP : le module shared à deux racines — zéro faux
      * positif dans commonMain ET androidMain (miroir Android Studio).
+     *
+     * Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+     * E2E de production complet (chaîne + corpus + assertions).
      */
-    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
-    // E2E de production complet (chaîne + corpus + assertions).
     @Suppress("LongMethod")
     @Test
     public fun `kmp - module shared, deux racines, zero faux positif`() {
@@ -207,7 +217,10 @@ actual class Plateforme actual constructor(actual val nom: String) {
         )
 
         // Sondages des capacités (miroir Android Studio).
-        fun position(source: String, motif: String): org.eclipse.lsp4j.Position {
+        fun position(
+            source: String,
+            motif: String,
+        ): org.eclipse.lsp4j.Position {
             val index = source.indexOf(motif)
             check(index >= 0) { "motif introuvable : $motif" }
             val lignes = source.substring(0, index).split('\n')
@@ -218,28 +231,40 @@ actual class Plateforme actual constructor(actual val nom: String) {
 
         // SURVOL de l'expect platformName.
         val survolExpect =
-            tds.hover(
-                org.eclipse.lsp4j.HoverParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position(sourceCommon, "platformName"),
+            tds
+                .hover(
+                    org.eclipse.lsp4j.HoverParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position(sourceCommon, "platformName"),
+                    ),
+                ).join()
+        System.out.println(
+            "SONDAGE survol expect platformName => " +
+                (
+                    survolExpect
+                        ?.contents
+                        ?.right
+                        ?.toString()
+                        ?.take(120) ?: "null"
                 ),
-            ).join()
-        System.out.println("SONDAGE survol expect platformName => " +
-            (survolExpect?.contents?.right?.toString()?.take(120) ?: "null"))
+        )
 
         // COMPLÉTION membre après Fabrique. (object expect — ADR 0220).
         val apresFabrique = sourceCommon.indexOf("Fabrique.") + "Fabrique.".length
         val lignes = sourceCommon.substring(0, apresFabrique).split('\n')
         val completion =
-            tds.completion(
-                org.eclipse.lsp4j.CompletionParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    org.eclipse.lsp4j.Position(lignes.size - 1, lignes.last().length),
-                ),
-            ).join()
+            tds
+                .completion(
+                    org.eclipse.lsp4j.CompletionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        org.eclipse.lsp4j.Position(lignes.size - 1, lignes.last().length),
+                    ),
+                ).join()
         val items = completion?.right?.items ?: emptyList()
-        System.out.println("SONDAGE completion apres Fabrique. => ${items.size} items — " +
-            items.take(8).joinToString { it.label })
+        System.out.println(
+            "SONDAGE completion apres Fabrique. => ${items.size} items — " +
+                items.take(8).joinToString { it.label },
+        )
         assertTrue(
             items.any { it.label.startsWith("creer") },
             "creer doit s'offrir après Fabrique. (ADR 0220) — obtenu : ${items.map { it.label }}",
@@ -248,12 +273,13 @@ actual class Plateforme actual constructor(actual val nom: String) {
         // DÉFINITION de l'expect : commonMain D'ABORD (miroir Android
         // Studio — l'expect est la cible première, l'actual suit).
         val definitions =
-            tds.definition(
-                org.eclipse.lsp4j.DefinitionParams(
-                    org.eclipse.lsp4j.TextDocumentIdentifier(uri),
-                    position(sourceCommon, "platformName"),
-                ),
-            ).join()
+            tds
+                .definition(
+                    org.eclipse.lsp4j.DefinitionParams(
+                        org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                        position(sourceCommon, "platformName"),
+                    ),
+                ).join()
         val urisGauche = (definitions?.left ?: emptyList()).map { it.uri }
         val urisDroite =
             (definitions?.right as? List<*>)
@@ -265,7 +291,7 @@ actual class Plateforme actual constructor(actual val nom: String) {
         assertTrue(
             urisDefinitions.any { it.endsWith("Platform.kt") },
             "la définition de l'expect vit dans Platform.kt : $urisDefinitions",
-            )
+        )
 
         // androidMain/Platform.android.kt — les ACTUAL.
         val fichierAndroid = File(android, "Platform.android.kt")
@@ -288,11 +314,12 @@ actual class Plateforme actual constructor(actual val nom: String) {
         // companion-file AndroidGreeting (usage des actuals).
         val fichierUsage = File(android, "Usage.android.kt")
         fichierUsage.writeText(
-            """package com.example.kmp
+            """
+            package com.example.kmp
 
 fun salutAndroid(): String =
   platformName() + Plateforme("Nexus").salut() + Fabrique.creer()
-""".trimIndent(),
+            """.trimIndent(),
         )
         val uriUsage = fichierUsage.toURI().toString()
         serveur.textDocumentService.didOpen(
@@ -313,10 +340,11 @@ fun salutAndroid(): String =
         // signalée au milieu des expect.
         val fichierTypo = File(common, "Typo.kt")
         fichierTypo.writeText(
-            """package com.example.kmp
+            """
+            package com.example.kmp
 
 fun demo(): String = platformNaim()
-""".trimIndent(),
+            """.trimIndent(),
         )
         val uriTypo = fichierTypo.toURI().toString()
         serveur.textDocumentService.didOpen(

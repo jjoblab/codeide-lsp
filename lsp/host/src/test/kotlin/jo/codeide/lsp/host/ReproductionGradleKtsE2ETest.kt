@@ -51,7 +51,8 @@ class ReproductionGradleKtsE2ETest {
         override fun showMessageRequest(
             params: org.eclipse.lsp4j.ShowMessageRequestParams,
         ): java.util.concurrent.CompletableFuture<org.eclipse.lsp4j.MessageActionItem> =
-            java.util.concurrent.CompletableFuture.completedFuture(null)
+            java.util.concurrent.CompletableFuture
+                .completedFuture(null)
 
         override fun logMessage(params: org.eclipse.lsp4j.MessageParams) {
             // Ignoré : l'espion ne collecte que publishDiagnostics.
@@ -69,7 +70,9 @@ class ReproductionGradleKtsE2ETest {
         val jarStdlib =
             File(
                 checkNotNull(
-                    kotlin.jvm.internal.Intrinsics::class.java.protectionDomain?.codeSource?.location,
+                    kotlin.jvm.internal.Intrinsics::class.java.protectionDomain
+                        ?.codeSource
+                        ?.location,
                 ) { "stdlib introuvable" }.toURI(),
             )
         val resultat =
