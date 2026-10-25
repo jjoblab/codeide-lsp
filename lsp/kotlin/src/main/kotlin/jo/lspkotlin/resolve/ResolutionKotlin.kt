@@ -64,24 +64,35 @@ internal class ResolutionKotlin(
      * les classes du projet (n'importe quel paquet : la résolution en
      * dehors des imports est possible si le nom est UNIQUE au projet).
      * `null` sinon — conservateur.
+     *
+     * ADR 0223 : le nom écrit est NORMALISÉ avant résolution — les
+     * conventions nullables et génériques du TYPE (`String?`,
+     * `List<Int>`) ne changent PAS l'identité de la classe cible
+     * (miroir `TypageExpression.traduireTypeEcrit`, qui normalise
+     * déjà les retours écrits des membres du projet) : sans cette
+     * normalisation, TOUT récepteur local de type nullable ou
+     * générique (`binding?.root`, `items.size`) restait muet — le
+     * typage, la complétion membre ET la sélection par types complets.
      */
     internal fun fqcnDuNomEcrit(
         nomEcrit: String,
         contexte: ContexteNom,
     ): String? {
-        contexte.importsParNom[nomEcrit]?.let { return it }
+        val nom = nomEcrit.substringBefore('<').trim().trimEnd('?')
+        if (nom.isEmpty()) return null
+        contexte.importsParNom[nom]?.let { return it }
         contexte.paquet?.let { paquet ->
-            contexte.classesProjet["$paquet.$nomEcrit"]?.let { return it }
+            contexte.classesProjet["$paquet.$nom"]?.let { return it }
         }
-        IMPORTS_DEFAUT[nomEcrit]?.let { return it }
+        IMPORTS_DEFAUT[nom]?.let { return it }
         // Import joker : le paquet importé porte-t-il CE nom ? La vue
         // répond (typesDansPaquet — ni plus ni moins).
         for (paquetJoker in contexte.importsJoker) {
-            if (vue?.typesDansPaquet(paquetJoker)?.any { it == "$paquetJoker.$nomEcrit" } == true) {
-                return "$paquetJoker.$nomEcrit"
+            if (vue?.typesDansPaquet(paquetJoker)?.any { it == "$paquetJoker.$nom" } == true) {
+                return "$paquetJoker.$nom"
             }
-            if (contexte.classesProjet["$paquetJoker.$nomEcrit"] != null) {
-                return "$paquetJoker.$nomEcrit"
+            if (contexte.classesProjet["$paquetJoker.$nom"] != null) {
+                return "$paquetJoker.$nom"
             }
         }
         // Nom unique au projet (tous paquets) : résolu sans import
@@ -89,7 +100,7 @@ internal class ResolutionKotlin(
         // bibliothèques ; AMBIGU = null (deux classes homonymes).
         // Un fqcn SANS PAQUET (« Base ») porte l'égalité stricte ; un
         // fqcn qualifié porte le suffixe « .nom ».
-        val porteurs = contexte.classesProjet.values.filter { it == nomEcrit || it.endsWith(".$nomEcrit") }
+        val porteurs = contexte.classesProjet.values.filter { it == nom || it.endsWith(".$nom") }
         if (porteurs.size == 1) return porteurs.single()
         return null
     }
@@ -97,9 +108,9 @@ internal class ResolutionKotlin(
     /**
      * Chaîne de supertypes de [fqcn] (LE fqcn inclus, superclasse et
      * interfaces récursivement) — profondeur bornée (BORN_PROFONDEUR),
-     * cycles coupés, cache plat. Vide (fqcn seul) si la classe ne se
-     * lit pas — la complétion membre retombe sur les membres DÉCLARÉS
-     * (sous-rapport D3).
+     * budget total de maillons (BORN_MAILLONS), cycles coupés, cache
+     * plat. Vide (fqcn seul) si la classe ne se lit pas — la complétion
+     * membre retombe sur les membres DÉCLARÉS (sous-rapport D3).
      *
      * ADR 0205 : les octets d'un maillon sont lus via la variante
      * aliasée JVM au premier échec (`kotlin.String` est une FICTION du
@@ -110,6 +121,17 @@ internal class ResolutionKotlin(
      * Int, Long, Boolean, Comparable — aucune méthode DÉCLARÉE de ces
      * types ne résolvait (les extensions, elles, passent par
      * `variantesRecepteur` qui sonde déjà les deux clés).
+     *
+     * ADR 0219 : la borne de PROFONDEUR 6 coupait la hiérarchie Android
+     * RÉELLE avant `android.content.Context` — la chaîne
+     * AppCompatActivity → FragmentActivity → activity.ComponentActivity
+     * → core.ComponentActivity → Activity → ContextThemeWrapper →
+     * ContextWrapper → Context exige PROFONDEUR 7 (et les bibliothèques
+     * futures peuvent empiler plus haut) : `getString`/`getColor`/
+     * `getDrawable` vivaient au maillon 7 et restaient des faux
+     * `kt.unresolved` alors que le classpath portait tout. Miroir
+     * Android Studio : la chaîne parcourue est la fermeture COMPLÈTE
+     * (aucune borne arbitraire en dessous des hiérarchies réelles).
      */
     internal fun chaineSupertypes(fqcn: String): List<String> {
         cacheSupertypes[fqcn]?.let { return it }
@@ -117,6 +139,7 @@ internal class ResolutionKotlin(
         val vus = HashSet<String>()
         fun visiter(courant: String?, profondeur: Int) {
             if (courant == null || courant in vus || profondeur > BORN_PROFONDEUR) return
+            if (chaine.size >= BORN_MAILLONS) return
             vus.add(courant)
             chaine.add(courant)
             val octets = octetsClasseAvecAlias(courant) ?: return
@@ -244,6 +267,141 @@ internal class ResolutionKotlin(
         return variantes
     }
 
+    // ── Propriétés synthétiques Java (ADR 0219) ─────────────────────────
+    //
+    // Interop cœur du langage (miroir Android Studio / kotlinc) : un
+    // getter Java `getFoo()` est lisible comme propriété `foo`. Dans le
+    // monde non-Compose c'est LA majorité des accès — `layoutInflater`,
+    // `packageManager`, `classLoader`, `contentResolver` (Context),
+    // `binding.root`-adjacents, `title = …` via setTitle… Sans cette
+    // synthèse, TOUT nom nu de propriété-getter dans une Activity était
+    // un faux `kt.unresolved`.
+
+    /**
+     * GETTER synthétique du nom de propriété [nom] sur la chaîne de
+     * [fqcn] — méthode `getFoo()`/`isFoo()` publique ou protégée, NON
+     * statique, SANS paramètre et au retour NON void, premier porteur
+     * de la chaîne (surcharges par nom seule — K3).
+     *
+     * @return la méthode portante et son propriétaire, `null` sinon.
+     */
+    internal fun getterSynthetique(
+        fqcn: String,
+        nom: String,
+    ): MemeJvmNomme? {
+        for (candidat in listOf("get${nom.majusculePremier()}", "is${nom.majusculePremier()}")) {
+            for (courant in chaineSupertypes(fqcn)) {
+                val membres = membresDe(courant) ?: continue
+                val methode =
+                    membres.methodes.firstOrNull { m ->
+                        m.nom == candidat && estAccesseurValide(m, unParametre = false)
+                    }
+                if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
+            }
+        }
+        return null
+    }
+
+    /**
+     * SETTER synthétique du nom de propriété [nom] sur la chaîne de
+     * [fqcn] — méthode `setFoo(v)` publique ou protégée, NON statique,
+     * à UN paramètre ; une AFFECTATION nu `title = …` prouve sa
+     * résolution par son existence (miroir kotlinc).
+     */
+    internal fun setterSynthetique(
+        fqcn: String,
+        nom: String,
+    ): MemeJvmNomme? {
+        val candidat = "set${nom.majusculePremier()}"
+        for (courant in chaineSupertypes(fqcn)) {
+            val membres = membresDe(courant) ?: continue
+            val methode =
+                membres.methodes.firstOrNull { m ->
+                    m.nom == candidat && estAccesseurValide(m, unParametre = true)
+                }
+            if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
+        }
+        return null
+    }
+
+    /**
+     * ACCESSEUR (getter OU setter) synthétique — le prédicat du
+     * diagnostic `kt.unresolved` (voie 2-ter) : l'un OU l'autre prouve
+     * la résolution d'un nom nu de propriété Java.
+     */
+    internal fun accesseurSynthetique(
+        fqcn: String,
+        nom: String,
+    ): MemeJvmNomme? =
+        getterSynthetique(fqcn, nom) ?: setterSynthetique(fqcn, nom)
+
+    /** Première lettre en MAJUSCULE (`layoutInflater` → `LayoutInflater`). */
+    private fun String.majusculePremier(): String =
+        if (isEmpty() || this[0].isUpperCase()) this else replaceFirstChar { it.uppercaseChar() }
+
+    /**
+     * Un membre JVM est-il un ACCESSEUR offrable : public ou protégé
+     * (le contexte d'appel est TOUJOURS une sous-classe ou une
+     * instance), NON statique (les propriétés synthétiques statiques
+     * n'existent pas en Kotlin), et de l'arité demandée — getter :
+     * ZÉRO paramètre et retour NON void (`()Ljava/lang/String;`) ;
+     * setter : UN paramètre exactement (`(Ljava/lang/CharSequence;)V`).
+     */
+    private fun estAccesseurValide(
+        methode: MembreJvmKotlin,
+        unParametre: Boolean,
+    ): Boolean {
+        if (methode.drapeaux and DRAPEAU_ACCES_PUBLIC == 0 &&
+            methode.drapeaux and DRAPEAU_ACCES_PROTEGE == 0
+        ) {
+            return false
+        }
+        if (methode.drapeaux and DRAPEAU_ACCES_STATIQUE != 0) return false
+        if (methode.nom == "getClass") return false // kotlinc n'en fait JAMAIS une propriété
+        if (methode.nom.startsWith("<") || methode.nom.contains('$')) return false
+        val traduit = traduireDescripteur(methode.descripteur)
+        return if (unParametre) {
+            traduit.parametres.size == 1
+        } else {
+            traduit.parametres.isEmpty() && traduit.retour != "void"
+        }
+    }
+
+    /**
+     * NOM de propriété synthétique d'une méthode accesseur — direction
+     * MIROIR (complétion membre) : `getLayoutInflater` →
+     * `layoutInflater`, `getURL` → `URL` (deux majuscules de suite
+     * restent — patron JavaBeans/kotlinc), `isFocused` → `focused`.
+     * `null` si la méthode n'est pas un accesseur.
+     */
+    internal fun proprieteSynthetiqueDe(methode: MembreJvmKotlin): String? {
+        if (methode.drapeaux and DRAPEAU_ACCES_STATIQUE != 0) return null
+        if (methode.nom == "getClass") return null
+        val nomMethode = methode.nom
+        val apresGet = nomMethode.removePrefix("get")
+        val apresIs = nomMethode.removePrefix("is")
+        val prefixe =
+            when {
+                apresGet.length < nomMethode.length && apresGet.isNotEmpty() &&
+                    apresGet.first().isUpperCase() -> apresGet
+
+                apresIs.length < nomMethode.length && apresIs.isNotEmpty() &&
+                    apresIs.first().isUpperCase() -> apresIs
+
+                else -> return null
+            }
+        if (prefixe.isEmpty() || prefixe.any { it == '$' }) return null
+        // Deux majuscules de tête restent (getURL → URL) ; sinon la
+        // première passe en minuscule (getLayoutInflater → layoutInflater).
+        return if (prefixe.length > 1 &&
+            prefixe[0].isUpperCase() && prefixe[1].isUpperCase()
+        ) {
+            prefixe
+        } else {
+            prefixe.replaceFirstChar { it.lowercaseChar() }
+        }
+    }
+
     // ── Descripteurs JVM ───────────────────────────────────────────────
 
     /**
@@ -322,8 +480,31 @@ internal class ResolutionKotlin(
     }
 
     private companion object {
-        /** Profondeur maximale de la chaîne de supertypes. */
-        private const val BORN_PROFONDEUR: Int = 6
+        /** Drapeau d'accès JVM `public` (0x0001). */
+        private const val DRAPEAU_ACCES_PUBLIC: Int = 0x0001
+
+        /** Drapeau d'accès JVM `protected` (0x0004). */
+        private const val DRAPEAU_ACCES_PROTEGE: Int = 0x0004
+
+        /** Drapeau d'accès JVM `static` (0x0008). */
+        private const val DRAPEAU_ACCES_STATIQUE: Int = 0x0008
+
+        /**
+         * Profondeur maximale de la chaîne de supertypes — ADR 0219 :
+         * 12 couvre les hiérarchies Android réelles (AppCompatActivity
+         * → … → Context = profondeur 7) avec marge pour les arbres
+         * d'interfaces (l'ordre visite la superclasse AVANT les
+         * interfaces : la chaîne de classes reste prioritaire dans la
+         * liste aplatie, miroir de la résolution Java).
+         */
+        private const val BORN_PROFONDEUR: Int = 12
+
+        /**
+         * Budget TOTAL de maillons par chaîne (ADR 0219) — défense des
+         * hiérarchies pathologiques (interfaces en losange) : la fermeture
+         * reste bornée même quand la profondeur seule ne suffit pas.
+         */
+        private const val BORN_MAILLONS: Int = 256
 
         /** Paquets importés PAR DÉFAUT par Kotlin sur JVM (ADR 0203 —
          *  https://kotlinlang.org/docs/packages.html#default-imports) :
@@ -507,6 +688,28 @@ internal class ResolutionKotlin(
                 "java.lang.Long" to "kotlin.Long",
                 "java.lang.Boolean" to "kotlin.Boolean",
                 "java.lang.Comparable" to "kotlin.Comparable",
+                // ADR 0218 — hiérarchie des COLLECTIONS : la chaîne des
+                // supertypes lue dans les OCTETS JVM produit des noms JAVA
+                // (java.util.Collection), mais les clés d'extension de
+                // l'index portent les FQCN KOTLIN (kotlin.collections.
+                // Iterable — le récepteur ÉCRIT dans les métadonnées).
+                // Sans la traduction, `filter`/`map`/`forEach` (extensions
+                // sur Iterable) étaient INTROUVABLES depuis List/Set/Map —
+                // miroir Android Studio : le survol/complétion de tout
+                // appel de collection standard doit répondre.
+                "java.lang.Iterable" to "kotlin.collections.Iterable",
+                "java.util.Collection" to "kotlin.collections.Collection",
+                "java.util.List" to "kotlin.collections.List",
+                "java.util.Set" to "kotlin.collections.Set",
+                "java.util.Map" to "kotlin.collections.Map",
+                "java.util.Iterator" to "kotlin.collections.Iterator",
+                "java.util.ListIterator" to "kotlin.collections.ListIterator",
+                "java.lang.CharSequence" to "kotlin.CharSequence",
+                "java.lang.Number" to "kotlin.Number",
+                "java.lang.Enum" to "kotlin.Enum",
+                "java.lang.Throwable" to "kotlin.Throwable",
+                "java.util.Comparator" to "kotlin.Comparator",
+                "java.util.Map.Entry" to "kotlin.collections.Map.Entry",
             )
 
         private val ALIAS_KOTLIN_JVM: Map<String, String> =
@@ -515,6 +718,25 @@ internal class ResolutionKotlin(
                 "kotlin.Int" to "java.lang.Integer",
                 "kotlin.Long" to "java.lang.Long",
                 "kotlin.Boolean" to "java.lang.Boolean",
+                // ADR 0218 — direction MIROIR : `chaineSupertypes` lit les
+                // octets d'un maillon via CETTE carte (kotlin.collections.
+                // List n'a AUCUN .class — son bytecode vit sous java.util.
+                // List) ; sans elle, la chaîne s'arrêtait au premier
+                // maillon pour TOUTE la hiérarchie des collections.
+                "kotlin.collections.Iterable" to "java.lang.Iterable",
+                "kotlin.collections.Collection" to "java.util.Collection",
+                "kotlin.collections.List" to "java.util.List",
+                "kotlin.collections.Set" to "java.util.Set",
+                "kotlin.collections.Map" to "java.util.Map",
+                "kotlin.collections.Iterator" to "java.util.Iterator",
+                "kotlin.collections.ListIterator" to "java.util.ListIterator",
+                "kotlin.CharSequence" to "java.lang.CharSequence",
+                "kotlin.Number" to "java.lang.Number",
+                "kotlin.Enum" to "java.lang.Enum",
+                "kotlin.Throwable" to "java.lang.Throwable",
+                "kotlin.Comparable" to "java.lang.Comparable",
+                "kotlin.Comparator" to "java.util.Comparator",
+                "kotlin.collections.Map.Entry" to "java.util.Map.Entry",
             )
 
         /** Rendus courts fixes (primitives, java.lang usuels). */

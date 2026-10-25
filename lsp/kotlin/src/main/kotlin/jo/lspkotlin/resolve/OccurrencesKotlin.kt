@@ -120,7 +120,17 @@ internal object OccurrencesKotlin {
         uri: String,
         contexte: InterrogationsSymboles.Contexte,
     ): Cible? {
-        val jeton = InterrogationsSymboles.identifiantA(racine, decalage) ?: return null
+        val jeton = InterrogationsSymboles.identifiantA(racine, decalage)
+        // ADR 0218 — REPLI Android Studio : le curseur sur le MOT-CLÉ ou
+        // la ponctuation de l'EN-TÊTE d'une déclaration (`fun`, `class`,
+        // `override`, `(`, `:` — aucun identifiant sous le curseur) vise
+        // la DÉCLARATION ENGLOBANTE : Find Usages y répond dans Android
+        // Studio (l'élément sous le curseur est la déclaration entière).
+        // Borné à l'EN-TÊTE : le CORPS appartient aux déclarations locales
+        // et aux expressions, jamais à la déclaration englobante.
+        if (jeton == null) {
+            return cibleDeclarationEnglobante(racine, decalage, uri, contexte)
+        }
         val nom = jeton.texte.toString()
         // 1. Nom DÉCLARÉ sous le curseur (locale comprise) — la plus
         //    profonde des déclarations VIVES porte le jeton.
@@ -181,6 +191,91 @@ internal object OccurrencesKotlin {
             }
         return cibleDesambiguee(candidates, contexte.contexteNom.paquet)
     }
+
+    /**
+     * Cible de la DÉCLARATION dont l'EN-TÊTE porte [decalage] (ADR 0218,
+     * repli Android Studio — curseur hors identifiant) : la plus
+     * profonde des déclarations VIVES dont l'EN-TÊTE contient le curseur.
+     * L'en-tête = la SIGNATURE (modificateurs, paramètres, types, supertypes)
+     * — il se termine au premier enfant qui n'est PAS un constituant de
+     * signature : le CORPS (bloc, corps de classe) ou l'INITIALISEUR
+     * (littéral, expression). Une propriété se vise sur `val`/son nom/
+     * son type, PAS dans son initialiseur ; une fonction sur `fun`/sa
+     * signature, PAS dans son corps (miroir Find Usages/Rename IntelliJ).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount/LoopWithTooMany-
+     * JumpStatements/CyclomaticComplexMethod — chaque garde du parcours
+     * (pas une déclaration, hors plage, dans le CORPS, jeton absent) est
+     * une ISSUE distincte, même patron que [declarationViveAuCurseur].
+     */
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements", "CyclomaticComplexMethod")
+    private fun cibleDeclarationEnglobante(
+        racine: NoeudSyntaxique,
+        decalage: Int,
+        uri: String,
+        contexte: InterrogationsSymboles.Contexte,
+    ): Cible? {
+        val chaine = chaineAncetresA(racine, decalage)
+        for (profondeur in chaine.indices.reversed()) {
+            val declaration = KtElement.depuis(chaine[profondeur]) as? KtDeclaration ?: continue
+            if (decalage < declaration.debut || decalage > declaration.fin) continue
+            val finEntete = finEnteteDe(chaine[profondeur])
+            if (decalage >= finEntete) continue // dans le CORPS/l'initialiseur
+            val jeton = declaration.nomJeton() ?: continue
+            val regime = regimeDe(chaine, profondeur, contexte.contexteNom.paquet)
+            val genre =
+                when {
+                    regime is RegimePortee.LOCALE -> GenreDeclaration.LOCALE
+                    regime is RegimePortee.MEMBRE &&
+                        declaration is jo.lspkotlin.parse.kt.KtParameter &&
+                        declaration.estPropriete() -> GenreDeclaration.PROPRIETE
+                    else -> genreVif(declaration)
+                }
+            val projection =
+                DeclarationProjet(
+                    genre = genre,
+                    nom = jeton.texte.toString(),
+                    uri = uri,
+                    debutNom = jeton.debut,
+                    finNom = jeton.fin,
+                    paquet = contexte.contexteNom.paquet,
+                    recepteur = recepteurVif(declaration),
+                    typeRetour = null,
+                    parametres = emptyList(),
+                    conteneur = regime.conteneur,
+                )
+            val fileLocal =
+                genre == GenreDeclaration.LOCALE || genre == GenreDeclaration.PARAMETRE
+            return cibleDe(projection, fileLocal = fileLocal)
+        }
+        return null
+    }
+
+    /**
+     * Fin de l'EN-TÊTE (signature) d'un noeud de déclaration : le début
+     * du PREMIER enfant qui n'est PAS un constituant de signature —
+     * le corps (bloc, corps de classe) ou l'initialiseur (expression,
+     * littéral, délégué). Une déclaration TOUTE entière signature (ni
+     * corps ni initialiseur) rend la fin du noeud.
+     */
+    private fun finEnteteDe(noeud: NoeudSyntaxique): Int {
+        for (enfant in noeud.sousNoeuds) {
+            if (enfant.type !in CONSTITUANTS_SIGNATURE) return enfant.debut
+        }
+        return noeud.fin
+    }
+
+    /** Constituants de SIGNATURE d'une déclaration (tout le reste termine l'en-tête). */
+    private val CONSTITUANTS_SIGNATURE =
+        setOf(
+            KtNodeTypes.MODIFIER_LIST,
+            KtNodeTypes.VALUE_PARAMETER_LIST,
+            KtNodeTypes.TYPE_PARAMETER_LIST,
+            KtNodeTypes.TYPE_REFERENCE,
+            KtNodeTypes.SUPER_TYPE_LIST,
+            KtNodeTypes.PRIMARY_CONSTRUCTOR,
+            KtNodeTypes.SECONDARY_CONSTRUCTOR,
+        )
 
     /**
      * Déclaration VIVE dont le nom est sous le curseur (miroir de la
@@ -528,12 +623,21 @@ internal object OccurrencesKotlin {
                 preuve.contexte.contexteNom,
                 preuve.resolution,
                 preuve.contexte.declarations,
-            ) ?: return null
+            )
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : le nom de classe PRÊTE les membres
+                // de son compagnon — la preuve d'occurrence sonde aussi
+                // le conteneur IMBRIQUÉ sous le type statique.
+                ?: TypageExpression.typeStatiqueDe(recepteur, preuve.contexte.contexteNom, preuve.resolution)
+                ?: return null
         val attendu =
             cible.conteneur ?: cible.recepteur?.let { recepteur ->
                 preuve.resolution.fqcnDuNomEcrit(recepteur, preuve.contexte.contexteNom)
             } ?: return null
-        return if (preuve.resolution.chaineSupertypes(typeRecepteur).contains(attendu)) {
+        val chaine = preuve.resolution.chaineSupertypes(typeRecepteur)
+        return if (chaine.contains(attendu) ||
+            (recepteur.type == KtNodeTypes.REFERENCE_EXPRESSION && attendu.startsWith("$typeRecepteur."))
+        ) {
             Occurrence(jeton.debut, jeton.fin, false)
         } else {
             null
@@ -611,11 +715,19 @@ internal object OccurrencesKotlin {
 
     /** Nom de la classe/objet porté par un nœud conteneur (null sans nom). */
     private fun nomConteneur(noeud: NoeudSyntaxique): String? =
-        noeud
-            .jetonsDescendants()
-            .firstOrNull { it.type == KtTokens.IDENTIFIER }
-            ?.texte
-            ?.toString()
+        if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+            // ADR 0222 : un companion ANONYME porte « Companion » — le
+            // repli générique au premier IDENTIFIER y lirait un MEMBRE.
+            val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+            objet.nomObjet()?.texte?.toString()
+                ?: if (objet.estCompanion()) "Companion" else null
+        } else {
+            noeud
+                .jetonsDescendants()
+                .firstOrNull { it.type == KtTokens.IDENTIFIER }
+                ?.texte
+                ?.toString()
+        }
 
     /**
      * Occurrence d'un APPELABLE top-level : le fichier doit VOIR la

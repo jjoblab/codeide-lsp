@@ -83,6 +83,7 @@ internal object InterrogationsSymboles {
         return survolNomDeclare(racine, decalage, contexte)
             ?: survolLocale(nom, racine, decalage)
             ?: survolMembreQualifie(nom, chaine, decalage, contexte)
+            ?: survolMembreImplicite(nom, racine, decalage, contexte)
             ?: survolDeclarationProjet(nom, racine, uri, contexte)
             ?: survolTypeClasspath(nom, contexte)
             ?: survolAppelablePortee(nom, contexte)
@@ -443,7 +444,15 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
      * champ absent, méthode absente, extension absente) est le contrat
      * même du conservatisme D3 : chaque échec est une ISSUE distincte.
      */
-    @Suppress("ReturnCount", "CyclomaticComplexMethod", "NestedBlockDepth", "LoopWithTooManyJumpStatements")
+    @Suppress(
+        "ReturnCount",
+        "CyclomaticComplexMethod",
+        "NestedBlockDepth",
+        "LoopWithTooManyJumpStatements",
+        // ADR 0219 : la sonde de propriété SYNTHÉTIQUE Java (getter +
+        // var/val par setter) est une ISSUE de plus de la cascade.
+        "LongMethod",
+    )
     private fun survolMembreQualifie(
         nom: String,
         chaine: List<NoeudSyntaxique>,
@@ -474,7 +483,13 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
                 contexte.contexteNom,
                 contexte.resolution,
                 contexte.declarationsProjet,
-            ) ?: return null
+            )
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : le nom de classe PRÊTE les membres
+                // de son compagnon (projet doublement émis, classpath
+                // `$Companion` sondé ci-dessous).
+                ?: TypageExpression.typeStatiqueDe(noeudRecepteur, contexte.contexteNom, contexte.resolution)
+                ?: return null
         // Champ : descripteur = type.
         val champ = contexte.resolution.champsNommes(typeRecepteur, nom).firstOrNull()
         if (champ != null) {
@@ -491,6 +506,38 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
                 "fun $nom($rendu): ${contexte.resolution.renduCourt(traduit.retour)} — ${methode.proprietaire}",
             )
         }
+        // Propriété SYNTHÉTIQUE Java (ADR 0219) : `layoutInflater` sur un
+        // récepteur Context — le GETTER porte le type, `var` quand le
+        // SETTER existe aussi (miroir Android Studio).
+        val getter = contexte.resolution.getterSynthetique(typeRecepteur, nom)
+        if (getter != null) {
+            val type =
+                contexte.resolution.renduCourt(
+                    contexte.resolution.traduireDescripteur(getter.methode.descripteur).retour,
+                )
+            val motCle =
+                if (contexte.resolution.setterSynthetique(typeRecepteur, nom) != null) "var" else "val"
+            return ContenuSurvoleKotlin("$motCle $nom: $type — ${getter.proprietaire}")
+        }
+        // COMPANION du classpath (ADR 0222) : les membres d'instance du
+        // compagnon (`fqcn$Companion`) sont accessibles par le NOM de la
+        // classe — champ puis méthode, miroir des cascades ci-dessus.
+        val compagnon = typeRecepteur + "\$Companion"
+        val champCompagnon = contexte.resolution.champsNommes(compagnon, nom).firstOrNull()
+        if (champCompagnon != null) {
+            val traduit = contexte.resolution.traduireDescripteur("()${champCompagnon.descripteur}")
+            val type = if (traduit.retour == "void") "?" else contexte.resolution.renduCourt(traduit.retour)
+            return ContenuSurvoleKotlin("val $nom: $type")
+        }
+        val methodeCompagnon = contexte.resolution.methodesNommees(compagnon, nom).firstOrNull()
+        if (methodeCompagnon != null) {
+            val traduit = contexte.resolution.traduireDescripteur(methodeCompagnon.methode.descripteur)
+            val rendu = traduit.parametres.joinToString(", ") { contexte.resolution.renduCourt(it) }
+            return ContenuSurvoleKotlin(
+                "fun $nom($rendu): ${contexte.resolution.renduCourt(traduit.retour)}" +
+                    " — ${methodeCompagnon.proprietaire}",
+            )
+        }
         // Extension de l'index sur ce récepteur (ou un supertype/alias).
         for (courant in contexte.resolution.chaineSupertypes(typeRecepteur)) {
             for (variante in contexte.resolution.variantesRecepteur(courant)) {
@@ -502,6 +549,69 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
                             extension.typeRetour.orEmpty().let { if (it.isEmpty()) "" else ": $it" },
                     )
                 }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Survol d'un membre du this IMPLICITE (ADR 0219) — nom NU dans le
+     * corps d'une classe : `layoutInflater`, `getString`, `title`… La
+     * chaîne de supertypes de la classe ENGLOBANTE porte champ, méthode
+     * ou GETTER synthétique, chacun rendu comme le membre QUALIFIÉ
+     * (miroir Android Studio : le survol d'un implicite ne diffère
+     * JAMAIS de celui de la forme explicite `this.membre`).
+     *
+     * Exemptions detekt ciblées (règle 16) : ReturnCount — la cascade
+     * champ → méthode → getter synthétique est une ISSUE par étape,
+     * même patron que survolMembreQualifie.
+     */
+    @Suppress("ReturnCount")
+    private fun survolMembreImplicite(
+        nom: String,
+        racine: NoeudSyntaxique,
+        decalage: Int,
+        contexte: Contexte,
+    ): ContenuSurvoleKotlin? {
+        val classe =
+            TypageExpression.classeEnglobante(racine, decalage, contexte.contexteNom) ?: return null
+        // La classe PROJET est INVISIBLE de la vue classpath : la classe
+        // elle-même (synthétiques K5) puis ses SUPERTYPES ÉCRITS résolus,
+        // chacun portant TOUTE sa chaîne binaire (ADR 0219 — miroir de
+        // typeMembreImplicite et de la voie 2-ter du diagnostic).
+        val porteurs =
+            listOf(classe) +
+                TypageExpression.fqcnsSupertypesEnglobants(
+                    racine, decalage, contexte.contexteNom, contexte.resolution, contexte.declarationsProjet,
+                )
+        for (porteur in porteurs) {
+            // Champ hérité : descripteur = type.
+            val champ = contexte.resolution.champsNommes(porteur, nom).firstOrNull()
+            if (champ != null) {
+                val traduit = contexte.resolution.traduireDescripteur("()${champ.descripteur}")
+                val type = if (traduit.retour == "void") "?" else contexte.resolution.renduCourt(traduit.retour)
+                return ContenuSurvoleKotlin("val $nom: $type")
+            }
+            // Méthode héritée : signature + propriétaire.
+            val methode = contexte.resolution.methodesNommees(porteur, nom).firstOrNull()
+            if (methode != null) {
+                val traduit = contexte.resolution.traduireDescripteur(methode.methode.descripteur)
+                val rendu = traduit.parametres.joinToString(", ") { contexte.resolution.renduCourt(it) }
+                return ContenuSurvoleKotlin(
+                    "fun $nom($rendu): ${contexte.resolution.renduCourt(traduit.retour)} — ${methode.proprietaire}",
+                )
+            }
+            // GETTER synthétique : `val layoutInflater: LayoutInflater —
+            // android.app.Activity`.
+            val getter = contexte.resolution.getterSynthetique(porteur, nom)
+            if (getter != null) {
+                val type =
+                    contexte.resolution.renduCourt(
+                        contexte.resolution.traduireDescripteur(getter.methode.descripteur).retour,
+                    )
+                val motCle =
+                    if (contexte.resolution.setterSynthetique(porteur, nom) != null) "var" else "val"
+                return ContenuSurvoleKotlin("$motCle $nom: $type — ${getter.proprietaire}")
             }
         }
         return null

@@ -191,7 +191,13 @@ internal object SignaturesAppels {
                 contexte.contexteNom,
                 contexte.resolution,
                 contexte.declarationsProjet,
-            ) ?: return emptyList()
+            )
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : les méthodes du COMPANION du
+                // classpath et du projet (double émission) sont des
+                // candidates de l'appel par le nom de la classe.
+                ?: TypageExpression.typeStatiqueDe(recepteur, contexte.contexteNom, contexte.resolution)
+                ?: return emptyList()
         val shortRecepteur = typeRecepteur.substringAfterLast('.')
         // 1. Membres du récepteur PROJET : conteneur homonyme du type
         //    résolu (le qualifié court correspond), extensions projet
@@ -209,10 +215,15 @@ internal object SignaturesAppels {
         val methodesJvm =
             contexte.resolution.methodesNommees(typeRecepteur, nom)
                 .map { methode -> candidateMethodeJvm(nom, methode, contexte) }
+        // 2 bis. ADR 0222 : méthodes du COMPANION du classpath — le nom
+        //    de la classe prête les membres d'instance du compagnon.
+        val methodesCompagnon =
+            contexte.resolution.methodesNommees(typeRecepteur + "\$Companion", nom)
+                .map { methode -> candidateMethodeJvm(nom, methode, contexte) }
         // 3. Extensions de l'index sur ce récepteur (supertypes et
         //    variantes de nommage compris, miroir du survol qualifié).
         val extensions = extensionsSur(typeRecepteur, nom, contexte).map { candidateAppelable(it) }
-        return dedupliquer(membresProjet + methodesJvm + extensions)
+        return dedupliquer(membresProjet + methodesJvm + methodesCompagnon + extensions)
     }
 
     /** Extensions de l'index portant [nom] SUR le récepteur résolu. */

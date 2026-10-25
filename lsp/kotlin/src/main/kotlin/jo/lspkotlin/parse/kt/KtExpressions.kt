@@ -74,7 +74,14 @@ internal fun estExpression(type: SyntaxElementType): Boolean = type in TYPES_EXP
  *        un curseur en FIN d'identifiant touche le jeton précédent).
  * @return la liste ordonnée racine→feuille ; VIDE si l'offset sort de
  *         l'arbre.
+ *
+ * Exemption detekt ciblée (règle 16) : NestedBlockDepth — la descente
+ * garde-niche-enfants (nœud vide traversé, enfant suivant porteur) est
+ * la STRUCTURE même de l'algorithme documentée à l'ADR 0218 (préférence
+ * d'enfant NON VIDE — la directive de paquet vide ne capture plus la
+ * descente à l'offset 0).
  */
+@Suppress("NestedBlockDepth")
 public fun chaineAncetresA(
     racine: NoeudSyntaxique,
     decalage: Int,
@@ -85,13 +92,31 @@ public fun chaineAncetresA(
     var descente = true
     while (descente) {
         descente = false
+        // ADR 0218 : un enfant de LARGEUR NULLE (la PACKAGE_DIRECTIVE vide
+        // et l'IMPORT_LIST vide sont TOUJOURS présents — découverte de
+        // parité K2) ne doit JAMAIS capturer la descente quand un enfant
+        // RÉEL contient le même décalage : à l'offset 0 d'un fichier SANS
+        // paquet (`fun …` en première ligne), la directive vide [0,0]
+        // gagnait et la chaîne mourait SANS jamais voir la déclaration —
+        // survol/références/renommage muets au tout début du fichier.
+        // Priorité : le premier enfant NON VIDE contenant le décalage ;
+        // un enfant vide ne sert que s'il est le SEUL contenant.
+        var videChoisi: NoeudSyntaxique? = null
         for (enfant in courant.enfants) {
             if (enfant is NoeudSyntaxique && enfant.debut <= decalage && decalage <= enfant.fin) {
-                chaine.add(enfant)
-                courant = enfant
-                descente = true
-                break
+                if (enfant.fin > enfant.debut) {
+                    chaine.add(enfant)
+                    courant = enfant
+                    descente = true
+                    break
+                }
+                if (videChoisi == null) videChoisi = enfant
             }
+        }
+        if (!descente && videChoisi != null) {
+            chaine.add(videChoisi)
+            courant = videChoisi
+            descente = true
         }
     }
     return chaine

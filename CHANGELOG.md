@@ -1,5 +1,221 @@
 # Changelog — codeide-lsp
 
+## 1.12.0 (2026-10-25)
+
+- **Chantier « suites recommandées du rapport d'audit §8 » — ADR
+  0222/0223** (les suites n° 3 et 4 livrées au moteur, les n° 1 et 2
+  documentées pour CodeIDE — `docs/INTEGRATION-CODEIDE-LSP-KOTLIN.md`).
+  - **Companion objects — ADR 0222** : le nom d'une classe Kotlin
+    PRÊTE les membres de son `companion object` (`Boite.creer()`,
+    `Regex.escape(…)`, `UInt.MAX_VALUE`) — le patron idiomatique
+    était un non-fonctionnement de bout en bout. Côté projet : le
+    compagnon ANONYME porte son nom effectif « Companion » (le repli
+    générique `nomJeton()` lisait le PREMIER MEMBRE — le compagnon
+    était enregistré « creer », ses membres sous « pkg.Boite.creer »,
+    et la même heuristique poisonnait `classeEnglobante`,
+    `nomConteneur` et `estMembreHerite`) ; les membres sont émis DEUX
+    FOIS (sous `pkg.Boite.Companion` ET sous la classe `pkg.Boite`).
+    Côté classpath : `fqcn$Companion` sondé sur le régime STATIQUE de
+    toutes les capacités — typage des chaînes, complétion membre,
+    survol, signatures, occurrences. L'OBJET « Companion » s'offre
+    après le nom de la classe, miroir kotlinc.
+  - **Sélection d'appelé par types complets — ADR 0223** : quand le
+    RÉCEPTEUR d'une sélection TYPE, la cascade du survol qualifié
+    (champ → méthode → accesseur synthétique → compagnon ADR 0222 →
+    membre du projet → extension sur le récepteur) décide. PRÉSENCE
+    PROUVÉE : le callee membre d'instance d'un récepteur typé RÉSOUT —
+    le faux positif LATENT `layoutInflater.inflate(1, null, null)`
+    (le callee membre n'est pas un appelable de portée, la résolution
+    par nom seul ne pouvait pas le trouver) est réparé. ABSENCE
+    PROUVÉE : `s.inexistant`, `tv.setTexe(…)` redeviennent signalés —
+    miroir Android Studio. Gardes D3 : classe illisible, session sans
+    entrées d'index (`connaitDesEntrees`), homonyme d'extension
+    quelconque → silence inchangé.
+  - **Typage nullables/génériques** (`fqcnDuNomEcrit`) : le nom écrit
+    est NORMALISÉ (`String?`, `List<Int>` → la classe cible, miroir
+    `traduireTypeEcrit`) — tout récepteur local de type nullable ou
+    générique (`binding?.root`, `items.size`) restait muet en typage,
+    complétion et sélection par types.
+  - **Modèle Gradle (suite §8.1, tranche livrée)** : E2E
+    `ReproductionGradleModeleE2ETest` — un script `.gradle.kts` à
+    classpath Gradle RÉEL (jars de la distribution) : zéro faux
+    `kt.unresolved`, `JavaVersion.VERSION_11` survolé et complété
+    (`VERSION_11 … VERSION_20`), le tout par la machinerie standard
+    SANS code dédié aux scripts ; le provisionnement et le routage
+    session-« scripts » sont documentés pour CodeIDE.
+  - **Sélectivité source sets KMP (suite §8.2)** : modèle documenté
+    pour CodeIDE (une session par source set, classpath par variante
+    Gradle) — l'union actuelle reste correcte en diagnostic.
+  - **Baseline de parité** : régénérée (`-Dparite.majBase=true`) — le
+    corpus du dépôt a gagné les nouveaux tests et les sources
+    modifiées.
+  - **Gardes de non-régression** : le VRAI négatif sélecteur
+    (`s.inexistant`) signalé au milieu du stdlib réel ; le récepteur
+    NON typable reste muet (D3 inchangé) ; l'objet simple (ADR 0220)
+    et le this implicite du corps du compagnon inchangés.
+
+## 1.11.0 (2026-10-25)
+
+- **Chantier « monde NON-Compose (Views) » — ADR 0219** (le deuxième
+  monde Android : vues XML, AppCompat, ViewBinding — même niveau de
+  conformité Android Studio que le monde Compose, zéro faux positif
+  sur le template canonique).
+  - **Bug CRITIQUE de l'index disque — les 8 octets du pool** :
+    `AnalyseurClassFile.lirePoolConstantes` incrémentait l'index des
+    constantes Long/Double (deux slots) sans SAUTER les 8 octets de
+    leur valeur — la constante suivante se lisait DANS la valeur et
+    TOUTE la section membres de la classe était perdue.
+    `android.content.Context` (seule classe de la chaîne AppCompat
+    portant un `long`) était muette : `getString`/`getColor`/
+    `getPackageName` introuvables — et toute classe du classpath
+    avec un `long`/`double` subissait le même sort (Java compris).
+    `FormatSegment.VERSION` passe à 2 : les segments v1 (CRC valide
+    de contenu faux) sont refusés et re-indexés paresseusement ; le
+    test « Long/Double deux slots » est renforcé (classe forgée AVEC
+    un long dans le pool — l'ancienne version ne forgeait jamais le
+    cas).
+  - **Profondeur de chaîne corrigée** : `BORN_PROFONDEUR` 6 → 12 +
+    budget total de 256 maillons — la hiérarchie Android réelle
+    (AppCompatActivity → … → Context) exige PROFONDEUR 7 :
+    `getString` vivait au maillon 7 et restait un faux
+    `kt.unresolved` alors que le classpath portait tout.
+  - **Propriétés SYNTHÉTIQUES Java** (interop cœur du langage,
+    miroir Android Studio) : un getter `getFoo()` se lit `foo` —
+    `layoutInflater` nu dans une Activity, `title = …` via
+    setTitle, `packageManager`, `classLoader`, `contentResolver`…
+    Le catalogue (`getterSynthetique`/`setterSynthetique`/
+    `proprieteSynthetiqueDe` — zéro paramètre, retour non void,
+    public/protégé, non statique, `getClass` exclu, `getURL` →
+    `URL`) alimente le DIAGNOSTIC (voie 2-ter + récepteur `with`),
+    le TYPAGE (sélecteurs, this implicite, appels nus — la chaîne
+    `layoutInflater.inflate(…)` type), la COMPLÉTION membre
+    (`val layoutInflater: LayoutInflater` offert en tête des listes
+    du monde non-Compose) et le SURVOL (qualifié et le NOUVEAU survol
+    implicite : `val layoutInflater: LayoutInflater —
+    android.app.Activity`, `var` quand le setter existe).
+  - **`super.` et `this.` au niveau Android Studio** : `super.` se
+    TYPE comme le premier supertype ÉCRIT résolu (repli classe
+    englobante) ; la complétion après `this.`/`super.` sonde la
+    classe + ses supertypes écrits (porteurs) — membres binaires,
+    membres projet et extensions : 100 items sur le template réel
+    (dont `theme`, `title`, `assets` — les synthétiques).
+  - **ViewBinding K5 dans son VRAI paquet** : AGP génère TOUJOURS
+    les bindings dans `<paquet>.databinding` (ViewBinding compris) —
+    l'import réel du template matche désormais le groupe synthétique
+    (complétion `binding.` offrant `root`/`textView`/`inflate`/
+    `bind` au lieu de rester muette).
+  - **Corpus E2E Views RÉEL** : 27 artefacts (kotlin-stdlib 2.2.10,
+    android-36, appcompat 1.7.0, fragment 1.8.5, activity 1.9.3,
+    core 1.15.0, core-ktx, lifecycle 2.8.7, savedstate, material
+    1.12.0, constraintlayout 2.2.0… — variable `REPRO_VIEWS_DIR`) ;
+    trois scénarios E2E : template « Empty Views Activity » (AUCUN
+    faux positif), VRAI négatif (`setContenuVeu` TOUJOURS signalé —
+    garde D3), forme ViewBinding (AUCUN faux positif + assertions :
+    survols `layoutInflater`/`getString`, complétions `binding.` et
+    `super.`). Moteur : `ReproductionViewsTest` (11 tests, chaîne
+    factice des 8 maillons réels) + `ReproductionViewBindingTest`.
+  - **Suites** : moteur 307, index 82, hôte 238 — toutes vertes,
+    corpus Compose ET Views branchés.
+- **Chantier « Kotlin MULTIPLATFORME » — ADR 0220** (le troisième
+  monde : module `shared` à DEUX racines sources — le paquet y vit
+  deux fois, expect dans commonMain, actual dans androidMain).
+  - **Membres d'OBJETS enfin scannés** : la branche `else` du scan
+    (`SymbolesProjet.extraire`) ajoutait la déclaration d'`object`
+    sans JAMAIS parcourir son corps — tout membre de singleton
+    Kotlin (`Fabrique.creer()`, `expect object` des libs KMP) était
+    un faux `kt.unresolved` : complétion et survol muets. La nouvelle
+    branche `KtObjectDeclaration` parcourt le corps (miroir exact de
+    la branche classe) — BONUS pour TOUT projet Kotlin, pas
+    seulement KMP.
+  - **Objets TYPES référençables** : `classesProjet` (la table de
+    `fqcnDuNomEcrit`) n'acceptait que classes et interfaces —
+    `Objet.membre` ne typait pas, la complétion membre après
+    `Fabrique.` était muette. Le genre OBJET rejoint la table.
+  - **Le reste du KMP tenait déjà** (constaté par reproduction
+    verrouillée) : `expect`/`actual` fun/class/val, `actual
+    typealias`, usages croisés des source sets, génériques sur un
+    type expect, définition rendant l'expect D'ABORD puis l'actual
+    (miroir Android Studio).
+  - **Corpus** : `ReproductionKmpTest` + `ReproductionKmpAvanceTest`
+    (moteur, 10 tests) et `ReproductionKmpE2ETest` (E2E production à
+    DEUX sourceDirs : zéro faux positif commonMain/androidMain/usages,
+    complétion `Fabrique.` → `creer()`, définitions expect→actual,
+    typo `platformNaim` toujours signalée — garde D3).
+  - **Suites** : moteur 317, index 82, hôte 239 — toutes vertes,
+    corpus Compose + Views + KMP branchés.
+- **Fichiers GRADLE KOTLIN DSL (.gradle.kts) — ADR 0221** (demande
+  explicite du propriétaire ; constat : 41 + 17 = 58 faux
+  `kt.unresolved` sur les build.gradle.kts et settings.gradle.kts
+  du template).
+  - **La règle** : le récepteur implicite d'un SCRIPT est le
+    CONTEXTE HÔTE (DSL Gradle : `plugins`/`android`/`dependencies`/
+    `implementation`/`alias`…, version catalog `libs`, imports du
+    DSL `JavaVersion`/`rootProject`) — un nom NU ou PREMIER SEGMENT
+    ne peut pas être prouvé absent : muet (miroir Android Studio
+    sans modèle Gradle). Les segments QUALIFIÉS écrits restent
+    faillibles (`java.io.Fichier` reste signalé — garde D3).
+  - **Aucune perte de vrai négatif** : les sélecteurs au-delà du
+    premier segment étaient déjà muets (récepteur inconnu) — seuls
+    les nus et récepteurs racines le deviennent.
+  - **Corpus** : `ReproductionGradleKtsTest` (moteur, 5 tests —
+    build + settings du template à zéro, Kotlin standard du script
+    résolu avec survols, garde D3) et `ReproductionGradleKtsE2ETest`
+    (E2E production : le build.gradle.kts du template ouvert dans
+    le serveur LSP → AUCUN faux positif, typo qualifiée signalée).
+  - **Suites** : moteur 322, index 82, hôte 240 — corpus Compose +
+    Views + KMP + script Gradle branchés.
+
+## 1.10.0 (2026-10-25)
+
+- **Chantier « parité LSP Kotlin officiel d'Android Studio » — ADR
+  0217/0218** (suite du retour Compose : zéro faux positif sur le
+  template canonique, et chaque capacité répond comme dans l'IDE de
+  référence).
+  - **ADR 0217 — découvertes E1/E2 du rapport Compose** : paramètres
+    EXPLICITES de lambda (`Scaffold { innerPadding -> … }`) enfin en
+    portée (`FUNCTION_LITERAL` collecte sa `VALUE_PARAMETER_LIST` —
+    tout identifiant de paramètre de lambda était un faux
+    `kt.unresolved`) ; noms d'ARGUMENTS nommés (`text = …`,
+    `showBackground = true`) jamais signalés (`estNomArgument` — le
+    compilateur ne résout pas ces noms comme des références, miroir
+    kotlinc/Android Studio).
+  - **ADR 0218 — parité collections et déclarations** : alias
+    JVM↔Kotlin étendus à TOUTE la hiérarchie des collections
+    (Iterable/Collection/List/Set/Map/Iterator/ListIterator/Map.Entry)
+    et aux types usuels (CharSequence/Number/Enum/Throwable/Comparable/
+    Comparator) dans les DEUX sens — `chaineSupertypes` lit enfin les
+    octets d'une fiction Kotlin et `variantesRecepteur` traduit les
+    maillons JAVA parcourus en clés d'extension KOTLIN (`filter`/
+    `map`/`forEach` survolés et complétés depuis `List`/`Set`/`Map`) ;
+    repli Android Studio au MOT-CLÉ (`references`/`documentHighlight`/
+    `renommage` répondent le curseur sur `fun`/`class`/`override` —
+    en-tête borné à la SIGNATURE, le corps et l'initialiseur ne visent
+    jamais la déclaration englobante) ; `chaineAncetresA` préfère un
+    enfant NON VIDE — la `PACKAGE_DIRECTIVE` vide ne capture plus la
+    descente à l'offset 0 (fichiers sans paquet, scripts `.kts`).
+  - **Corpus E2E Compose COMPLET** : les artefacts transitifs
+    manquants du template « Empty Activity » sont téléchargés et
+    extraits (foundation-**layout** 1.7.4 — `padding`/`fillMaxSize` y
+    vivent, SÉPARÉS de foundation depuis Compose 1.5 ; ui-unit 1.7.4 —
+    `dp`/`sp` ; ui-geometry, ui-graphics, ui-text, ui-tooling-preview,
+    ui-util, runtime-saveable, annotation-jvm) : le corpus documente
+    désormais le jeu EXACT d'artefacts que livre le protocole tooling
+    v8 — un artefact manquant = des symboles muets (leçon du
+    débogage : foundation sans foundation-layout laissait `padding`
+    introuvable).
+  - **Sondage des capacités E2E verrouillé par des assertions** :
+    survol `Text`/`Modifier` (signatures réelles material3/ui),
+    complétion membre après `modifier.` (100 items dont `padding`),
+    `signatureHelp` `Text(`, previews, `references` au mot-clé `fun`
+    (déclaration + usage), `documentSymbol` (hiérarchie Either
+    correctement lue) ; la définition d'un symbole CLASSPATH reste
+    vide par contrat K3 (pas de source attachée — le survol porte la
+    signature, D3 documenté).
+  - **Gardes de non-régression** : le VRAI négatif (typo `Texte`)
+    reste signalé au milieu du template (D3 inchangé) ;
+    `plageRenommable`/`renommage` hors identifiant dans un littéral
+    restent SANS cible ; curseur dans le CORPS (`return`) → aucune
+    cible (l'en-tête seul vise la déclaration).
 ## 1.9.1 (2026-10-25)
 
 - **Chantier « complétion Java : rapidité + honnêteté »** (réponse au

@@ -430,6 +430,76 @@ class SessionLangageKotlinOccurrencesTest {
         assertTrue(session.renommage("fixture://Main.kt", decalageDe(texte, "1")).isEmpty())
     }
 
+    // ── ADR 0218 : repli Android Studio, curseur sur le MOT-CLÉ ────────
+
+    /**
+     * Ouvre le document sous son URI DISQUE RÉELLE — la convention
+     * `fixture://` des autres tests crée une COPIE fantôme au balayage
+     * (le document ouvert et le fichier du scan portent des URI
+     * DISTINCTES, les occurrences du même fichier seraient comptées deux
+     * fois) ; l'URI réelle garantit l'exclusion du balayage, miroir de la
+     * production (didOpen et scan partagent le même file:// URI).
+     */
+    private fun uriReelle(chemin: String): String = File(dossierTemporaire.root, "src/$chemin").toURI().toString()
+
+    @Test
+    fun `references - curseur sur le mot-cle fun, la declaration englobante est visee (ADR 0218)`() {
+        val texte =
+            """
+            fun saluer(nom: String): String = nom
+
+            fun appel(): String = saluer("monde")
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        val uri = uriReelle("Main.kt")
+        session.ouvrirDocument(uri, texte)
+        // Curseur sur le MOT-CLÉ `fun` de la DÉCLARATION (aucun
+        // identifiant sous le curseur) — Android Studio y répond
+        // Find Usages : la déclaration englobante est la cible.
+        val references = session.references(uri, decalageDe(texte, "fun saluer"), true)
+        assertEquals("déclaration + usage de saluer trouvés depuis le mot-clé fun", 2, references.size)
+        session.close()
+    }
+
+    @Test
+    fun `references - curseur sur le mot-cle class, la declaration englobante est visee (ADR 0218)`() {
+        val texte =
+            """
+            class Pompe {
+                fun amorcer(): Int = 1
+            }
+
+            fun usage(): Pompe = Pompe()
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        val uri = uriReelle("Main.kt")
+        session.ouvrirDocument(uri, texte)
+        val references = session.references(uri, decalageDe(texte, "class Pompe"), true)
+        assertEquals(
+            "déclaration + type écrit + construction de Pompe trouvés depuis le mot-clé class",
+            3,
+            references.size,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `references - curseur dans le CORPS d'une fonction, AUCUNE cible (le corps n'est pas l'en-tête)`() {
+        val texte =
+            """
+            fun saluer(): String {
+                return "bonjour"
+            }
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        val uri = uriReelle("Main.kt")
+        session.ouvrirDocument(uri, texte)
+        // Curseur sur `return` — DANS le corps : le repli ne vise PAS la
+        // fonction englobante (le corps appartient aux expressions).
+        assertTrue(session.references(uri, decalageDe(texte, "return")).isEmpty())
+        session.close()
+    }
+
     // ── Tolérance ─────────────────────────────────────────────────────
 
     @Test

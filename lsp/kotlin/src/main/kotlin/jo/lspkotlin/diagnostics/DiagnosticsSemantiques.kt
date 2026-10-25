@@ -15,6 +15,7 @@ import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SymbolesProjet
+import jo.lspkotlin.resolve.TypageExpression
 import org.jetbrains.kotlin.kmp.lexer.KtTokens
 import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
 
@@ -45,6 +46,10 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
     "LongParameterList",
     "NestedBlockDepth",
     "LoopWithTooManyJumpStatements",
+    // ADR 0223 : le catalogue gagne la SÉLECTION PAR TYPES COMPLETS
+    // (selectionParTypes + SelectionTypes) — le diagnostic
+    // `kt.unresolved` reste UNE famille de preuves par cascade.
+    "LargeClass",
 )
 internal object DiagnosticsSemantiques {
     /**
@@ -61,6 +66,9 @@ internal object DiagnosticsSemantiques {
      *        (voie 2-ter « membres hérités », ADR 0216 — `null` = fermeture
      *        limitée aux clauses ÉCRITES du document courant : la session
      *        de production fournit toujours le port, miroir du GO TO Super).
+     * @property script vrai pour un `.kts` (ADR 0221 — le récepteur
+     *        implicite d'un script est le CONTEXTE HÔTE : DSL Gradle,
+     *        arguments du shell… que le moteur ne modélise pas).
      */
     internal data class Contexte(
         val texte: CharSequence,
@@ -69,6 +77,7 @@ internal object DiagnosticsSemantiques {
         val declarationsProjet: List<DeclarationProjet>,
         val indexAppelables: IndexAppelablesKotlin?,
         val portFichier: jo.lspkotlin.resolve.SuperKotlin.PortFichier? = null,
+        val script: Boolean = false,
     )
 
     /**
@@ -119,14 +128,59 @@ internal object DiagnosticsSemantiques {
             // résolution de NOMS ne les concerne pas (quick-fixes et
             // complétion d'import les traitent), jamais `kt.unresolved`.
             if (estDansDirective(racine, reference)) return@parcourir
+            // Nom d'un ARGUMENT NOMMÉ (découverte E2 du rapport Compose,
+            // ADR 0217) : `text = …`, `showBackground = true` — la
+            // grammaire vendorée enveloppe le nom dans un
+            // REFERENCE_EXPRESSION sous VALUE_ARGUMENT_NAME (amont :
+            // parseValueArgument) ; le compilateur Kotlin ne le résout
+            // JAMAIS comme une référence de nom — sa preuve exige la
+            // sélection d'appelé par types complets (hors modèle T1,
+            // LSP_KOTLIN §4.3) ; miroir kotlinc/Android Studio : jamais
+            // « Référence non résolue » sur un nom d'argument (D3).
+            if (estNomArgument(racine, reference)) return@parcourir
+            // ADR 0223 : SÉLECTION PAR TYPES COMPLETS — le SÉLECTEUR
+            // d'une expression qualifiée (et le CALLEE d'un appel
+            // qualifié) dont le RÉCEPTEUR TYPE se prouve par le TYPE
+            // COMPLET du récepteur :
+            //  - membre PROUVÉ (champ/méthode/synthétique/companion du
+            //    classpath ou du projet, extension sur le récepteur) →
+            //    la référence RÉSOUT — c'est la réparation du callee
+            //    membre (`layoutInflater.inflate(…)` était un FAUX
+            //    `kt.unresolved` : le membre d'instance n'est PAS un
+            //    appelable de portée) ;
+            //  - ABSENCE TOTALEMENT prouvée (récepteur typé LISIBLE,
+            //    aucun membre, aucune extension homonyme NULLE PART)
+            //    → le sélecteur redevient DIAGNOSTIQUABLE (miroir
+            //    Android Studio : `tv.setTexe(…)` y est rouge) ;
+            //  - sinon (récepteur inconnu, classe illisible, homonyme
+            //    d'extension) : silence D3 inchangé.
+            val selection = selectionParTypes(racine, reference, contexte, index)
+            if (selection == SelectionTypes.MEMBRE_TROUVE) return@parcourir
             // Sélecteur qualifié : le récepteur peut être inconnu.
-            if (estSelecteurQualifie(racine, reference)) return@parcourir
+            // ADR 0223 : sauf absence TOTALEMENT prouvable, le
+            // sélecteur reste muet (D3 inchangé).
+            if (selection != SelectionTypes.ABSENCE_PROUVEE &&
+                estSelecteurQualifie(racine, reference)
+            ) {
+                return@parcourir
+            }
             // E4 (découverte du rapport §14, ADR 0216) : SEGMENT d'un
             // TYPE QUALIFIÉ écrit (`android.os.Bundle` produit TROIS
             // REFERENCE_EXPRESSION — android, os, Bundle — que la
             // résolution de NOM ne résout pas individuellement : le
             // « beaucoup d'unresolved » des projets Android réels).
             if (estSegmentTypeQualifie(racine, reference, contexte)) return@parcourir
+            // ADR 0221 — SCRIPT (.gradle.kts, .main.kts) : un nom NU
+            // (sans récepteur écrit, sans type qualifié ancêtre) peut
+            // venir du RÉCEPTEUR IMPLICITE DU CONTEXTE HÔTE — le DSL
+            // Gradle injecte `plugins`/`android`/`dependencies`/
+            // `implementation`/`libs`…, un script shell reçoit ses
+            // arguments : l'ABSENCE n'est pas prouvable (D3 symétrique —
+            // miroir Android Studio : jamais de tsunami d'« unresolved
+            // reference » sur un build.gradle.kts sans modèle Gradle).
+            // Les SEGMENTS QUALIFIÉS écrits restent faillibles (garde
+            // dédiée : `java.io.Fichier` reste signalé).
+            if (contexte.script && estNuDansScript(racine, reference)) return@parcourir
             if (estResolu(racine, reference, nom, contexte, index)) return@parcourir
             val jeton = reference.jetonsDescendants().firstOrNull { it.type == KtTokens.IDENTIFIER }
             resultats +=
@@ -150,6 +204,58 @@ internal object DiagnosticsSemantiques {
         return chaine.any {
             it.type == KtNodeTypes.IMPORT_DIRECTIVE || it.type == KtNodeTypes.PACKAGE_DIRECTIVE
         }
+    }
+
+    /**
+     * ADR 0221 : la référence est-elle NUE au sens SCRIPT — sans
+     * récepteur ÉCRIT (aucun ancêtre expression qualifiée), OU le
+     * PREMIER SEGMENT (récepteur racine) d'une chaîne qualifiée — et
+     * sans TYPE QUALIFIÉ ancêtre (les segments de `a.b.Inconnu`
+     * restent faillibles) ? Un tel nom peut vivre dans le récepteur
+     * implicite du contexte hôte (DSL Gradle : `libs`, `JavaVersion`,
+     * `rootProject`…, shell) : l'absence n'est pas prouvable. Les
+     * SÉLECTEURS au-delà du premier segment restent couverts par leur
+     * propre règle (estSelecteurQualifie) — aucune perte de vrai
+     * négatif.
+     */
+    private fun estNuDansScript(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        // TYPE QUALIFIÉ ancêtre : le segment porte le fardeau E4/E4bis
+        // (dernier segment d'un type introuvable = diagnostiqué).
+        val userTypes = chaine.filter { it.type == KtNodeTypes.USER_TYPE }
+        if (userTypes.isNotEmpty()) {
+            val externe = userTypes.last()
+            return !externe.jetonsDescendants().any { it.type == KtTokens.DOT }
+        }
+        val qualifiee =
+            chaine.lastOrNull {
+                it.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
+                    it.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION
+            } ?: return true
+        // Premier segment (récepteur racine) : NU — le contexte hôte
+        // peut l'injecter (version catalog `libs`, imports du DSL).
+        // La référence vit dans le PREMIER ENFANT de l'expression
+        // qualifiée la plus PROCHE (le récepteur — jamais le sélecteur).
+        val recepteur = qualifiee.sousNoeuds.firstOrNull() ?: return true
+        return recepteur.debut <= reference.debut && reference.fin <= recepteur.fin
+    }
+
+    /**
+     * La référence vit-elle sous un NOM D'ARGUMENT nommé —
+     * `VALUE_ARGUMENT_NAME` (découverte E2, ADR 0217) ? Le nom d'un
+     * argument d'appel ou d'annotation n'est PAS une référence de nom
+     * Kotlin : il se prouve contre les PARAMÈTRES de l'appelé (types
+     * complets) — le modèle conservateur le TAIT (D3 : sous-rapport).
+     */
+    private fun estNomArgument(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        return chaine.any { it.type == KtNodeTypes.VALUE_ARGUMENT_NAME }
     }
 
     /** Genres de déclaration qui SONT des types (miroir SuperKotlin). */
@@ -231,6 +337,135 @@ internal object DiagnosticsSemantiques {
             if (parent.type == KtNodeTypes.CALL_EXPRESSION) break
         }
         return false
+    }
+
+    /**
+     * Issue de la SÉLECTION D'APPELÉ PAR TYPES COMPLETS (ADR 0223).
+     */
+    private enum class SelectionTypes {
+        /** Membre PROUVÉ sur le type complet du récepteur — résout. */
+        MEMBRE_TROUVE,
+
+        /** Absence TOTALEMENT prouvée — le sélecteur est diagnostiquable. */
+        ABSENCE_PROUVEE,
+
+        /** Pas de preuve (récepteur inconnu, classe illisible, homonyme
+         * d'extension) — silence D3. */
+        INCONNU,
+    }
+
+    /**
+     * SÉLECTION PAR TYPES COMPLETS (ADR 0223 — la suite K4+ du rapport
+     * d'audit §8) : la référence est-elle le SÉLECTEUR (ou le CALLEE du
+     * CALL sélecteur) d'une expression qualifiée dont le RÉCEPTEUR
+     * TYPE ?
+     *
+     * La cascade PROUVÉE est celle du SURVOL qualifié (champ → méthode
+     * → getter/setter synthétique → extension sur le récepteur) ÉTENDUE
+     * du COMPANION (ADR 0222 : `Boite.creer()`, `Int.MAX_VALUE`) et du
+     * membre du PROJET (conteneur = type du récepteur — companions
+     * doublement émis).
+     *
+     * L'ABSENCE n'est prouvée que si : la classe du récepteur est
+     * LISIBLE dans la vue (sa liste de membres déclarés est la source
+     * de la preuve — une classe projet ou illisible ne prouve rien,
+     * D3) ET AUCUNE extension homonyme n'existe NULLE PART dans
+     * l'index (la preuve d'absence d'extension exige la complétude des
+     * jars d'extensions : un seul homonyme — tout récepteur — impose
+     * le silence). Miroir Android Studio : avec le classpath fourni,
+     * l'absent est rouge.
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque issue
+     * (récepteur introuvable, sous-chaîne du récepteur, callee
+     * d'argument, membre trouvé, absence prouvée) est une ISSUE
+     * distincte du catalogue, patron estMembreHerite ;
+     * CyclomaticComplexMethod — la cascade membre EST le catalogue.
+     */
+    @Suppress("ReturnCount", "CyclomaticComplexMethod", "LongMethod")
+    private fun selectionParTypes(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+        contexte: Contexte,
+        index: IndexAppelablesKotlin,
+    ): SelectionTypes {
+        val nom = nomReference(reference) ?: return SelectionTypes.INCONNU
+        if (nom.isBlank()) return SelectionTypes.INCONNU
+        // 1. L'expression qualifiée PORTEUSE : remonte la chaîne — un
+        //    DOT/SAFE/CALLABLE_REF dont la référence est HORS du
+        //    récepteur (sélecteur, ou callee du CALL sélecteur) ; la
+        //    remontée TRAVERSE le CALL qui PORTE la référence comme
+        //    callee (`tv.setTexe(…)`), mais S'ARRÊTE aux arguments
+        //    (premier enfant du CALL ≠ référence : un argument n'est
+        //    pas une sélection).
+        val chaine = chaineAncetresA(racine, reference.debut)
+        val indice = chaine.indexOf(reference)
+        if (indice <= 0) return SelectionTypes.INCONNU
+        var porteur: NoeudSyntaxique? = null
+        for (profondeur in (indice - 1) downTo 0) {
+            val parent = chaine[profondeur]
+            if (parent.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
+                parent.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION ||
+                parent.type == KtNodeTypes.CALLABLE_REFERENCE_EXPRESSION
+            ) {
+                val recepteur = parent.sousNoeuds.firstOrNull() ?: return SelectionTypes.INCONNU
+                // La référence DANS le récepteur : c'est une
+                // sous-chaîne (`a.b.c` sur `a`), pas une sélection.
+                if (couvre(recepteur, reference)) return SelectionTypes.INCONNU
+                porteur = parent
+                break
+            }
+            if (parent.type == KtNodeTypes.CALL_EXPRESSION) {
+                if (parent.sousNoeuds.firstOrNull() != reference) return SelectionTypes.INCONNU
+            }
+        }
+        val expression = porteur ?: return SelectionTypes.INCONNU
+        val recepteur = expression.sousNoeuds.firstOrNull() ?: return SelectionTypes.INCONNU
+        // 2. Type COMPLET du récepteur — valeur d'abord, CLASSE ensuite
+        //    (`Boite.creer()`, `Int.MAX_VALUE` — ADR 0222).
+        val typeRecepteur =
+            TypageExpression.typeExpression(
+                recepteur,
+                racine,
+                contexte.contexteNom,
+                contexte.resolution,
+                contexte.declarationsProjet,
+            ) ?: TypageExpression.typeStatiqueDe(recepteur, contexte.contexteNom, contexte.resolution)
+                ?: return SelectionTypes.INCONNU
+        // 3. Membre PROUVÉ sur la chaîne de supertypes du récepteur :
+        //    champ, méthode, accesseur synthétique, COMPANION du
+        //    classpath, membre du projet, extension sur le récepteur.
+        for (courant in contexte.resolution.chaineSupertypes(typeRecepteur)) {
+            if (contexte.resolution.champsNommes(courant, nom).isNotEmpty()) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.resolution.methodesNommees(courant, nom).isNotEmpty()) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.resolution.getterSynthetique(courant, nom) != null) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.resolution.setterSynthetique(courant, nom) != null) return SelectionTypes.MEMBRE_TROUVE
+            val compagnon = contexte.resolution.membresDe(courant + "\$Companion")
+            if (compagnon != null &&
+                (compagnon.champs.any { it.nom == nom } || compagnon.methodes.any { it.nom == nom })
+            ) {
+                return SelectionTypes.MEMBRE_TROUVE
+            }
+        }
+        if (contexte.declarationsProjet.any { it.conteneur == typeRecepteur && it.nom == nom }) {
+            return SelectionTypes.MEMBRE_TROUVE
+        }
+        for (courant in contexte.resolution.chaineSupertypes(typeRecepteur)) {
+            for (variante in contexte.resolution.variantesRecepteur(courant)) {
+                if (index.extensionsSur(variante).any { it.nom == nom }) {
+                    return SelectionTypes.MEMBRE_TROUVE
+                }
+            }
+        }
+        // 4. ABSENCE — conditions cumulatives (D3) : classe LISIBLE
+        //    dans la vue + index PORTANT des entrées (une session nue ne
+        //    connaît AUCUNE extension : l'absence n'y est pas prouvable)
+        //    + aucune extension homonyme nulle part.
+        if (contexte.resolution.membresDe(typeRecepteur) == null) return SelectionTypes.INCONNU
+        if (!index.connaitDesEntrees) return SelectionTypes.INCONNU
+        if (index.topParNom(nom).any { it.recepteur != null }) {
+            return SelectionTypes.INCONNU
+        }
+        return SelectionTypes.ABSENCE_PROUVEE
     }
 
     /** [parent] couvre-t-il [enfant] (plages) ? */

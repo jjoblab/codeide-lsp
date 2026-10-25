@@ -82,6 +82,16 @@ internal object TypageExpression {
                     ?.let { typeExpression(it, racine, contexteNom, resolution, declarationsProjet, profondeur + 1) }
 
             KtNodeTypes.THIS_EXPRESSION -> classeEnglobante(racine, expression.debut, contexteNom)
+            // ADR 0219 (B3 — parité Views) : le récepteur `super.` se TYPE
+            // comme le PREMIER supertype ÉCRIT résolu de la classe
+            // ENGLOBANTE (miroir Android Studio : complétion et survol
+            // après `super.` offrent les membres du SUPERTYPE) ; repli
+            // sur la classe ENGLOBANTE (objet sans clause, classe
+            // synthétique) — ses membres déclarés restent visibles.
+            KtNodeTypes.SUPER_EXPRESSION ->
+                fqcnsSupertypesEnglobants(racine, expression.debut, contexteNom, resolution, declarationsProjet)
+                    .firstOrNull()
+                    ?: classeEnglobante(racine, expression.debut, contexteNom)
             KtNodeTypes.REFERENCE_EXPRESSION -> typeReference(
                 nomReference(expression) ?: return null,
                 racine,
@@ -92,21 +102,43 @@ internal object TypageExpression {
                 profondeur,
             )
 
-            KtNodeTypes.CALL_EXPRESSION -> typeAppel(
-                nomAppele(expression) ?: return null,
-                contexteNom,
-                resolution,
-                declarationsProjet,
-            )
+            KtNodeTypes.CALL_EXPRESSION ->
+                typeAppel(
+                    nomAppele(expression) ?: return null,
+                    contexteNom,
+                    resolution,
+                    declarationsProjet,
+                )
+                    // ADR 0219 : appel NU à un membre de la classe
+                    // ENGLOBANTE (this implicite) — `getString(…)` dans
+                    // une Activity, `setTitle(…)`… le typeMembreImplicite
+                    // porte champs, méthodes ET getters synthétiques.
+                    ?: typeMembreImplicite(
+                        nomAppele(expression) ?: return null,
+                        racine,
+                        expression.debut,
+                        contexteNom,
+                        resolution,
+                        declarationsProjet,
+                    )
 
             KtNodeTypes.DOT_QUALIFIED_EXPRESSION, KtNodeTypes.SAFE_ACCESS_EXPRESSION -> {
                 val recepteur = recepteurQualifie(expression) ?: return null
                 val selecteur = selecteurQualifie(expression) ?: return null
-                val typeRecepteur =
+                val typeValeur =
                     typeExpression(recepteur, racine, contexteNom, resolution, declarationsProjet, profondeur + 1)
-                        ?: typeStatiqueDe(recepteur, contexteNom, resolution)
-                        ?: return null
-                typeMembreSur(typeRecepteur, selecteur, resolution, declarationsProjet, contexteNom)
+                if (typeValeur != null) {
+                    return typeMembreSur(typeValeur, selecteur, resolution, declarationsProjet, contexteNom)
+                }
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : la classe d'abord, puis SON
+                // COMPANION du classpath (les membres d'instance du
+                // compagnon sont accessibles par le NOM de la classe —
+                // miroir kotlinc ; côté projet, la double émission de
+                // SymbolesProjet couvre déjà les deux conteneurs).
+                val typeClasse = typeStatiqueDe(recepteur, contexteNom, resolution) ?: return null
+                return typeMembreSur(typeClasse, selecteur, resolution, declarationsProjet, contexteNom)
+                    ?: typeMembreCompanionDe(typeClasse, selecteur, resolution, declarationsProjet, contexteNom)
             }
 
             else -> null
@@ -125,10 +157,37 @@ internal object TypageExpression {
         }
 
     /**
-     * Classe ENGLOBANTE d'une position — FQCN du chemin de classes
-     * imbriquées (paquet compris) ; null hors classe.
+     * FQCN des SUPERTYPES ÉCRITS de la classe/objet ENGLOBANT(E) le
+     * décalage, résolus par les imports du document (ADR 0219) — la
+     * classe PROJET elle-même est INVISIBLE de la vue classpath : sa
+     * chaîne binaire ne peut être atteinte que par ses CLAUSES
+     * ÉCRITES, miroir exact de la voie 2-ter du diagnostic
+     * (`estMembreHerite` — même source de vérité, l'arbre VIF).
      */
-    private fun classeEnglobante(
+    internal fun fqcnsSupertypesEnglobants(
+        racine: NoeudSyntaxique,
+        decalage: Int,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+    ): List<String> {
+        val englobante =
+            chaineAncetresA(racine, decalage).lastOrNull {
+                it.type == KtNodeTypes.CLASS || it.type == KtNodeTypes.OBJECT_DECLARATION
+            } ?: return emptyList()
+        val contexteFichier = OccurrencesKotlin.ContexteFichier(contexteNom, declarationsProjet)
+        return TypesKotlin.superTypesDe(englobante).mapNotNull { clause ->
+            SuperKotlin.fqcnSupertype(clause, contexteFichier, resolution)
+        }
+    }
+
+    /**
+     * Classe ENGLOBANTE d'une position — FQCN du chemin de classes
+     * imbriquées (paquet compris) ; null hors classe. Internal (ADR
+     * 0219) : le survol du membre IMPLICITE this (InterrogationsSymboles)
+     * partage la MÊME notion de classe porteuse.
+     */
+    internal fun classeEnglobante(
         racine: NoeudSyntaxique,
         decalage: Int,
         contexteNom: ResolutionKotlin.ContexteNom,
@@ -136,19 +195,35 @@ internal object TypageExpression {
         val chaine = chaineAncetresA(racine, decalage)
         val noms = mutableListOf<String>()
         for (noeud in chaine) {
-            if (noeud.type == KtNodeTypes.CLASS || noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
-                val nom =
-                    noeud.jetonsDescendants()
-                        .firstOrNull { it.type == org.jetbrains.kotlin.kmp.lexer.KtTokens.IDENTIFIER }
-                        ?.texte
-                        ?.toString() ?: return null
-                noms.add(nom)
-            }
+            if (noeud.type != KtNodeTypes.CLASS && noeud.type != KtNodeTypes.OBJECT_DECLARATION) continue
+            // ADR 0222 : un COMPANION ANONYME porte son nom effectif
+            // « Companion » — le repli générique au premier IDENTIFIER
+            // y lirait un MEMBRE (« creer »).
+            val nom = nomDeclarationEnglobante(noeud) ?: return null
+            noms.add(nom)
         }
         if (noms.isEmpty()) return null
         val chemin = noms.joinToString(".")
         return contexteNom.paquet?.let { "$it.$chemin" } ?: chemin
     }
+
+    /**
+     * Nom DÉCLARÉ d'une classe/objet ENGLOBANT(E) — l'IDENTIFIER
+     * premier (miroir historique) pour une CLASSE, le nom PROPRE pour
+     * un objet, « Companion » pour un compagnon ANONYME (ADR 0222),
+     * `null` sinon.
+     */
+    private fun nomDeclarationEnglobante(noeud: NoeudSyntaxique): String? =
+        if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+            val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+            objet.nomObjet()?.texte?.toString()
+                ?: if (objet.estCompanion()) "Companion" else null
+        } else {
+            noeud.jetonsDescendants()
+                .firstOrNull { it.type == org.jetbrains.kotlin.kmp.lexer.KtTokens.IDENTIFIER }
+                ?.texte
+                ?.toString()
+        }
 
     /**
      * Type d'une RÉFÉRENCE par nom : locale/paramètre (type écrit puis
@@ -220,6 +295,12 @@ internal object TypageExpression {
         if (recepteurWith != null) {
             typeMembreNomme(recepteurWith, nom, resolution, declarationsProjet, contexteNom)?.let { return it }
         }
+        // 2-ter. ADR 0219 : membre IMPLICITE this sur la chaîne de la
+        // classe ENGLOBANTE — le nom NU `layoutInflater` dans une
+        // Activity (getter synthétique de Context/Activity) doit TYPER
+        // (LayoutInflater), sinon la chaîne `layoutInflater.inflate(…)`
+        // reste muette en complétion/survol.
+        typeMembreImplicite(nom, racine, decalage, contexteNom, resolution, declarationsProjet)?.let { return it }
         // 3. Propriétés de premier niveau du FICHIER courant (l'arbre
         // est là : type écrit, sinon initialiseur).
         for (declaration in jo.lspkotlin.parse.kt.KtFile(racine).declarations()) {
@@ -302,11 +383,14 @@ internal object TypageExpression {
     }
 
     /**
-     * Type STATIQUE d'un récepteur qui ne type pas en VALEUR (K5) — la
+     * Type STATIQUE d'un récepteur qui ne type pas en VALEUR — la
      * référence est peut-être une CLASSE (chaîne `R.layout.…`, membre
      * statique de compagnon) : le nom écrit résolu en FQCN.
+     *
+     * Internal (ADR 0223) : le diagnostic « sélection par types
+     * complets » partage la MÊME notion de récepteur statique.
      */
-    private fun typeStatiqueDe(
+    internal fun typeStatiqueDe(
         recepteur: NoeudSyntaxique,
         contexteNom: ResolutionKotlin.ContexteNom,
         resolution: ResolutionKotlin,
@@ -339,6 +423,34 @@ internal object TypageExpression {
     }
 
     /**
+     * Type d'un membre NOMMÉ sur le this IMPLICITE — la classe
+     * ENGLOBANTE porte le nom (ADR 0219) : champs, méthodes et GETTERS
+     * SYNTHÉTIQUES de sa chaîne de supertypes (`layoutInflater` →
+     * LayoutInflater, `getString(…)` → String). La classe PROJET est
+     * invisible de la vue : ses SUPERTYPES ÉCRITS résolus portent la
+     * chaîne binaire (miroir de estMembreHerite).
+     */
+    private fun typeMembreImplicite(
+        nom: String,
+        racine: NoeudSyntaxique,
+        decalage: Int,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+    ): String? {
+        val classe = classeEnglobante(racine, decalage, contexteNom) ?: return null
+        // La classe elle-même (synthétiques K5 — vue) puis ses
+        // SUPERTYPES ÉCRITS, chacun avec TOUTE sa chaîne binaire.
+        val porteurs =
+            listOf(classe) +
+                fqcnsSupertypesEnglobants(racine, decalage, contexteNom, resolution, declarationsProjet)
+        for (porteur in porteurs) {
+            typeMembreNomme(porteur, nom, resolution, declarationsProjet, contexteNom)?.let { return it }
+        }
+        return null
+    }
+
+    /**
      * Type d'un membre NOMMÉ sur un récepteur typé : classpath d'abord
      * (champ/méthode de la chaîne de supertypes), déclaration du projet
      * ensuite (conteneur = FQCN — récepteur de type projet).
@@ -365,9 +477,52 @@ internal object TypageExpression {
         if (methode != null) {
             return resolution.traduireDescripteur(methode.methode.descripteur).retour
         }
+        // Propriété SYNTHÉTIQUE Java (ADR 0219) : le GETTER porte le
+        // type — `layoutInflater` → LayoutInflater, `binding.root`-style.
+        val getter = resolution.getterSynthetique(typeRecepteur, nomMembre)
+        if (getter != null) {
+            return resolution.traduireDescripteur(getter.methode.descripteur).retour
+        }
         // Membre du PROJET (K5) : conteneur = FQCN du récepteur.
         for (declaration in declarationsProjet) {
             if (declaration.conteneur != typeRecepteur) continue
+            if (declaration.nom != nomMembre) continue
+            declaration.typeRetour?.let { ecrit -> return traduireTypeEcrit(ecrit, contexteNom, resolution) }
+        }
+        return null
+    }
+
+    /**
+     * Type d'un membre du COMPANION du classpath (ADR 0222) — les
+     * membres d'instance du compagnon (`fqcn$Companion`, imbriqués
+     * par `$` dans la vue) sont accessibles par le NOM de la classe :
+     * champ, méthode, puis membre du projet (double émission — les
+     * deux conteneurs).
+     */
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
+    private fun typeMembreCompanionDe(
+        typeClasse: String,
+        selecteur: NoeudSyntaxique,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+        contexteNom: ResolutionKotlin.ContexteNom,
+    ): String? {
+        val nomMembre =
+            when (selecteur.type) {
+                KtNodeTypes.CALL_EXPRESSION -> nomAppele(selecteur) ?: return null
+                else -> nomReference(selecteur) ?: return null
+            }
+        val compagnon = typeClasse + "\$Companion"
+        val champ = resolution.champsNommes(compagnon, nomMembre).firstOrNull()
+        if (champ != null) {
+            return traduireTypeChamp(champ.descripteur, resolution)
+        }
+        val methode = resolution.methodesNommees(compagnon, nomMembre).firstOrNull()
+        if (methode != null) {
+            return resolution.traduireDescripteur(methode.methode.descripteur).retour
+        }
+        for (declaration in declarationsProjet) {
+            if (declaration.conteneur != compagnon) continue
             if (declaration.nom != nomMembre) continue
             declaration.typeRetour?.let { ecrit -> return traduireTypeEcrit(ecrit, contexteNom, resolution) }
         }

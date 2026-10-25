@@ -24,7 +24,8 @@ import java.io.File
  * et son SAM `View$OnClickListener`) :
  *
  *  - SYNTHÉTIQUES : `R` (familles + constantes), ViewBinding (classe +
- *    champs), DataBinding (sous-paquet `databinding` + variable),
+ *    champs), bindings TOUJOURS dans le sous-paquet `databinding`
+ *    (AGP réel — ADR 0219 ; DataBinding y ajoute ses variables),
  *    `BuildConfig` (type seul), COUPURE par la classe générée réelle ;
  *  - MULTI-LANGUE : classe JAVA du projet visible de Kotlin
  *    (complétion, résolution, définition) et arité jamais contrôlée
@@ -170,7 +171,7 @@ class SessionLangageKotlinK5Test {
         val session = session(listOf(semerProjetAndroid()))
         val source =
             """
-            import com.ex.app.ActivityMainBinding
+            import com.ex.app.databinding.ActivityMainBinding
             fun demo(i: android.view.LayoutInflater) {
               val b = ActivityMainBinding.inflate(i)
               b.
@@ -236,7 +237,7 @@ class SessionLangageKotlinK5Test {
     @Test
     fun `ViewBinding - la definition ouvre le fichier de layout`() {
         val session = session(listOf(semerProjetAndroid()))
-        val source = "import com.ex.app.ActivityMainBinding\nval b = ActivityMainBinding\n"
+        val source = "import com.ex.app.databinding.ActivityMainBinding\nval b = ActivityMainBinding\n"
         val uri = "file:///binding-def.kt"
         session.ouvrirDocument(uri, source)
         val definitions = session.definitions(uri, source.lastIndexOf("ActivityMainBinding") + 3)

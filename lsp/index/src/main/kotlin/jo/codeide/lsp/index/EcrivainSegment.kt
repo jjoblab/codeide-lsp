@@ -37,8 +37,19 @@ internal object FormatSegment {
     /** Magie du format — « CIDX » en gros-boutien. */
     internal const val MAGIE: Int = 0x43494458
 
-    /** Version courante du format (migration = ré-indexation paresseuse). */
-    internal const val VERSION: Int = 1
+    /**
+     * Version courante du format (migration = ré-indexation paresseuse).
+     *
+     * **2 (ADR 0219)** : le correctif du lecteur de pool
+     * (`AnalyseurClassFile.lirePoolConstantes` — les 8 octets de la
+     * valeur Long/Double sont désormais SAUTÉS) change le CONTENU des
+     * blocs membres : les classes portant une constante `long`/`double`
+     * (p.ex. `android.content.Context`) voyaient TOUTE leur section
+     * membres perdue — les segments v1 écrits avec le lecteur
+     * défaillant portent un CRC VALIDE de contenu FAUX, seul le saut
+     * de version les invalide et force la ré-indexation paresseuse.
+     */
+    internal const val VERSION: Int = 2
 
     /** Drapeaux de format — réservé (0). */
     internal const val DRAPEAUX: Int = 0

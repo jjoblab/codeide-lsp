@@ -38,9 +38,12 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *
  * Exemptions detekt ciblées (règle 16) : LongParameterList — le
  * CONTEXTE de résolution complet est FILÉ (patron TypageExpression) ;
- * ReturnCount — chaque voie est une ISSUE distincte du catalogue.
+ * ReturnCount — chaque voie est une ISSUE distincte du catalogue ;
+ * CyclomaticComplexMethod (ADR 0219) — la voie `with` sonde aussi les
+ * PROPRIÉTÉS SYNTHÉTIQUES Java du récepteur implicite : une ISSUE de
+ * plus du même catalogue.
  */
-@Suppress("LongParameterList", "ReturnCount")
+@Suppress("LongParameterList", "ReturnCount", "CyclomaticComplexMethod")
 internal object ResolutionReferences {
     /**
      * Le nom [nom] utilisé à [decalage] résout-il par QUELCONQUE voie ?
@@ -81,10 +84,13 @@ internal object ResolutionReferences {
         }
         // 2 bis. K5 : membre du RÉCEPTEUR IMPLICITE d'un `with`
         // englobant (classpath ou projet — sinon faux `kt.unresolved`
-        // sur TOUT nom NU dans un corps de `with`).
+        // sur TOUT nom NU dans un corps de `with`). ADR 0219 : les
+        // PROPRIÉTÉS SYNTHÉTIQUES Java sont sondées aussi (getter du
+        // récepteur — `with(activity) { layoutInflater }`).
         RecepteursWith.recepteurImplicite(racine, decalage, contexteNom, resolution, declarationsProjet)?.let { fqcn ->
             if (resolution.champsNommes(fqcn, nom).isNotEmpty()) return true
             if (resolution.methodesNommees(fqcn, nom).isNotEmpty()) return true
+            if (resolution.accesseurSynthetique(fqcn, nom) != null) return true
             if (declarationsProjet.any { it.conteneur == fqcn && it.nom == nom }) return true
         }
         // 3. Déclarations de premier niveau du FICHIER.
@@ -126,14 +132,19 @@ internal object ResolutionReferences {
     private fun fqcnDe(declaration: DeclarationProjet): String =
         (declaration.conteneur ?: declaration.paquet)?.let { "$it." }.orEmpty() + declaration.nom
 
-    /** Le membre vit-il sur la chaîne BINAIRE du maillon [fqcn] (classpath) ? */
+    /** Le membre vit-il sur la chaîne BINAIRE du maillon [fqcn] (classpath) ?
+     *
+     * ADR 0219 : un nom de PROPRIÉTÉ SYNTHÉTIQUE Java (getter/setter)
+     * prouve sa résolution par son accesseur — `layoutInflater` nu dans
+     * une Activity, `title = …` nu via setTitle. */
     private fun membreBinaire(
         resolution: ResolutionKotlin,
         fqcn: String,
         nom: String,
     ): Boolean =
         resolution.methodesNommees(fqcn, nom).isNotEmpty() ||
-            resolution.champsNommes(fqcn, nom).isNotEmpty()
+            resolution.champsNommes(fqcn, nom).isNotEmpty() ||
+            resolution.accesseurSynthetique(fqcn, nom) != null
 
     /** Le membre vit-il sur les DÉCLARÉS du frère projet [fqcn] ? */
     private fun membreProjet(
@@ -214,7 +225,16 @@ internal object ResolutionReferences {
             }
         if (englobantes.isEmpty()) return false
         val noms = englobantes.mapNotNull { noeud ->
-            (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton()?.texte?.toString()
+            // ADR 0222 : un companion ANONYME porte son nom effectif
+            // « Companion » — le repli générique nomJeton() y lirait
+            // le PREMIER MEMBRE (« creer »), brisant le FQCN de départ.
+            if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+                val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+                objet.nomObjet()?.texte?.toString()
+                    ?: if (objet.estCompanion()) "Companion" else null
+            } else {
+                (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton()?.texte?.toString()
+            }
         }
         if (noms.isEmpty() || noms.size != englobantes.size) return false
         val fqcnDepart =

@@ -6,6 +6,7 @@ import jo.lspkotlin.parse.kt.KtDeclaration
 import jo.lspkotlin.parse.kt.KtElement
 import jo.lspkotlin.parse.kt.KtFile
 import jo.lspkotlin.parse.kt.KtFunction
+import jo.lspkotlin.parse.kt.KtObjectDeclaration
 import jo.lspkotlin.parse.kt.KtParameter
 import jo.lspkotlin.parse.kt.KtProperty
 import jo.lspkotlin.parse.kt.chaineAncetresA
@@ -154,6 +155,15 @@ public object SymbolesProjet {
         conteneur: String?,
         resultat: MutableList<DeclarationProjet>,
     ) {
+        // ADR 0222 : le COMPANION a sa propre grammaire de nommage — le
+        // repli générique nomJeton() lirait le PREMIER MEMBRE d'un
+        // companion ANONYME (enregistré « creer », membres sous
+        // « pkg.Boite.creer ») : détection par MODIFIER_LIST + nom
+        // effectif « Companion » (miroir kotlinc).
+        if (declaration is KtObjectDeclaration) {
+            extraireObjet(declaration, uri, paquet, conteneur, resultat)
+            return
+        }
         val nom = declaration.nomJeton() ?: return
         // Conteneur qualifié des MEMBRES : au premier niveau le paquet
         // est préfixé (« a.b.Vue »), aux niveaux suivants le parent
@@ -268,6 +278,61 @@ public object SymbolesProjet {
         }
     }
 
+    /**
+     * Extrait une déclaration d'OBJET — ADR 0220 (membres scannés,
+     * objets référençables) et ADR 0222 (COMPANION : nom effectif
+     * « Companion » si anonyme, membres émis DEUX FOIS — sous
+     * l'objet qualifié `pkg.Boite.Companion` (accès explicite) ET
+     * sous la CLASSE ENGLOBANTE `pkg.Boite` (accès par le nom de la
+     * classe, `Boite.creer()` — miroir kotlinc : le nom de la classe
+     * PRÊTE les membres de son compagnon).
+     */
+    private fun extraireObjet(
+        declaration: KtObjectDeclaration,
+        uri: String,
+        paquet: String?,
+        conteneur: String?,
+        resultat: MutableList<DeclarationProjet>,
+    ) {
+        val nomJeton = declaration.nomObjet()
+        // Companion hors classe (conteneur null) : syntaxe invalide
+        // Kotlin — traité comme un objet simple anonyme (ignoré D3).
+        val compagnon = declaration.estCompanion() && conteneur != null
+        val nomEffectif =
+            when {
+                nomJeton != null -> nomJeton.texte.toString()
+                compagnon -> "Companion"
+                else -> return
+            }
+        val qualifieObjet =
+            if (conteneur == null) {
+                (paquet?.let { "$it." } ?: "") + nomEffectif
+            } else {
+                "$conteneur.$nomEffectif"
+            }
+        resultat +=
+            DeclarationProjet(
+                genre = GenreDeclaration.OBJET,
+                nom = nomEffectif,
+                uri = uri,
+                debutNom = nomJeton?.debut ?: declaration.noeud.debut,
+                finNom = nomJeton?.fin ?: declaration.noeud.fin,
+                paquet = paquet,
+                recepteur = null,
+                typeRetour = null,
+                parametres = emptyList(),
+                conteneur = conteneur,
+            )
+        // Membres sous l'OBJET (accès `Boite.Companion.creer()` et
+        // corps du compagnon — this implicite).
+        parcourirConteneur(declaration.membres(), uri, paquet, qualifieObjet, resultat)
+        // ADR 0222 : les MÊMES membres sous la CLASSE ENGLOBANTE —
+        // `Boite.creer()` (le nom de classe prête le compagnon).
+        if (compagnon) {
+            parcourirConteneur(declaration.membres(), uri, paquet, conteneur, resultat)
+        }
+    }
+
     /** (nom, type écrit) d'un paramètre. */
     private fun parametreExtraire(parametre: KtParameter): Pair<String?, String?> =
         Pair(parametre.nom(), parametre.type())
@@ -356,7 +421,46 @@ public object SymbolesProjet {
                     }
                 }
 
-                KtNodeTypes.BLOCK, KtNodeTypes.CLASS_BODY, KtNodeTypes.FUNCTION_LITERAL -> {
+                KtNodeTypes.FUNCTION_LITERAL -> {
+                    // Paramètres EXPLICITES du littéral (découverte E1 du
+                    // rapport Compose, ADR 0217) : `{ innerPadding -> … }`,
+                    // `{ nombre -> … }` — en portée dans TOUT le corps du
+                    // littéral. Sans cette collecte, TOUT paramètre nommé
+                    // de lambda était un faux `kt.unresolved` (le code
+                    // Compose en est saturé : trailing lambdas partout) —
+                    // miroir kotlinc : le paramètre lie TOUTE la fonction.
+                    val liste =
+                        noeud.sousNoeuds.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+                    liste?.sousNoeuds
+                        ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
+                        ?.forEach { parametre ->
+                            parametreDeclarationLocal(jo.lspkotlin.parse.kt.KtParameter(parametre))
+                                ?.let { resultat.add(LocaleEnPortee(it, null)) }
+                        }
+                    for (enfant in noeud.sousNoeuds) {
+                        if (enfant.type != KtNodeTypes.PROPERTY) continue
+                        if (enfant.fin > decalage) continue // pas encore déclarée
+                        val propriete = KtProperty(enfant)
+                        val jeton = propriete.nomJeton() ?: continue
+                        resultat += LocaleEnPortee(
+                            DeclarationProjet(
+                                genre = GenreDeclaration.LOCALE,
+                                nom = jeton.texte.toString(),
+                                uri = "",
+                                debutNom = jeton.debut,
+                                finNom = jeton.fin,
+                                paquet = null,
+                                recepteur = null,
+                                typeRetour = propriete.type(),
+                                parametres = emptyList(),
+                                conteneur = null,
+                            ),
+                            propriete,
+                        )
+                    }
+                }
+
+                KtNodeTypes.BLOCK, KtNodeTypes.CLASS_BODY -> {
                     for (enfant in noeud.sousNoeuds) {
                         if (enfant.type != KtNodeTypes.PROPERTY) continue
                         if (enfant.fin > decalage) continue // pas encore déclarée
