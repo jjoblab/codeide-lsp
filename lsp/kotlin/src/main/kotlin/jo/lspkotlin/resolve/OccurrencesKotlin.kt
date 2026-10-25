@@ -623,12 +623,21 @@ internal object OccurrencesKotlin {
                 preuve.contexte.contexteNom,
                 preuve.resolution,
                 preuve.contexte.declarations,
-            ) ?: return null
+            )
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : le nom de classe PRÊTE les membres
+                // de son compagnon — la preuve d'occurrence sonde aussi
+                // le conteneur IMBRIQUÉ sous le type statique.
+                ?: TypageExpression.typeStatiqueDe(recepteur, preuve.contexte.contexteNom, preuve.resolution)
+                ?: return null
         val attendu =
             cible.conteneur ?: cible.recepteur?.let { recepteur ->
                 preuve.resolution.fqcnDuNomEcrit(recepteur, preuve.contexte.contexteNom)
             } ?: return null
-        return if (preuve.resolution.chaineSupertypes(typeRecepteur).contains(attendu)) {
+        val chaine = preuve.resolution.chaineSupertypes(typeRecepteur)
+        return if (chaine.contains(attendu) ||
+            (recepteur.type == KtNodeTypes.REFERENCE_EXPRESSION && attendu.startsWith("$typeRecepteur."))
+        ) {
             Occurrence(jeton.debut, jeton.fin, false)
         } else {
             null
@@ -706,11 +715,19 @@ internal object OccurrencesKotlin {
 
     /** Nom de la classe/objet porté par un nœud conteneur (null sans nom). */
     private fun nomConteneur(noeud: NoeudSyntaxique): String? =
-        noeud
-            .jetonsDescendants()
-            .firstOrNull { it.type == KtTokens.IDENTIFIER }
-            ?.texte
-            ?.toString()
+        if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+            // ADR 0222 : un companion ANONYME porte « Companion » — le
+            // repli générique au premier IDENTIFIER y lirait un MEMBRE.
+            val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+            objet.nomObjet()?.texte?.toString()
+                ?: if (objet.estCompanion()) "Companion" else null
+        } else {
+            noeud
+                .jetonsDescendants()
+                .firstOrNull { it.type == KtTokens.IDENTIFIER }
+                ?.texte
+                ?.toString()
+        }
 
     /**
      * Occurrence d'un APPELABLE top-level : le fichier doit VOIR la

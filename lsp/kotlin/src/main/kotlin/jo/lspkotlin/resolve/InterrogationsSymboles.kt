@@ -483,7 +483,13 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
                 contexte.contexteNom,
                 contexte.resolution,
                 contexte.declarationsProjet,
-            ) ?: return null
+            )
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : le nom de classe PRÊTE les membres
+                // de son compagnon (projet doublement émis, classpath
+                // `$Companion` sondé ci-dessous).
+                ?: TypageExpression.typeStatiqueDe(noeudRecepteur, contexte.contexteNom, contexte.resolution)
+                ?: return null
         // Champ : descripteur = type.
         val champ = contexte.resolution.champsNommes(typeRecepteur, nom).firstOrNull()
         if (champ != null) {
@@ -512,6 +518,25 @@ Exemption detekt ciblée (règle 16) : ReturnCount — nom déclaré/locale/proj
             val motCle =
                 if (contexte.resolution.setterSynthetique(typeRecepteur, nom) != null) "var" else "val"
             return ContenuSurvoleKotlin("$motCle $nom: $type — ${getter.proprietaire}")
+        }
+        // COMPANION du classpath (ADR 0222) : les membres d'instance du
+        // compagnon (`fqcn$Companion`) sont accessibles par le NOM de la
+        // classe — champ puis méthode, miroir des cascades ci-dessus.
+        val compagnon = typeRecepteur + "\$Companion"
+        val champCompagnon = contexte.resolution.champsNommes(compagnon, nom).firstOrNull()
+        if (champCompagnon != null) {
+            val traduit = contexte.resolution.traduireDescripteur("()${champCompagnon.descripteur}")
+            val type = if (traduit.retour == "void") "?" else contexte.resolution.renduCourt(traduit.retour)
+            return ContenuSurvoleKotlin("val $nom: $type")
+        }
+        val methodeCompagnon = contexte.resolution.methodesNommees(compagnon, nom).firstOrNull()
+        if (methodeCompagnon != null) {
+            val traduit = contexte.resolution.traduireDescripteur(methodeCompagnon.methode.descripteur)
+            val rendu = traduit.parametres.joinToString(", ") { contexte.resolution.renduCourt(it) }
+            return ContenuSurvoleKotlin(
+                "fun $nom($rendu): ${contexte.resolution.renduCourt(traduit.retour)}" +
+                    " — ${methodeCompagnon.proprietaire}",
+            )
         }
         // Extension de l'index sur ce récepteur (ou un supertype/alias).
         for (courant in contexte.resolution.chaineSupertypes(typeRecepteur)) {

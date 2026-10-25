@@ -120,13 +120,15 @@ jamais un faux positif).
 
 | Suite | Tests | État |
 |-------|-------|------|
-| moteur Kotlin (`:lsp:kotlin`) | 322 | ✅ |
+| moteur Kotlin (`:lsp:kotlin`) | 332 | ✅ |
 | index disque (`:lsp:index`) | 82 | ✅ |
-| hôte LSP (`:lsp:host`) | 240 | ✅ (corpus Compose + Views + KMP + Gradle branchés) |
+| hôte LSP (`:lsp:host`) | 241 | ✅ (corpus Compose + Views + KMP + Gradle branchés) |
 | detekt (3 modules, sources principales) | — | ✅ |
 
 Corpus E2E : `REPRO_COMPOSE_DIR` (17 jars), `REPRO_VIEWS_DIR`
-(27 artefacts) — absents → tests ignorés (aucune dépendance CI).
+(27 artefacts), jars Gradle (découverte du cache wrapper — cf.
+`ReproductionGradleModeleE2ETest`) — absents → tests ignorés
+(aucune dépendance CI).
 
 ## 6. Décisions d'architecture
 
@@ -136,6 +138,8 @@ Corpus E2E : `REPRO_COMPOSE_DIR` (17 jars), `REPRO_VIEWS_DIR`
   chaîne, propriétés synthétiques Java, `super.`/`this.`, ViewBinding.
 - **ADR 0220** — KMP : membres d'objets scannés, objets référençables.
 - **ADR 0221** — scripts Gradle : nus muets, qualifiés faillibles.
+- **ADR 0222** — companions : membres prêtés au nom de la classe.
+- **ADR 0223** — sélection par types complets : présence et absence.
 
 ## 7. Conclusion
 
@@ -153,9 +157,32 @@ documentée dans une ADR traçable.
 
 1. **Modèle Gradle** (K6+) : indexer le classpath des scripts Gradle
    pour offrir la complétion DSL (`android { … }`).
+   → **Partiellement livré (v1.12.0)** : les segments QUALIFIÉS des
+   scripts prouvent leur présence contre un classpath Gradle réel
+   (E2E `ReproductionGradleModeleE2ETest` — `JavaVersion.VERSION_11`
+   survolé et complété) ; le provisionnement des jars et le routage
+   session-« scripts » sont documentés pour CodeIDE
+   (`docs/INTEGRATION-CODEIDE-LSP-KOTLIN.md` §1) ; les ACCESSEURS
+   GÉNÉRÉS par projet (`android { }`) restent hors modèle (Gradle
+   les génère — aucune classe lisible dans un jar).
 2. **Sélectivité par source set** KMP (nécessite le classpath Gradle
    par variante).
+   → **Modèle documenté pour CodeIDE**
+   (`docs/INTEGRATION-CODEIDE-LSP-KOTLIN.md` §2 : une session par
+   source set, classpath par variante Gradle) ; l'union actuelle reste
+   correcte en diagnostic (sur-ensemble).
 3. **Sélection d'appelé par types complets** (K4+) pour diagnostiquer
    les sélecteurs qualifiés sur récepteurs typés.
+   → **Livré (v1.12.0, ADR 0223)** : présence PROUVÉE (le callee
+   membre d'un récepteur typé — `layoutInflater.inflate(…)` —
+   résout ; le faux positif latent est réparé) et absence PROUVÉE
+   (`s.inexistant`, `tv.setTexe(…)` signalés — miroir Android
+   Studio), avec les gardes D3 (classe illisible, session sans
+   entrées, homonyme d'extension → silence).
 4. **Companion objects sans nom** : attacher leurs membres à la
    classe englobante (`Boite.creer()`).
+   → **Livré (v1.12.0, ADR 0222)** : compagnons anonymes (« Companion »
+   effectif), membres émis sous la classe ET sous l'objet, compagnons
+   du classpath (`Regex.escape`, `UInt.MAX_VALUE`) sur le régime
+   statique de toutes les capacités (survol, complétion, signature,
+   occurrences, typage des chaînes).

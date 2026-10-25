@@ -209,6 +209,15 @@ internal class IndexAppelablesKotlin {
     internal fun couvre(entrees: List<EntreeClasspathKotlin>): Boolean =
         entrees.map { it.empreinte } == empreintesSnapshot
 
+    /**
+     * Le snapshot porte-t-il AU MOINS UNE entrée de classpath ? ADR 0223 :
+     * la preuve d'ABSENCE d'extension exige la connaissance d'au moins un
+     * jar d'extensions — une session nue (vue seule, aucune entrée) ne
+     * prouve RIEN (toute extension du monde réel est hors modèle).
+     */
+    internal val connaitDesEntrees: Boolean
+        get() = snapshot.empreintes.isNotEmpty()
+
     /** Appelables de premier niveau portant EXACTEMENT ce nom. */
     internal fun topParNom(nom: String): List<AppelableKotlin> = snapshot.parNom[nom] ?: emptyList()
 

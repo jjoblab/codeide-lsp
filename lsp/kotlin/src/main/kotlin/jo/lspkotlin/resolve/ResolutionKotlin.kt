@@ -64,24 +64,35 @@ internal class ResolutionKotlin(
      * les classes du projet (n'importe quel paquet : la résolution en
      * dehors des imports est possible si le nom est UNIQUE au projet).
      * `null` sinon — conservateur.
+     *
+     * ADR 0223 : le nom écrit est NORMALISÉ avant résolution — les
+     * conventions nullables et génériques du TYPE (`String?`,
+     * `List<Int>`) ne changent PAS l'identité de la classe cible
+     * (miroir `TypageExpression.traduireTypeEcrit`, qui normalise
+     * déjà les retours écrits des membres du projet) : sans cette
+     * normalisation, TOUT récepteur local de type nullable ou
+     * générique (`binding?.root`, `items.size`) restait muet — le
+     * typage, la complétion membre ET la sélection par types complets.
      */
     internal fun fqcnDuNomEcrit(
         nomEcrit: String,
         contexte: ContexteNom,
     ): String? {
-        contexte.importsParNom[nomEcrit]?.let { return it }
+        val nom = nomEcrit.substringBefore('<').trim().trimEnd('?')
+        if (nom.isEmpty()) return null
+        contexte.importsParNom[nom]?.let { return it }
         contexte.paquet?.let { paquet ->
-            contexte.classesProjet["$paquet.$nomEcrit"]?.let { return it }
+            contexte.classesProjet["$paquet.$nom"]?.let { return it }
         }
-        IMPORTS_DEFAUT[nomEcrit]?.let { return it }
+        IMPORTS_DEFAUT[nom]?.let { return it }
         // Import joker : le paquet importé porte-t-il CE nom ? La vue
         // répond (typesDansPaquet — ni plus ni moins).
         for (paquetJoker in contexte.importsJoker) {
-            if (vue?.typesDansPaquet(paquetJoker)?.any { it == "$paquetJoker.$nomEcrit" } == true) {
-                return "$paquetJoker.$nomEcrit"
+            if (vue?.typesDansPaquet(paquetJoker)?.any { it == "$paquetJoker.$nom" } == true) {
+                return "$paquetJoker.$nom"
             }
-            if (contexte.classesProjet["$paquetJoker.$nomEcrit"] != null) {
-                return "$paquetJoker.$nomEcrit"
+            if (contexte.classesProjet["$paquetJoker.$nom"] != null) {
+                return "$paquetJoker.$nom"
             }
         }
         // Nom unique au projet (tous paquets) : résolu sans import
@@ -89,7 +100,7 @@ internal class ResolutionKotlin(
         // bibliothèques ; AMBIGU = null (deux classes homonymes).
         // Un fqcn SANS PAQUET (« Base ») porte l'égalité stricte ; un
         // fqcn qualifié porte le suffixe « .nom ».
-        val porteurs = contexte.classesProjet.values.filter { it == nomEcrit || it.endsWith(".$nomEcrit") }
+        val porteurs = contexte.classesProjet.values.filter { it == nom || it.endsWith(".$nom") }
         if (porteurs.size == 1) return porteurs.single()
         return null
     }

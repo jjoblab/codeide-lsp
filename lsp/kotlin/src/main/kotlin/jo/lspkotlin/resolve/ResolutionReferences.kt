@@ -225,7 +225,16 @@ internal object ResolutionReferences {
             }
         if (englobantes.isEmpty()) return false
         val noms = englobantes.mapNotNull { noeud ->
-            (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton()?.texte?.toString()
+            // ADR 0222 : un companion ANONYME porte son nom effectif
+            // « Companion » — le repli générique nomJeton() y lirait
+            // le PREMIER MEMBRE (« creer »), brisant le FQCN de départ.
+            if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+                val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+                objet.nomObjet()?.texte?.toString()
+                    ?: if (objet.estCompanion()) "Companion" else null
+            } else {
+                (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton()?.texte?.toString()
+            }
         }
         if (noms.isEmpty() || noms.size != englobantes.size) return false
         val fqcnDepart =

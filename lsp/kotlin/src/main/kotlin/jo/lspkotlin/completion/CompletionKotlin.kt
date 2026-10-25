@@ -280,6 +280,34 @@ internal object CompletionKotlin {
                 }
             }
         }
+        // COMPANION du classpath (ADR 0222) : après le NOM de la classe
+        // (`Int.`), les membres d'INSTANCE du compagnon
+        // (`fqcn$Companion`) s'offrent aussi — miroir kotlinc : le nom
+        // de la classe prête les membres de son compagnon. Le régime
+        // statiqueSeul est assoupli pour CE porteur seul (les membres
+        // du compagnon ne portent pas le drapeau statique JVM) ; côté
+        // projet, la DOUBLE ÉMISSION de SymbolesProjet couvre déjà les
+        // deux conteneurs (boucle declarationsProjet ci-dessous).
+        if (typeStatique != null) {
+            val membresCompagnon = contexte.resolution.membresDe(typeStatique + "\$Companion")
+            if (membresCompagnon != null) {
+                for (champ in membresCompagnon.champs) {
+                    if (!estOffrable(champ.nom, champ.drapeaux, statiqueSeul = false)) continue
+                    if (!champ.nom.startsWith(prefixe)) continue
+                    propositions += proposition(
+                        libelle = champ.nom,
+                        genre = GenreCompletionKotlin.PROPRIETE,
+                        detail = detailChamp(champ.descripteur, contexte),
+                        pertinence = PertinencesKotlin.MEMBRE,
+                    )
+                }
+                for (methode in membresCompagnon.methodes) {
+                    if (!estOffrable(methode.nom, methode.drapeaux, statiqueSeul = false)) continue
+                    if (!methode.nom.startsWith(prefixe)) continue
+                    propositions += propositionMethode(methode.nom, methode.descripteur, contexte)
+                }
+            }
+        }
         // Membres du PROJET : un récepteur de type PROJET n'est PAS dans
         // la vue (classpath) — ses déclarations (fichier courant + scan)
         // sont la source de vérité, conteneur = FQCN (ADR 0219 : les

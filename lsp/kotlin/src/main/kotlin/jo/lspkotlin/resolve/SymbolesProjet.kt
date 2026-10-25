@@ -155,6 +155,15 @@ public object SymbolesProjet {
         conteneur: String?,
         resultat: MutableList<DeclarationProjet>,
     ) {
+        // ADR 0222 : le COMPANION a sa propre grammaire de nommage — le
+        // repli générique nomJeton() lirait le PREMIER MEMBRE d'un
+        // companion ANONYME (enregistré « creer », membres sous
+        // « pkg.Boite.creer ») : détection par MODIFIER_LIST + nom
+        // effectif « Companion » (miroir kotlinc).
+        if (declaration is KtObjectDeclaration) {
+            extraireObjet(declaration, uri, paquet, conteneur, resultat)
+            return
+        }
         val nom = declaration.nomJeton() ?: return
         // Conteneur qualifié des MEMBRES : au premier niveau le paquet
         // est préfixé (« a.b.Vue »), aux niveaux suivants le parent
@@ -252,28 +261,6 @@ public object SymbolesProjet {
                 )
             }
 
-            is KtObjectDeclaration -> {
-                // ADR 0220 : les membres d'un `object` (expect compris —
-                // le patron `expect object Fabrique { fun creer() }` de
-                // toute lib KMP, et le singleton Kotlin en général) sont
-                // des déclarations à PART ENTIÈRE — la branche `else`
-                // historique les IGNORAIT : `Fabrique.creer()` était un
-                // faux `kt.unresolved`, la complétion `Fabrique.` muette.
-                resultat += DeclarationProjet(
-                    genre = GenreDeclaration.OBJET,
-                    nom = nom.texte.toString(),
-                    uri = uri,
-                    debutNom = nom.debut,
-                    finNom = nom.fin,
-                    paquet = paquet,
-                    recepteur = null,
-                    typeRetour = null,
-                    parametres = emptyList(),
-                    conteneur = conteneur,
-                )
-                parcourirConteneur(declaration.membres(), uri, paquet, qualifieConteneur, resultat)
-            }
-
             else -> {
                 resultat += DeclarationProjet(
                     genre = GenreDeclaration.OBJET,
@@ -288,6 +275,61 @@ public object SymbolesProjet {
                     conteneur = conteneur,
                 )
             }
+        }
+    }
+
+    /**
+     * Extrait une déclaration d'OBJET — ADR 0220 (membres scannés,
+     * objets référençables) et ADR 0222 (COMPANION : nom effectif
+     * « Companion » si anonyme, membres émis DEUX FOIS — sous
+     * l'objet qualifié `pkg.Boite.Companion` (accès explicite) ET
+     * sous la CLASSE ENGLOBANTE `pkg.Boite` (accès par le nom de la
+     * classe, `Boite.creer()` — miroir kotlinc : le nom de la classe
+     * PRÊTE les membres de son compagnon).
+     */
+    private fun extraireObjet(
+        declaration: KtObjectDeclaration,
+        uri: String,
+        paquet: String?,
+        conteneur: String?,
+        resultat: MutableList<DeclarationProjet>,
+    ) {
+        val nomJeton = declaration.nomObjet()
+        // Companion hors classe (conteneur null) : syntaxe invalide
+        // Kotlin — traité comme un objet simple anonyme (ignoré D3).
+        val compagnon = declaration.estCompanion() && conteneur != null
+        val nomEffectif =
+            when {
+                nomJeton != null -> nomJeton.texte.toString()
+                compagnon -> "Companion"
+                else -> return
+            }
+        val qualifieObjet =
+            if (conteneur == null) {
+                (paquet?.let { "$it." } ?: "") + nomEffectif
+            } else {
+                "$conteneur.$nomEffectif"
+            }
+        resultat +=
+            DeclarationProjet(
+                genre = GenreDeclaration.OBJET,
+                nom = nomEffectif,
+                uri = uri,
+                debutNom = nomJeton?.debut ?: declaration.noeud.debut,
+                finNom = nomJeton?.fin ?: declaration.noeud.fin,
+                paquet = paquet,
+                recepteur = null,
+                typeRetour = null,
+                parametres = emptyList(),
+                conteneur = conteneur,
+            )
+        // Membres sous l'OBJET (accès `Boite.Companion.creer()` et
+        // corps du compagnon — this implicite).
+        parcourirConteneur(declaration.membres(), uri, paquet, qualifieObjet, resultat)
+        // ADR 0222 : les MÊMES membres sous la CLASSE ENGLOBANTE —
+        // `Boite.creer()` (le nom de classe prête le compagnon).
+        if (compagnon) {
+            parcourirConteneur(declaration.membres(), uri, paquet, conteneur, resultat)
         }
     }
 

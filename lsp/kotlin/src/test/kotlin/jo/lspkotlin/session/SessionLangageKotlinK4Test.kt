@@ -358,8 +358,13 @@ class SessionLangageKotlinK4Test {
     }
 
     @Test
-    fun `kt unresolved - selecteur qualifie et types, jamais signales (sous-rapport)`() {
-        val session = session()
+    fun `kt unresolved - selecteur sur recepteur TYPO, signale (ADR 0223)`() {
+        val session = sessionAvecStdlib()
+        // ADR 0223 : le récepteur TYPE (kotlin.String, stdlib réelle) et
+        // le membre introuvable PARTOUT (chaîne de supertypes, companion,
+        // aucune extension homonyme dans l'index) — l'absence est PROUVÉE,
+        // le sélecteur est diagnostiquable. Miroir Android Studio :
+        // `s.inexistant` y est rouge.
         val source =
             """
             fun demo(s: String) {
@@ -367,9 +372,85 @@ class SessionLangageKotlinK4Test {
             }
             """.trimIndent().replace("    ", "  ")
         session.ouvrirDocument("file:///selecteur.kt", source)
-        assertTrue(
+        val nonResolus =
             session.diagnostics("file:///selecteur.kt")
+                .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertEquals(
+            "le sélecteur introuvable sur récepteur typé est signalé — obtenu : ${nonResolus.map { it.message }}",
+            1,
+            nonResolus.size,
+        )
+        assertEquals("Référence non résolue : « inexistant »", nonResolus.single().message)
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - selecteur MEMBRE sur recepteur typo, signale (ADR 0223)`() {
+        val session = sessionAvecStdlib()
+        // La FAUTE DE FRAPPE dans un APPEL qualifié (`tv.setTexe(…)`) :
+        // callee diagnostiquable quand l'absence est prouvée — miroir
+        // Android Studio.
+        val source =
+            """
+            fun demo(s: String) {
+              s.trimInexistant()
+            }
+            """.trimIndent().replace("    ", "  ")
+        session.ouvrirDocument("file:///selecteur-appel.kt", source)
+        val nonResolus =
+            session.diagnostics("file:///selecteur-appel.kt")
+                .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        assertEquals(
+            "le callee introuvable sur récepteur typé est signalé — obtenu : ${nonResolus.map { it.message }}",
+            1,
+            nonResolus.size,
+        )
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - callee MEMBRE d un recepteur typé, resolu (ADR 0223)`() {
+        val session = sessionAvecStdlib()
+        // La RÉPARATION : `layoutInflater.inflate(…)`-style — le callee
+        // membre d'instance du récepteur typé n'est PAS un appelable de
+        // portée, il résout par le TYPE COMPLET du récepteur.
+        val source =
+            """
+            fun demo(s: String): String {
+              return s.plus("!")
+            }
+            """.trimIndent().replace("    ", "  ")
+        session.ouvrirDocument("file:///callee-membre.kt", source)
+        assertTrue(
+            "le callee membre du récepteur typé résout — obtenu : " +
+                session.diagnostics("file:///callee-membre.kt").map { it.message },
+            session.diagnostics("file:///callee-membre.kt")
                 .none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+        session.close()
+    }
+
+    @Test
+    fun `kt unresolved - recepteur NON TYPO, selecteur muet (D3 inchangé)`() {
+        val session = session()
+        // Récepteur INCONNU (locale sans type, sans initialiseur) : pas
+        // de preuve d'absence — le sélecteur reste muet (D3).
+        val source =
+            """
+            fun demo(inconnu: ChoseAbsenteDuClasspath) {
+              inconnu.nimporte.quoi
+            }
+            """.trimIndent().replace("    ", "  ")
+        session.ouvrirDocument("file:///selecteur-muet.kt", source)
+        val nonResolus =
+            session.diagnostics("file:///selecteur-muet.kt")
+                .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
+        // `ChoseAbsenteDuClasspath` (paramètre, type inconnu) et
+        // `nimporte` (racine de la chaîne) restent sous le régime nu ;
+        // `quoi` est muet (récepteur `inconnu.nimporte` non typable).
+        assertTrue(
+            "seule la racine non résolue est signalée — obtenu : ${nonResolus.map { it.message }}",
+            nonResolus.none { it.message.contains("quoi") },
         )
         session.close()
     }

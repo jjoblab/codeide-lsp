@@ -1,5 +1,59 @@
 # Changelog — codeide-lsp
 
+## 1.12.0 (2026-10-25)
+
+- **Chantier « suites recommandées du rapport d'audit §8 » — ADR
+  0222/0223** (les suites n° 3 et 4 livrées au moteur, les n° 1 et 2
+  documentées pour CodeIDE — `docs/INTEGRATION-CODEIDE-LSP-KOTLIN.md`).
+  - **Companion objects — ADR 0222** : le nom d'une classe Kotlin
+    PRÊTE les membres de son `companion object` (`Boite.creer()`,
+    `Regex.escape(…)`, `UInt.MAX_VALUE`) — le patron idiomatique
+    était un non-fonctionnement de bout en bout. Côté projet : le
+    compagnon ANONYME porte son nom effectif « Companion » (le repli
+    générique `nomJeton()` lisait le PREMIER MEMBRE — le compagnon
+    était enregistré « creer », ses membres sous « pkg.Boite.creer »,
+    et la même heuristique poisonnait `classeEnglobante`,
+    `nomConteneur` et `estMembreHerite`) ; les membres sont émis DEUX
+    FOIS (sous `pkg.Boite.Companion` ET sous la classe `pkg.Boite`).
+    Côté classpath : `fqcn$Companion` sondé sur le régime STATIQUE de
+    toutes les capacités — typage des chaînes, complétion membre,
+    survol, signatures, occurrences. L'OBJET « Companion » s'offre
+    après le nom de la classe, miroir kotlinc.
+  - **Sélection d'appelé par types complets — ADR 0223** : quand le
+    RÉCEPTEUR d'une sélection TYPE, la cascade du survol qualifié
+    (champ → méthode → accesseur synthétique → compagnon ADR 0222 →
+    membre du projet → extension sur le récepteur) décide. PRÉSENCE
+    PROUVÉE : le callee membre d'instance d'un récepteur typé RÉSOUT —
+    le faux positif LATENT `layoutInflater.inflate(1, null, null)`
+    (le callee membre n'est pas un appelable de portée, la résolution
+    par nom seul ne pouvait pas le trouver) est réparé. ABSENCE
+    PROUVÉE : `s.inexistant`, `tv.setTexe(…)` redeviennent signalés —
+    miroir Android Studio. Gardes D3 : classe illisible, session sans
+    entrées d'index (`connaitDesEntrees`), homonyme d'extension
+    quelconque → silence inchangé.
+  - **Typage nullables/génériques** (`fqcnDuNomEcrit`) : le nom écrit
+    est NORMALISÉ (`String?`, `List<Int>` → la classe cible, miroir
+    `traduireTypeEcrit`) — tout récepteur local de type nullable ou
+    générique (`binding?.root`, `items.size`) restait muet en typage,
+    complétion et sélection par types.
+  - **Modèle Gradle (suite §8.1, tranche livrée)** : E2E
+    `ReproductionGradleModeleE2ETest` — un script `.gradle.kts` à
+    classpath Gradle RÉEL (jars de la distribution) : zéro faux
+    `kt.unresolved`, `JavaVersion.VERSION_11` survolé et complété
+    (`VERSION_11 … VERSION_20`), le tout par la machinerie standard
+    SANS code dédié aux scripts ; le provisionnement et le routage
+    session-« scripts » sont documentés pour CodeIDE.
+  - **Sélectivité source sets KMP (suite §8.2)** : modèle documenté
+    pour CodeIDE (une session par source set, classpath par variante
+    Gradle) — l'union actuelle reste correcte en diagnostic.
+  - **Baseline de parité** : régénérée (`-Dparite.majBase=true`) — le
+    corpus du dépôt a gagné les nouveaux tests et les sources
+    modifiées.
+  - **Gardes de non-régression** : le VRAI négatif sélecteur
+    (`s.inexistant`) signalé au milieu du stdlib réel ; le récepteur
+    NON typable reste muet (D3 inchangé) ; l'objet simple (ADR 0220)
+    et le this implicite du corps du compagnon inchangés.
+
 ## 1.11.0 (2026-10-25)
 
 - **Chantier « monde NON-Compose (Views) » — ADR 0219** (le deuxième

@@ -125,11 +125,20 @@ internal object TypageExpression {
             KtNodeTypes.DOT_QUALIFIED_EXPRESSION, KtNodeTypes.SAFE_ACCESS_EXPRESSION -> {
                 val recepteur = recepteurQualifie(expression) ?: return null
                 val selecteur = selecteurQualifie(expression) ?: return null
-                val typeRecepteur =
+                val typeValeur =
                     typeExpression(recepteur, racine, contexteNom, resolution, declarationsProjet, profondeur + 1)
-                        ?: typeStatiqueDe(recepteur, contexteNom, resolution)
-                        ?: return null
-                typeMembreSur(typeRecepteur, selecteur, resolution, declarationsProjet, contexteNom)
+                if (typeValeur != null) {
+                    return typeMembreSur(typeValeur, selecteur, resolution, declarationsProjet, contexteNom)
+                }
+                // ADR 0222 : récepteur CLASSE (statique — `Boite.creer()`,
+                // `Int.MAX_VALUE`) : la classe d'abord, puis SON
+                // COMPANION du classpath (les membres d'instance du
+                // compagnon sont accessibles par le NOM de la classe —
+                // miroir kotlinc ; côté projet, la double émission de
+                // SymbolesProjet couvre déjà les deux conteneurs).
+                val typeClasse = typeStatiqueDe(recepteur, contexteNom, resolution) ?: return null
+                return typeMembreSur(typeClasse, selecteur, resolution, declarationsProjet, contexteNom)
+                    ?: typeMembreCompanionDe(typeClasse, selecteur, resolution, declarationsProjet, contexteNom)
             }
 
             else -> null
@@ -186,19 +195,35 @@ internal object TypageExpression {
         val chaine = chaineAncetresA(racine, decalage)
         val noms = mutableListOf<String>()
         for (noeud in chaine) {
-            if (noeud.type == KtNodeTypes.CLASS || noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
-                val nom =
-                    noeud.jetonsDescendants()
-                        .firstOrNull { it.type == org.jetbrains.kotlin.kmp.lexer.KtTokens.IDENTIFIER }
-                        ?.texte
-                        ?.toString() ?: return null
-                noms.add(nom)
-            }
+            if (noeud.type != KtNodeTypes.CLASS && noeud.type != KtNodeTypes.OBJECT_DECLARATION) continue
+            // ADR 0222 : un COMPANION ANONYME porte son nom effectif
+            // « Companion » — le repli générique au premier IDENTIFIER
+            // y lirait un MEMBRE (« creer »).
+            val nom = nomDeclarationEnglobante(noeud) ?: return null
+            noms.add(nom)
         }
         if (noms.isEmpty()) return null
         val chemin = noms.joinToString(".")
         return contexteNom.paquet?.let { "$it.$chemin" } ?: chemin
     }
+
+    /**
+     * Nom DÉCLARÉ d'une classe/objet ENGLOBANT(E) — l'IDENTIFIER
+     * premier (miroir historique) pour une CLASSE, le nom PROPRE pour
+     * un objet, « Companion » pour un compagnon ANONYME (ADR 0222),
+     * `null` sinon.
+     */
+    private fun nomDeclarationEnglobante(noeud: NoeudSyntaxique): String? =
+        if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+            val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+            objet.nomObjet()?.texte?.toString()
+                ?: if (objet.estCompanion()) "Companion" else null
+        } else {
+            noeud.jetonsDescendants()
+                .firstOrNull { it.type == org.jetbrains.kotlin.kmp.lexer.KtTokens.IDENTIFIER }
+                ?.texte
+                ?.toString()
+        }
 
     /**
      * Type d'une RÉFÉRENCE par nom : locale/paramètre (type écrit puis
@@ -358,11 +383,14 @@ internal object TypageExpression {
     }
 
     /**
-     * Type STATIQUE d'un récepteur qui ne type pas en VALEUR (K5) — la
+     * Type STATIQUE d'un récepteur qui ne type pas en VALEUR — la
      * référence est peut-être une CLASSE (chaîne `R.layout.…`, membre
      * statique de compagnon) : le nom écrit résolu en FQCN.
+     *
+     * Internal (ADR 0223) : le diagnostic « sélection par types
+     * complets » partage la MÊME notion de récepteur statique.
      */
-    private fun typeStatiqueDe(
+    internal fun typeStatiqueDe(
         recepteur: NoeudSyntaxique,
         contexteNom: ResolutionKotlin.ContexteNom,
         resolution: ResolutionKotlin,
@@ -458,6 +486,43 @@ internal object TypageExpression {
         // Membre du PROJET (K5) : conteneur = FQCN du récepteur.
         for (declaration in declarationsProjet) {
             if (declaration.conteneur != typeRecepteur) continue
+            if (declaration.nom != nomMembre) continue
+            declaration.typeRetour?.let { ecrit -> return traduireTypeEcrit(ecrit, contexteNom, resolution) }
+        }
+        return null
+    }
+
+    /**
+     * Type d'un membre du COMPANION du classpath (ADR 0222) — les
+     * membres d'instance du compagnon (`fqcn$Companion`, imbriqués
+     * par `$` dans la vue) sont accessibles par le NOM de la classe :
+     * champ, méthode, puis membre du projet (double émission — les
+     * deux conteneurs).
+     */
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
+    private fun typeMembreCompanionDe(
+        typeClasse: String,
+        selecteur: NoeudSyntaxique,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+        contexteNom: ResolutionKotlin.ContexteNom,
+    ): String? {
+        val nomMembre =
+            when (selecteur.type) {
+                KtNodeTypes.CALL_EXPRESSION -> nomAppele(selecteur) ?: return null
+                else -> nomReference(selecteur) ?: return null
+            }
+        val compagnon = typeClasse + "\$Companion"
+        val champ = resolution.champsNommes(compagnon, nomMembre).firstOrNull()
+        if (champ != null) {
+            return traduireTypeChamp(champ.descripteur, resolution)
+        }
+        val methode = resolution.methodesNommees(compagnon, nomMembre).firstOrNull()
+        if (methode != null) {
+            return resolution.traduireDescripteur(methode.methode.descripteur).retour
+        }
+        for (declaration in declarationsProjet) {
+            if (declaration.conteneur != compagnon) continue
             if (declaration.nom != nomMembre) continue
             declaration.typeRetour?.let { ecrit -> return traduireTypeEcrit(ecrit, contexteNom, resolution) }
         }
