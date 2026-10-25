@@ -97,9 +97,9 @@ internal class ResolutionKotlin(
     /**
      * Chaîne de supertypes de [fqcn] (LE fqcn inclus, superclasse et
      * interfaces récursivement) — profondeur bornée (BORN_PROFONDEUR),
-     * cycles coupés, cache plat. Vide (fqcn seul) si la classe ne se
-     * lit pas — la complétion membre retombe sur les membres DÉCLARÉS
-     * (sous-rapport D3).
+     * budget total de maillons (BORN_MAILLONS), cycles coupés, cache
+     * plat. Vide (fqcn seul) si la classe ne se lit pas — la complétion
+     * membre retombe sur les membres DÉCLARÉS (sous-rapport D3).
      *
      * ADR 0205 : les octets d'un maillon sont lus via la variante
      * aliasée JVM au premier échec (`kotlin.String` est une FICTION du
@@ -110,6 +110,17 @@ internal class ResolutionKotlin(
      * Int, Long, Boolean, Comparable — aucune méthode DÉCLARÉE de ces
      * types ne résolvait (les extensions, elles, passent par
      * `variantesRecepteur` qui sonde déjà les deux clés).
+     *
+     * ADR 0219 : la borne de PROFONDEUR 6 coupait la hiérarchie Android
+     * RÉELLE avant `android.content.Context` — la chaîne
+     * AppCompatActivity → FragmentActivity → activity.ComponentActivity
+     * → core.ComponentActivity → Activity → ContextThemeWrapper →
+     * ContextWrapper → Context exige PROFONDEUR 7 (et les bibliothèques
+     * futures peuvent empiler plus haut) : `getString`/`getColor`/
+     * `getDrawable` vivaient au maillon 7 et restaient des faux
+     * `kt.unresolved` alors que le classpath portait tout. Miroir
+     * Android Studio : la chaîne parcourue est la fermeture COMPLÈTE
+     * (aucune borne arbitraire en dessous des hiérarchies réelles).
      */
     internal fun chaineSupertypes(fqcn: String): List<String> {
         cacheSupertypes[fqcn]?.let { return it }
@@ -117,6 +128,7 @@ internal class ResolutionKotlin(
         val vus = HashSet<String>()
         fun visiter(courant: String?, profondeur: Int) {
             if (courant == null || courant in vus || profondeur > BORN_PROFONDEUR) return
+            if (chaine.size >= BORN_MAILLONS) return
             vus.add(courant)
             chaine.add(courant)
             val octets = octetsClasseAvecAlias(courant) ?: return
@@ -244,6 +256,141 @@ internal class ResolutionKotlin(
         return variantes
     }
 
+    // ── Propriétés synthétiques Java (ADR 0219) ─────────────────────────
+    //
+    // Interop cœur du langage (miroir Android Studio / kotlinc) : un
+    // getter Java `getFoo()` est lisible comme propriété `foo`. Dans le
+    // monde non-Compose c'est LA majorité des accès — `layoutInflater`,
+    // `packageManager`, `classLoader`, `contentResolver` (Context),
+    // `binding.root`-adjacents, `title = …` via setTitle… Sans cette
+    // synthèse, TOUT nom nu de propriété-getter dans une Activity était
+    // un faux `kt.unresolved`.
+
+    /**
+     * GETTER synthétique du nom de propriété [nom] sur la chaîne de
+     * [fqcn] — méthode `getFoo()`/`isFoo()` publique ou protégée, NON
+     * statique, SANS paramètre et au retour NON void, premier porteur
+     * de la chaîne (surcharges par nom seule — K3).
+     *
+     * @return la méthode portante et son propriétaire, `null` sinon.
+     */
+    internal fun getterSynthetique(
+        fqcn: String,
+        nom: String,
+    ): MemeJvmNomme? {
+        for (candidat in listOf("get${nom.majusculePremier()}", "is${nom.majusculePremier()}")) {
+            for (courant in chaineSupertypes(fqcn)) {
+                val membres = membresDe(courant) ?: continue
+                val methode =
+                    membres.methodes.firstOrNull { m ->
+                        m.nom == candidat && estAccesseurValide(m, unParametre = false)
+                    }
+                if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
+            }
+        }
+        return null
+    }
+
+    /**
+     * SETTER synthétique du nom de propriété [nom] sur la chaîne de
+     * [fqcn] — méthode `setFoo(v)` publique ou protégée, NON statique,
+     * à UN paramètre ; une AFFECTATION nu `title = …` prouve sa
+     * résolution par son existence (miroir kotlinc).
+     */
+    internal fun setterSynthetique(
+        fqcn: String,
+        nom: String,
+    ): MemeJvmNomme? {
+        val candidat = "set${nom.majusculePremier()}"
+        for (courant in chaineSupertypes(fqcn)) {
+            val membres = membresDe(courant) ?: continue
+            val methode =
+                membres.methodes.firstOrNull { m ->
+                    m.nom == candidat && estAccesseurValide(m, unParametre = true)
+                }
+            if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
+        }
+        return null
+    }
+
+    /**
+     * ACCESSEUR (getter OU setter) synthétique — le prédicat du
+     * diagnostic `kt.unresolved` (voie 2-ter) : l'un OU l'autre prouve
+     * la résolution d'un nom nu de propriété Java.
+     */
+    internal fun accesseurSynthetique(
+        fqcn: String,
+        nom: String,
+    ): MemeJvmNomme? =
+        getterSynthetique(fqcn, nom) ?: setterSynthetique(fqcn, nom)
+
+    /** Première lettre en MAJUSCULE (`layoutInflater` → `LayoutInflater`). */
+    private fun String.majusculePremier(): String =
+        if (isEmpty() || this[0].isUpperCase()) this else replaceFirstChar { it.uppercaseChar() }
+
+    /**
+     * Un membre JVM est-il un ACCESSEUR offrable : public ou protégé
+     * (le contexte d'appel est TOUJOURS une sous-classe ou une
+     * instance), NON statique (les propriétés synthétiques statiques
+     * n'existent pas en Kotlin), et de l'arité demandée — getter :
+     * ZÉRO paramètre et retour NON void (`()Ljava/lang/String;`) ;
+     * setter : UN paramètre exactement (`(Ljava/lang/CharSequence;)V`).
+     */
+    private fun estAccesseurValide(
+        methode: MembreJvmKotlin,
+        unParametre: Boolean,
+    ): Boolean {
+        if (methode.drapeaux and DRAPEAU_ACCES_PUBLIC == 0 &&
+            methode.drapeaux and DRAPEAU_ACCES_PROTEGE == 0
+        ) {
+            return false
+        }
+        if (methode.drapeaux and DRAPEAU_ACCES_STATIQUE != 0) return false
+        if (methode.nom == "getClass") return false // kotlinc n'en fait JAMAIS une propriété
+        if (methode.nom.startsWith("<") || methode.nom.contains('$')) return false
+        val traduit = traduireDescripteur(methode.descripteur)
+        return if (unParametre) {
+            traduit.parametres.size == 1
+        } else {
+            traduit.parametres.isEmpty() && traduit.retour != "void"
+        }
+    }
+
+    /**
+     * NOM de propriété synthétique d'une méthode accesseur — direction
+     * MIROIR (complétion membre) : `getLayoutInflater` →
+     * `layoutInflater`, `getURL` → `URL` (deux majuscules de suite
+     * restent — patron JavaBeans/kotlinc), `isFocused` → `focused`.
+     * `null` si la méthode n'est pas un accesseur.
+     */
+    internal fun proprieteSynthetiqueDe(methode: MembreJvmKotlin): String? {
+        if (methode.drapeaux and DRAPEAU_ACCES_STATIQUE != 0) return null
+        if (methode.nom == "getClass") return null
+        val nomMethode = methode.nom
+        val apresGet = nomMethode.removePrefix("get")
+        val apresIs = nomMethode.removePrefix("is")
+        val prefixe =
+            when {
+                apresGet.length < nomMethode.length && apresGet.isNotEmpty() &&
+                    apresGet.first().isUpperCase() -> apresGet
+
+                apresIs.length < nomMethode.length && apresIs.isNotEmpty() &&
+                    apresIs.first().isUpperCase() -> apresIs
+
+                else -> return null
+            }
+        if (prefixe.isEmpty() || prefixe.any { it == '$' }) return null
+        // Deux majuscules de tête restent (getURL → URL) ; sinon la
+        // première passe en minuscule (getLayoutInflater → layoutInflater).
+        return if (prefixe.length > 1 &&
+            prefixe[0].isUpperCase() && prefixe[1].isUpperCase()
+        ) {
+            prefixe
+        } else {
+            prefixe.replaceFirstChar { it.lowercaseChar() }
+        }
+    }
+
     // ── Descripteurs JVM ───────────────────────────────────────────────
 
     /**
@@ -322,8 +469,31 @@ internal class ResolutionKotlin(
     }
 
     private companion object {
-        /** Profondeur maximale de la chaîne de supertypes. */
-        private const val BORN_PROFONDEUR: Int = 6
+        /** Drapeau d'accès JVM `public` (0x0001). */
+        private const val DRAPEAU_ACCES_PUBLIC: Int = 0x0001
+
+        /** Drapeau d'accès JVM `protected` (0x0004). */
+        private const val DRAPEAU_ACCES_PROTEGE: Int = 0x0004
+
+        /** Drapeau d'accès JVM `static` (0x0008). */
+        private const val DRAPEAU_ACCES_STATIQUE: Int = 0x0008
+
+        /**
+         * Profondeur maximale de la chaîne de supertypes — ADR 0219 :
+         * 12 couvre les hiérarchies Android réelles (AppCompatActivity
+         * → … → Context = profondeur 7) avec marge pour les arbres
+         * d'interfaces (l'ordre visite la superclasse AVANT les
+         * interfaces : la chaîne de classes reste prioritaire dans la
+         * liste aplatie, miroir de la résolution Java).
+         */
+        private const val BORN_PROFONDEUR: Int = 12
+
+        /**
+         * Budget TOTAL de maillons par chaîne (ADR 0219) — défense des
+         * hiérarchies pathologiques (interfaces en losange) : la fermeture
+         * reste bornée même quand la profondeur seule ne suffit pas.
+         */
+        private const val BORN_MAILLONS: Int = 256
 
         /** Paquets importés PAR DÉFAUT par Kotlin sur JVM (ADR 0203 —
          *  https://kotlinlang.org/docs/packages.html#default-imports) :

@@ -96,6 +96,9 @@ class ReproductionComposeE2ETest {
      * (template « New Project → Empty Activity » d'Android Studio),
      * diagnostiquée par la chaîne de production nourrie du VRAI classpath.
      */
+    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+    // E2E de production complet (chaîne + corpus + assertions).
+    @Suppress("LongMethod")
     @Test
     public fun `compose - MainActivity template, zero faux positif`() {
         val corpus = this.corpus ?: run {
@@ -225,6 +228,9 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
      * disparition des faux positifs ne doit JAMAIS museler les vraies
      * erreurs (D3 : un sous-ensemble correct bat un modèle complet faux).
      */
+    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+    // E2E de production complet (chaîne + corpus + assertions).
+    @Suppress("LongMethod")
     @Test
     public fun `compose - vrai negatif, toujours signale`() {
         val corpus = this.corpus ?: run {
@@ -300,6 +306,9 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
      * survol, définition, complétion membre, aide à la signature, previews,
      * références — alimente le rapport d'audit du dépôt.
      */
+    // Exemption detekt ciblée (règle 16) : LongMethod — un scénario
+    // E2E de production complet (chaîne + corpus + assertions).
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
     @Test
     public fun `compose - sondage des capacites sur template`() {
         val corpus = this.corpus ?: run {

@@ -255,7 +255,12 @@ internal class ClassesSynthetiques {
         layout: AnalyseRessourcesAndroid.LayoutAnalyse,
     ): GroupeSynthetique {
         val nomClasse = nomBinding(layout.fichier.name)
-        val paquetClasse = if (layout.dataBinding) "$paquet.databinding" else paquet
+        // ADR 0219 : AGP génère TOUJOURS les bindings dans le sous-paquet
+        // `databinding` — ViewBinding compris (le template Android Studio
+        // « Empty Views Activity » importe com.ex.app.databinding.
+        // ActivityMainBinding) ; l'ancienne règle « databinding pour le
+        // DataBinding seul » ne matchait JAMAIS l'import réel du ViewBinding.
+        val paquetClasse = "$paquet.databinding"
         val fqcn = "$paquetClasse.$nomClasse"
         val uri = layout.fichier.toURI().toString()
         val declarations = mutableListOf<DeclarationProjet>()

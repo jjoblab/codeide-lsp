@@ -214,33 +214,79 @@ internal object CompletionKotlin {
             }
         val fqcn = typeValeur ?: typeStatique ?: return emptyList()
 
+        // ADR 0219 : un récepteur `this`/`super` TYPE comme la classe
+        // PROJET englobante — INVISIBLE de la vue classpath : ses
+        // SUPERTYPES ÉCRITS portent la chaîne binaire (miroir
+        // typeMembreImplicite / voie 2-ter). Les autres récepteurs
+        // (locales `binding.`…) gardent leur type SEUL — jamais de
+        // membres de la classe englobante sur un récepteur étranger.
+        val porteurs = ArrayList<String>()
+        porteurs.add(fqcn)
+        if (recepteur.type == KtNodeTypes.THIS_EXPRESSION ||
+            recepteur.type == KtNodeTypes.SUPER_EXPRESSION
+        ) {
+            porteurs.addAll(
+                TypageExpression.fqcnsSupertypesEnglobants(
+                    racine,
+                    debutPrefixe,
+                    contexte.contexteNom,
+                    contexte.resolution,
+                    contexte.declarationsProjet,
+                ),
+            )
+        }
+
         val propositions = mutableListOf<PropositionCompletionKotlin>()
         // Membres déclarés le long de la chaîne de supertypes — via
         // membresDe (ADR 0205 : les membres d'un maillon ALIASÉ, p.ex.
         // `kotlin.String`, se lisent sous la variante JVM `java.lang.String`).
-        for (courant in contexte.resolution.chaineSupertypes(fqcn)) {
-            val membres = contexte.resolution.membresDe(courant) ?: continue
-            for (champ in membres.champs) {
-                if (!estOffrable(champ.nom, champ.drapeaux, statiqueSeul = typeStatique != null)) continue
-                if (!champ.nom.startsWith(prefixe)) continue
-                propositions += proposition(
-                    libelle = champ.nom,
-                    genre = GenreCompletionKotlin.PROPRIETE,
-                    detail = detailChamp(champ.descripteur, contexte),
-                    pertinence = PertinencesKotlin.MEMBRE,
-                )
-            }
-            for (methode in membres.methodes) {
-                if (!estOffrable(methode.nom, methode.drapeaux, statiqueSeul = typeStatique != null)) continue
-                if (!methode.nom.startsWith(prefixe)) continue
-                propositions += propositionMethode(methode.nom, methode.descripteur, contexte)
+        for (porteur in porteurs) {
+            for (courant in contexte.resolution.chaineSupertypes(porteur)) {
+                val membres = contexte.resolution.membresDe(courant) ?: continue
+                for (champ in membres.champs) {
+                    if (!estOffrable(champ.nom, champ.drapeaux, statiqueSeul = typeStatique != null)) continue
+                    if (!champ.nom.startsWith(prefixe)) continue
+                    propositions += proposition(
+                        libelle = champ.nom,
+                        genre = GenreCompletionKotlin.PROPRIETE,
+                        detail = detailChamp(champ.descripteur, contexte),
+                        pertinence = PertinencesKotlin.MEMBRE,
+                    )
+                }
+                for (methode in membres.methodes) {
+                    if (!estOffrable(methode.nom, methode.drapeaux, statiqueSeul = typeStatique != null)) continue
+                    if (!methode.nom.startsWith(prefixe)) continue
+                    propositions += propositionMethode(methode.nom, methode.descripteur, contexte)
+                }
+                // ADR 0219 : PROPRIÉTÉS SYNTHÉTIQUES Java — `getFoo()`/
+                // `isFoo()` s'offrent comme `foo` (miroir Android Studio :
+                // `layoutInflater`, `text`, `root`… dominent les listes de
+                // complétion du monde non-Compose). Le champ/méthode RÉEL du
+                // même nom (boucles ci-dessus) passe TOUJOURS en premier —
+                // la déduplication finale garde le premier porteur.
+                if (typeStatique == null) {
+                    for (methode in membres.methodes) {
+                        val propriete = contexte.resolution.proprieteSynthetiqueDe(methode) ?: continue
+                        if (!propriete.startsWith(prefixe)) continue
+                        val traduit = contexte.resolution.traduireDescripteur(methode.descripteur)
+                        if (traduit.parametres.isNotEmpty() || traduit.retour == "void") continue
+                        propositions += proposition(
+                            libelle = propriete,
+                            genre = GenreCompletionKotlin.PROPRIETE,
+                            detail = "val $propriete: ${contexte.resolution.renduCourt(traduit.retour)}",
+                            pertinence = PertinencesKotlin.MEMBRE,
+                        )
+                    }
+                }
             }
         }
         // Membres du PROJET : un récepteur de type PROJET n'est PAS dans
         // la vue (classpath) — ses déclarations (fichier courant + scan)
-        // sont la source de vérité, conteneur = FQCN.
+        // sont la source de vérité, conteneur = FQCN (ADR 0219 : les
+        // SUPERTYPES ÉCRITS d'un `this`/`super` sont sondés aussi — le
+        // frère projet du GO TO Super).
         for (declaration in contexte.declarationsProjet) {
-            if (declaration.conteneur != fqcn) continue
+            if (declaration.conteneur == null || declaration.conteneur !in porteurs) continue
             if (!declaration.nom.startsWith(prefixe)) continue
             val libelle = libelleDe(declaration)
             propositions += PropositionCompletionKotlin(
@@ -250,8 +296,11 @@ internal object CompletionKotlin {
                 texteTri = texteTri(PertinencesKotlin.MEMBRE, libelle),
             )
         }
-        // Extensions : récepteur + supertypes + alias JVM/Kotlin.
-        val recepteursExtension = extensionRecepteurs(fqcn, contexte)
+        // Extensions : récepteur + supertypes + alias JVM/Kotlin (ADR
+        // 0219 : TOUS les porteurs d'un `this`/`super` — classe ET
+        // supertypes écrits — offrent leurs extensions, miroir des
+        // membres binaires ci-dessus).
+        val recepteursExtension = porteurs.flatMap { porteur -> extensionRecepteurs(porteur, contexte) }.distinct()
         for (recepteurExtension in recepteursExtension) {
             for (extension in contexte.index.extensionsSur(recepteurExtension)) {
                 if (!extension.nom.startsWith(prefixe)) continue
@@ -356,6 +405,19 @@ Drapeau JVM `protected` (membres offrables). */
                     if (!estOffrable(methode.nom, methode.drapeaux, statiqueSeul = false)) continue
                     if (!methode.nom.startsWith(prefixe)) continue
                     propositions += propositionMethode(methode.nom, methode.descripteur, contexte)
+                }
+                // ADR 0219 : propriétés synthétiques Java du `with`.
+                for (methode in membres.methodes) {
+                    val propriete = contexte.resolution.proprieteSynthetiqueDe(methode) ?: continue
+                    if (!propriete.startsWith(prefixe)) continue
+                    val traduit = contexte.resolution.traduireDescripteur(methode.descripteur)
+                    if (traduit.parametres.isNotEmpty() || traduit.retour == "void") continue
+                    propositions += proposition(
+                        libelle = propriete,
+                        genre = GenreCompletionKotlin.PROPRIETE,
+                        detail = "val $propriete: ${contexte.resolution.renduCourt(traduit.retour)}",
+                        pertinence = PertinencesKotlin.MEMBRE,
+                    )
                 }
             }
             for (declaration in contexte.declarationsProjet) {

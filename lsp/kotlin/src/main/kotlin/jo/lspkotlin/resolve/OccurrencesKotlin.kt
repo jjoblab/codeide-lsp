@@ -204,11 +204,11 @@ internal object OccurrencesKotlin {
      * signature, PAS dans son corps (miroir Find Usages/Rename IntelliJ).
      *
      * Exemption detekt ciblée (règle 16) : ReturnCount/LoopWithTooMany-
-     * JumpStatements — chaque garde du parcours (pas une déclaration,
-     * hors plage, dans le CORPS, jeton absent) est une ISSUE distincte,
-     * même patron que [declarationViveAuCurseur].
+     * JumpStatements/CyclomaticComplexMethod — chaque garde du parcours
+     * (pas une déclaration, hors plage, dans le CORPS, jeton absent) est
+     * une ISSUE distincte, même patron que [declarationViveAuCurseur].
      */
-    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
+    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements", "CyclomaticComplexMethod")
     private fun cibleDeclarationEnglobante(
         racine: NoeudSyntaxique,
         decalage: Int,

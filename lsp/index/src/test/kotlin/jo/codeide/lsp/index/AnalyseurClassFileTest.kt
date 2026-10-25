@@ -61,12 +61,65 @@ class AnalyseurClassFileTest {
 
     @Test
     fun `les constantes Long et Double occupent deux slots (décalage correct)`() {
-        // Classe forgée puis ré-analysée après insertion d'un Long : le
-        // parseur doit sauter le slot fantôme — vérifié par le résultat
-        // identique sur la même classe SANS pool exotique (le cas réel
-        // couvert par la classe compilée ci-dessus).
-        val membres = AnalyseurClassFile.analyser(FixturesIndex.octetsClasse())
-        assertNotNull(membres)
+        // ADR 0219 : classe forgée AVEC un long DANS le pool — les 8
+        // octets de la VALEUR doivent être sautés ; avant le correctif,
+        // le lecteur lisait le tag suivant DANS la valeur, échouait sur
+        // un tag inconnu et rendait null : TOUTE classe portant une
+        // constante long/double perdait sa section membres (le vrai cas
+        // android.content.Context du corpus Views).
+        val chaine = mutableListOf<String>()
+
+        fun utf8(texte: String): Int {
+            chaine.add(texte)
+            return chaine.size
+        }
+        val idxNomChamp = utf8("valeur")
+        val idxDescChamp = utf8("J")
+        val idxNomMethode = utf8("<init>")
+        val idxDescMethode = utf8("()V")
+
+        val tampon = java.io.ByteArrayOutputStream()
+        val sortie = java.io.DataOutputStream(tampon)
+        sortie.writeInt(0xCAFEBABE.toInt())
+        sortie.writeShort(0)
+        sortie.writeShort(52)
+        // +1 : slot 0 fantôme ; +2 : le Long occupe DEUX slots.
+        sortie.writeShort(chaine.size + 3)
+        sortie.writeByte(1)
+        sortie.writeShort(chaine[idxNomChamp - 1].toByteArray(Charsets.UTF_8).size)
+        sortie.write(chaine[idxNomChamp - 1].toByteArray(Charsets.UTF_8))
+        sortie.writeByte(1)
+        sortie.writeShort(chaine[idxDescChamp - 1].toByteArray(Charsets.UTF_8).size)
+        sortie.write(chaine[idxDescChamp - 1].toByteArray(Charsets.UTF_8))
+        sortie.writeByte(5) // TAG_LONG
+        sortie.writeLong(Long.MAX_VALUE) // ← les 8 octets à SAUTER
+        sortie.writeByte(1)
+        sortie.writeShort(chaine[idxNomMethode - 1].toByteArray(Charsets.UTF_8).size)
+        sortie.write(chaine[idxNomMethode - 1].toByteArray(Charsets.UTF_8))
+        sortie.writeByte(1)
+        sortie.writeShort(chaine[idxDescMethode - 1].toByteArray(Charsets.UTF_8).size)
+        sortie.write(chaine[idxDescMethode - 1].toByteArray(Charsets.UTF_8))
+        sortie.writeShort(0x0021)
+        sortie.writeShort(0) // this
+        sortie.writeShort(0) // super
+        sortie.writeShort(0) // interfaces
+        sortie.writeShort(1) // un champ
+        sortie.writeShort(0x0019)
+        sortie.writeShort(idxNomChamp)
+        sortie.writeShort(idxDescChamp)
+        sortie.writeShort(0) // attributs du champ
+        sortie.writeShort(1) // une méthode
+        sortie.writeShort(0x0001)
+        // +2 : le Long occupe les slots 3-4, les chaînes de la méthode
+        // vivent aux indices 5 et 6 du pool.
+        sortie.writeShort(idxNomMethode + 2)
+        sortie.writeShort(idxDescMethode + 2)
+        sortie.writeShort(0) // attributs de la méthode
+        sortie.flush()
+
+        val membres = AnalyseurClassFile.analyser(tampon.toByteArray())
+        assertNotNull("la classe avec un long dans le pool DOIT avoir ses membres", membres)
         assertEquals("valeur", membres!!.champs.single().nom)
+        assertEquals("<init>", membres.methodes.single().nom)
     }
 }

@@ -1,5 +1,68 @@
 # Changelog — codeide-lsp
 
+## 1.11.0 (2026-10-25)
+
+- **Chantier « monde NON-Compose (Views) » — ADR 0219** (le deuxième
+  monde Android : vues XML, AppCompat, ViewBinding — même niveau de
+  conformité Android Studio que le monde Compose, zéro faux positif
+  sur le template canonique).
+  - **Bug CRITIQUE de l'index disque — les 8 octets du pool** :
+    `AnalyseurClassFile.lirePoolConstantes` incrémentait l'index des
+    constantes Long/Double (deux slots) sans SAUTER les 8 octets de
+    leur valeur — la constante suivante se lisait DANS la valeur et
+    TOUTE la section membres de la classe était perdue.
+    `android.content.Context` (seule classe de la chaîne AppCompat
+    portant un `long`) était muette : `getString`/`getColor`/
+    `getPackageName` introuvables — et toute classe du classpath
+    avec un `long`/`double` subissait le même sort (Java compris).
+    `FormatSegment.VERSION` passe à 2 : les segments v1 (CRC valide
+    de contenu faux) sont refusés et re-indexés paresseusement ; le
+    test « Long/Double deux slots » est renforcé (classe forgée AVEC
+    un long dans le pool — l'ancienne version ne forgeait jamais le
+    cas).
+  - **Profondeur de chaîne corrigée** : `BORN_PROFONDEUR` 6 → 12 +
+    budget total de 256 maillons — la hiérarchie Android réelle
+    (AppCompatActivity → … → Context) exige PROFONDEUR 7 :
+    `getString` vivait au maillon 7 et restait un faux
+    `kt.unresolved` alors que le classpath portait tout.
+  - **Propriétés SYNTHÉTIQUES Java** (interop cœur du langage,
+    miroir Android Studio) : un getter `getFoo()` se lit `foo` —
+    `layoutInflater` nu dans une Activity, `title = …` via
+    setTitle, `packageManager`, `classLoader`, `contentResolver`…
+    Le catalogue (`getterSynthetique`/`setterSynthetique`/
+    `proprieteSynthetiqueDe` — zéro paramètre, retour non void,
+    public/protégé, non statique, `getClass` exclu, `getURL` →
+    `URL`) alimente le DIAGNOSTIC (voie 2-ter + récepteur `with`),
+    le TYPAGE (sélecteurs, this implicite, appels nus — la chaîne
+    `layoutInflater.inflate(…)` type), la COMPLÉTION membre
+    (`val layoutInflater: LayoutInflater` offert en tête des listes
+    du monde non-Compose) et le SURVOL (qualifié et le NOUVEAU survol
+    implicite : `val layoutInflater: LayoutInflater —
+    android.app.Activity`, `var` quand le setter existe).
+  - **`super.` et `this.` au niveau Android Studio** : `super.` se
+    TYPE comme le premier supertype ÉCRIT résolu (repli classe
+    englobante) ; la complétion après `this.`/`super.` sonde la
+    classe + ses supertypes écrits (porteurs) — membres binaires,
+    membres projet et extensions : 100 items sur le template réel
+    (dont `theme`, `title`, `assets` — les synthétiques).
+  - **ViewBinding K5 dans son VRAI paquet** : AGP génère TOUJOURS
+    les bindings dans `<paquet>.databinding` (ViewBinding compris) —
+    l'import réel du template matche désormais le groupe synthétique
+    (complétion `binding.` offrant `root`/`textView`/`inflate`/
+    `bind` au lieu de rester muette).
+  - **Corpus E2E Views RÉEL** : 27 artefacts (kotlin-stdlib 2.2.10,
+    android-36, appcompat 1.7.0, fragment 1.8.5, activity 1.9.3,
+    core 1.15.0, core-ktx, lifecycle 2.8.7, savedstate, material
+    1.12.0, constraintlayout 2.2.0… — variable `REPRO_VIEWS_DIR`) ;
+    trois scénarios E2E : template « Empty Views Activity » (AUCUN
+    faux positif), VRAI négatif (`setContenuVeu` TOUJOURS signalé —
+    garde D3), forme ViewBinding (AUCUN faux positif + assertions :
+    survols `layoutInflater`/`getString`, complétions `binding.` et
+    `super.`). Moteur : `ReproductionViewsTest` (11 tests, chaîne
+    factice des 8 maillons réels) + `ReproductionViewBindingTest`.
+  - **Suites** : moteur 307, index 82, hôte 238 — toutes vertes,
+    corpus Compose ET Views branchés.
+
 ## 1.10.0 (2026-10-25)
 
 - **Chantier « parité LSP Kotlin officiel d'Android Studio » — ADR

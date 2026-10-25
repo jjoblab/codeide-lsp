@@ -146,6 +146,15 @@ internal object AnalyseurClassFile {
                 }
 
                 TAG_LONG, TAG_DOUBLE -> {
+                    // ADR 0219 : la VALEUR (8 octets) doit être SAUTÉE
+                    // AVANT le saut de slot — sans lui, la constante
+                    // suivante se lit DANS la valeur du long, le tag est
+                    // illisible et TOUTE la classe perd ses membres
+                    // (android.content.Context : la seule classe de la
+                    // chaîne AppCompat portant un `long` — `getString`
+                    // était un faux `kt.unresolved` à cause de ces
+                    // 8 octets).
+                    entree.skipBytes(TAILLE_U64)
                     index++
                 }
 

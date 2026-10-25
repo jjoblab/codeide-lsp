@@ -74,7 +74,14 @@ internal fun estExpression(type: SyntaxElementType): Boolean = type in TYPES_EXP
  *        un curseur en FIN d'identifiant touche le jeton précédent).
  * @return la liste ordonnée racine→feuille ; VIDE si l'offset sort de
  *         l'arbre.
+ *
+ * Exemption detekt ciblée (règle 16) : NestedBlockDepth — la descente
+ * garde-niche-enfants (nœud vide traversé, enfant suivant porteur) est
+ * la STRUCTURE même de l'algorithme documentée à l'ADR 0218 (préférence
+ * d'enfant NON VIDE — la directive de paquet vide ne capture plus la
+ * descente à l'offset 0).
  */
+@Suppress("NestedBlockDepth")
 public fun chaineAncetresA(
     racine: NoeudSyntaxique,
     decalage: Int,
