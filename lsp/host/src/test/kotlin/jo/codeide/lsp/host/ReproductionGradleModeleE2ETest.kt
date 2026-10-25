@@ -270,6 +270,7 @@ class ReproductionGradleModeleE2ETest {
                     "faits=${etat.faits}/${etat.total} entrée=${etat.entreeCourante} " +
                     "avertissements=${etat.avertissements} erreurs=${etat.erreurs} " +
                     "travail=${etat.listeTravail.map { "${it.nom}=${it.etat}" }}",
+                e,
             )
         }
     }
