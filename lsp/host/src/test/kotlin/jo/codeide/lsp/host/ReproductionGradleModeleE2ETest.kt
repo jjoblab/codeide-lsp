@@ -4,7 +4,6 @@ import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
 import jo.codeide.tooling.protocol.ClasspathResult
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.CompletionParams
@@ -103,6 +102,15 @@ class ReproductionGradleModeleE2ETest {
         val racine = dossierTemp.resolve("projet-gradle-modele")
         val sources = File(racine, "src/main/java")
         sources.mkdirs()
+        // Diagnostic (retour CI run #79) : le classpath réellement
+        // découvert AVANT toute attente — un échec d'indexation sur le
+        // runner doit être lisible dans le rapport du test.
+        System.out.println(
+            "[gradle-modele] lib=${jars.first().parentFile?.absolutePath}",
+        )
+        jars.forEach {
+            System.out.println("[gradle-modele] jar=${it.name} (${it.length()} o)")
+        }
         val resultat =
             ClasspathResult(
                 id = "repro-gradle-modele",
@@ -119,19 +127,19 @@ class ReproductionGradleModeleE2ETest {
             )
         val sessionJava = SessionLsp(racineProjet = racine, stockageIndex = File(racine, "index"))
         sessionJava.appliquerClasspath(resultat)
-        runBlocking {
-            withTimeout(300_000) { sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET } }
-        }
+        attendrePhase(
+            flux = sessionJava.etatIndexation,
+            acceptable = { it == PhaseIndexation.PRET },
+            description = "index Java",
+        )
         val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
         facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
+        attendrePhase(
+            flux = facade.etatIndexation,
+            acceptable = { it == PhaseIndexation.PRET || it == PhaseIndexation.PARTIEL },
+            description = "index Kotlin",
+        )
         val serveur = facade.serveur() as KotlinLanguageServer
         val espion = EspionClient()
         serveur.connect(espion)
@@ -211,5 +219,58 @@ class ReproductionGradleModeleE2ETest {
         assertTrue(
             items.any { it.label.startsWith("VERSION_1") },
         ) { "VERSION_11 doit s'offrir après JavaVersion. — obtenu : ${items.map { it.label }}" }
+    }
+
+    /**
+     * Attente DIAGNOSTIQUE d'une phase acceptable (retour CI run #79 :
+     * le timeout aveugle de 5 minutes ne disait RIEN de la cause) —
+     * chaque TRANSITION est imprimée, une construction terminée SANS
+     * la phase voulue échoue VITE avec ses RAISONS (avertissements /
+     * erreurs de l'index + liste de travail par entrée), et le délai
+     * dépassé rend la DERNIÈRE phase dans le message d'assertion.
+     */
+    private fun attendrePhase(
+        flux: kotlinx.coroutines.flow.StateFlow<EtatIndexation>,
+        acceptable: (PhaseIndexation) -> Boolean,
+        description: String,
+    ) {
+        try {
+            runBlocking {
+                withTimeout(300_000) {
+                    var dernierePhase: PhaseIndexation? = null
+                    var derniersFaits = -1
+                    while (true) {
+                        val etat = flux.value
+                        if (etat.phase != dernierePhase || etat.faits != derniersFaits) {
+                            System.out.println(
+                                "[gradle-modele] $description → ${etat.phase} " +
+                                    "(faits=${etat.faits}/${etat.total}, " +
+                                    "entrée=${etat.entreeCourante})",
+                            )
+                            dernierePhase = etat.phase
+                            derniersFaits = etat.faits
+                        }
+                        if (acceptable(etat.phase)) return@withTimeout
+                        if (etat.settled) {
+                            throw AssertionError(
+                                "$description : construction terminée en ${etat.phase} — " +
+                                    "avertissements=${etat.avertissements} " +
+                                    "erreurs=${etat.erreurs} " +
+                                    "travail=${etat.listeTravail.map { "${it.nom}=${it.etat}" }}",
+                            )
+                        }
+                        kotlinx.coroutines.delay(2_000)
+                    }
+                }
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            val etat = flux.value
+            throw AssertionError(
+                "$description : délai dépassé — dernière phase=${etat.phase} " +
+                    "faits=${etat.faits}/${etat.total} entrée=${etat.entreeCourante} " +
+                    "avertissements=${etat.avertissements} erreurs=${etat.erreurs} " +
+                    "travail=${etat.listeTravail.map { "${it.nom}=${it.etat}" }}",
+            )
+        }
     }
 }
