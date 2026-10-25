@@ -164,6 +164,27 @@ class SessionLangageKotlinK5Test {
         session.close()
     }
 
+    @Test
+    fun `R - sans import, meme paquet que le manifeste (retour U2 - MainActivity)`() {
+        val session = session(listOf(semerProjetAndroid()))
+        // MainActivity vit dans le PAQUET du manifeste : R est en portée
+        // SANS import (miroir Android Studio — jamais rouge sur R).
+        val source =
+            """
+            package com.ex.app
+
+            fun demo(): Int = R.string.app_nom
+            """.trimIndent()
+        val uri = "file:///r-meme-paquet.kt"
+        session.ouvrirDocument(uri, source)
+        val diagnostics = session.diagnostics(uri)
+        assertTrue(
+            "R sans import résout par le paquet du manifeste : $diagnostics",
+            diagnostics.none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+        session.close()
+    }
+
     // ── Synthétiques : ViewBinding / DataBinding / BuildConfig ─────────
 
     @Test
@@ -359,6 +380,168 @@ class SessionLangageKotlinK5Test {
         assertTrue(
             "la définition pointe le fichier .java : $definitions",
             definitions.size == 1 && definitions[0].uri.endsWith("MaVue.java"),
+        )
+        session.close()
+    }
+
+    // ── Multi-langue : MEMBRES Java (retour utilisateurs 25/10/2026, U2) ──
+
+    /** Sème le POJO Java de Marc : champs, getters/setters, toString annoté, statique. */
+    private fun semerVinyleJava(paquet: File) {
+        File(paquet, "Vinyle.java").writeText(
+            """
+            package com.ex.app;
+
+            import java.util.ArrayList;
+            import java.util.List;
+
+            public class Vinyle {
+
+                private String titre;
+                private int annee;
+
+                public Vinyle(String titre, int annee) {
+                    this.titre = titre;
+                    this.annee = annee;
+                }
+
+                public String getTitre() {
+                    return titre;
+                }
+
+                public void setTitre(String titre) {
+                    this.titre = titre;
+                }
+
+                public int getAnnee() {
+                    return annee;
+                }
+
+                @Override
+                public String toString() {
+                    return titre + " (" + annee + ")";
+                }
+
+                public static List<Vinyle> catalogueDemo() {
+                    List<Vinyle> bac = new ArrayList<>();
+                    bac.add(new Vinyle("Kind of Blue", 1959));
+                    return bac;
+                }
+            }
+            """.trimIndent(),
+        )
+    }
+
+    /** Sème l'utilitaire statique de Marc (constructeur privé). */
+    private fun semerNormaliseurTitreJava(paquet: File) {
+        File(paquet, "NormaliseurTitre.java").writeText(
+            """
+            package com.ex.app;
+
+            public final class NormaliseurTitre {
+
+                private NormaliseurTitre() {
+                }
+
+                public static String normaliser(String texte) {
+                    return texte.trim().toLowerCase();
+                }
+            }
+            """.trimIndent(),
+        )
+    }
+
+    /** Sème le monde mixte de Marc : POJO Java + utilitaire statique. */
+    private fun semerSourcesJavaAvecMembres(): File {
+        val racine = dossierTemporaire.newFolder("src-membres")
+        val paquet = File(racine, "com/ex/app")
+        assertTrue(paquet.mkdirs())
+        semerVinyleJava(paquet)
+        semerNormaliseurTitreJava(paquet)
+        return racine
+    }
+
+    @Test
+    fun `multi langue - membres Java resolus depuis Kotlin (getters, statiques, propriete synthetique)`() {
+        val session = session(listOf(semerSourcesJavaAvecMembres()))
+        val source =
+            """
+            package com.ex.app
+
+            fun demo(v: Vinyle) {
+                val t = v.getTitre()
+                val a = v.annee
+                val bac = Vinyle.catalogueDemo()
+                val n = NormaliseurTitre.normaliser(t)
+                val affiche = "bac " + bac.size + " pour " + n + " " + a
+            }
+            """.trimIndent()
+        val uri = "file:///membres-java.kt"
+        session.ouvrirDocument(uri, source)
+        val diagnostics = session.diagnostics(uri)
+        assertTrue(
+            "les membres Java résolvent (getTitre, annee, catalogueDemo, normaliser) : $diagnostics",
+            diagnostics.none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+        session.close()
+    }
+
+    @Test
+    fun `multi langue - membres Java proposes en completion apres le point`() {
+        val session = session(listOf(semerSourcesJavaAvecMembres()))
+        val source =
+            """
+            package com.ex.app
+
+            fun demo(v: Vinyle) {
+                v.ge
+            }
+            """.trimIndent()
+        val uri = "file:///completion-membres-java.kt"
+        session.ouvrirDocument(uri, source)
+        val propositions = session.completion(uri, source.indexOf("v.ge") + 4)
+        assertTrue(
+            "getTitre/getAnnee devaient être proposés : ${propositions.map { it.libelle }}",
+            propositions.any { it.libelle.startsWith("getTitre") } &&
+                propositions.any { it.libelle.startsWith("getAnnee") },
+        )
+        val sourceStatique =
+            """
+            package com.ex.app
+
+            fun demo() {
+                NormaliseurTitre.nor
+            }
+            """.trimIndent()
+        session.ouvrirDocument(uri, sourceStatique)
+        val propositionsStatiques = session.completion(uri, sourceStatique.indexOf(".nor") + 4)
+        assertTrue(
+            "normaliser devait être proposé : ${propositionsStatiques.map { it.libelle }}",
+            propositionsStatiques.any { it.libelle.startsWith("normaliser") },
+        )
+        session.close()
+    }
+
+    @Test
+    fun `multi langue - le typage traverse un getter Java (chaine continue)`() {
+        val session = session(listOf(semerSourcesJavaAvecMembres()))
+        val source =
+            """
+            package com.ex.app
+
+            fun demo(v: Vinyle) {
+                v.getTitre().length
+            }
+            """.trimIndent()
+        val uri = "file:///typage-java.kt"
+        session.ouvrirDocument(uri, source)
+        // getTitre() rend String : le SEGMENT .length qui suit résout —
+        // si le getter n'était pas typé, la chaîne serait muette ET
+        // « length » non résolu.
+        val diagnostics = session.diagnostics(uri)
+        assertTrue(
+            "la chaîne v.getTitre().length résout : $diagnostics",
+            diagnostics.none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
         )
         session.close()
     }

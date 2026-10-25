@@ -5,30 +5,56 @@ import jo.lspkotlin.resolve.GenreDeclaration
 import java.io.File
 
 /**
- * Déclarations de TYPES des sources JAVA du projet (K5 multi-langue,
+ * Déclarations des sources JAVA du projet (K5 multi-langue,
  * LSP_KOTLIN.md §5 — « bascule Java↔Kotlin dans un même projet ») :
- * le moteur Kotlin voit les classes/interfaces/énumérations Java pour
- * la RÉSOLUTION de noms, la complétion auto-import et le survol —
- * un projet mixte n'est plus coupé en deux langues.
+ * le moteur Kotlin voit les classes/interfaces/énumérations Java ET
+ * LES MEMBRES de leurs types de premier niveau pour la RÉSOLUTION de
+ * noms, la complétion auto-import, le survol et le typage en chaîne —
+ * un projet mixte n'est plus coupé en deux langues (retour
+ * utilisateurs 25/10/2026, rapport U2 — Marc, monde Views : « mes
+ * POJO Java sont invisibles au moteur Kotlin »).
  *
- * Extraction VOLONTAIREMENT minimale (D3) : types de PREMIER niveau
- * seuls (les imbriquées Java sous-rapportent — rares depuis Kotlin),
- * aucun membre (l'arité des constructeurs Java n'est pas modélisée :
- * `kt.argumentCount` ignore ces candidates, marqueur [estJava]) ;
- * analyse lexicale à bornes (commentaires, chaînes et caractères
- * neutralisés) — un fichier Java illisible produit RIEN.
+ * Extraction VOLONTAIREMENT à bornes (D3) :
+ *  - types et MEMBRES de PREMIER niveau seuls (les imbriquées Java et
+ *    les membres HÉRITÉS d'une superclasse Java sous-rapportent) ;
+ *  - membres = champs et méthodes au niveau 1 du corps du type : le
+ *    texte des blocs imbriqués (corps de méthodes, classes
+ *    anonymes) est ignoré par ANCRAGE de la signature au début de
+ *    chaque segment (après `;` ou `}` de profondeur 1) — un appel
+ *    dans un initialisateur (`x = Math.max(1, 2)`) n'est JAMAIS lu
+ *    comme membre ;
+ *  - arité des constructeurs/membres Java NON modélisée : le contrôle
+ *    `kt.argumentCount` ignore ces candidates (marqueur [estJava],
+ *    jamais de faux « 0 attendu ») ;
+ *  - un getter 0-paramètre `getTitre()`/`isActif()` émet EN PLUS la
+ *    PROPRIÉTÉ synthétique `titre`/`actif` — le miroir exact du
+ *    classpath (ADR 0219) : depuis Kotlin, un POJO Java s'écrit en
+ *    propriétés (`vinyle.titre`), pas en getters ;
+ *  - analyse lexicale (commentaires, chaînes et caractères
+ *    neutralisés) — un fichier Java illisible produit RIEN.
  *
  * URI et décalages RÉELS : le go-to-definition d'une référence Kotlin
  * vers une classe Java ouvre le fichier `.java` à la position du nom
  * (même mécanique que les cibles Kotlin du scan).
  *
- * Exemption detekt ciblée (règle 16) : SwallowedException — fichier
+ * Exemptions detekt ciblées (règle 16) : SwallowedException — fichier
  * illisible = ABSENT (partiel honnête D3), l'exception est le signal ;
- * LoopWithTooManyJumpStatements — les sauts de la boucle de types
- * (plage absente, profondeur non nulle) sont les bornes du premier
- * niveau, patron du scan des racines.
+ * LoopWithTooManyJumpStatements / ReturnCount / LongMethod /
+ * CyclomaticComplexMethod — les sauts et gardes de l'itération membre
+ * par membre (bornes : profondeur, accolades, plages) sont le patron
+ * même du parcours à bornes, miroir du scan des racines ;
+ * TooManyFunctions — un extracteur par ISSUE de l'analyse (type,
+ * corps, segment, méthode, champ, paramètres, annotations), patron
+ * SymbolesProjet/ClassesSynthetiques.
  */
-@Suppress("SwallowedException", "LoopWithTooManyJumpStatements")
+@Suppress(
+    "SwallowedException",
+    "LoopWithTooManyJumpStatements",
+    "ReturnCount",
+    "LongMethod",
+    "CyclomaticComplexMethod",
+    "TooManyFunctions",
+)
 internal object SourcesJava {
     /** Motif d'une déclaration de type (modificateurs + mot-clé + nom). */
     private val MOTIF_TYPE =
@@ -37,11 +63,54 @@ internal object SourcesJava {
                 "(class|interface|enum|record|@interface)\\s+([A-Za-z_][A-Za-z0-9_]*)",
         )
 
+    /** Modificateurs de membres Java (espacés en tête de segment). */
+    private val MOTIF_MODIFICATEURS =
+        Regex(
+            "^(\\s*(?:public|protected|private|static|final|abstract|synchronized|native|strictfp" +
+                "|default|transient|volatile)\\s+)*",
+        )
+
+    /** Motif du MEMBRE : TYPE écrit puis NOM, ancré au début du segment. */
+    private val MOTIF_MEMBRE =
+        Regex(
+            "^([A-Za-z_][A-Za-z0-9_.]*(?:<[^;(){}=]*>)?(?:\\[\\])*)" +
+                "\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*",
+        )
+
+    /** Mots-clés que la position TYPE ne peut jamais occuper. */
+    private val MOTS_CLES_TYPE =
+        setOf(
+            "new", "return", "throw", "else", "case", "break", "continue", "do", "while",
+            "for", "if", "switch", "try", "catch", "finally", "instanceof", "assert",
+            "extends", "implements", "throws", "import", "package", "super", "this",
+            "synchronized", "default", "static",
+        )
+
+    /** Préfixes de getter Java porteurs d'une propriété synthétique. */
+    private val PREFIXES_GETTER = listOf("get", "is")
+
+    /** Borne de membres extraits par corps (fichier dégénéré — D3). */
+    private const val BORN_MEMBRES = 500
+
+    /** Portée d'extraction d'un fichier : URI + paquet du porteur. */
+    private class Portee(
+        internal val uri: String,
+        internal val paquet: String?,
+    )
+
+    /** Un nom positionné : décalages réels du jeton identifiant. */
+    private class Nomme(
+        internal val nom: String,
+        internal val debutNom: Int,
+        internal val finNom: Int,
+    )
+
     /**
-     * Déclarations de types de premier niveau d'un fichier Java.
+     * Déclarations (types de premier niveau + leurs membres) d'un
+     * fichier Java.
      *
      * @param fichier source `.java` du projet.
-     * @return les types déclarés, vides si le fichier ne se lit pas.
+     * @return les déclarations, vides si le fichier ne se lit pas.
      */
     internal fun declarations(fichier: File): List<DeclarationProjet> {
         val brut =
@@ -51,8 +120,7 @@ internal object SourcesJava {
                 // Illisible : absent (partiel honnête D3).
                 return emptyList()
             }
-        val paquet = PAQUET.find(brut)?.groupValues?.get(1)
-        val uri = fichier.toURI().toString()
+        val portee = Portee(fichier.toURI().toString(), PAQUET.find(brut)?.groupValues?.get(1))
         val neutralise = neutraliser(brut)
         val resultat = mutableListOf<DeclarationProjet>()
         for (correspondance in MOTIF_TYPE.findAll(neutralise)) {
@@ -62,33 +130,320 @@ internal object SourcesJava {
             // PREMIER NIVEAU SEUL (D3) : une classe imbriquée ou locale
             // portée comme top-niveau donnerait un FQCN FAUX — jamais.
             if (profondeurA(neutralise, plage.first) != 0) continue
-            resultat += declaration(correspondance, plage, paquet, uri)
+            val type = declaration(correspondance, plage, portee)
+            resultat += type
+            resultat += membresDuType(neutralise, type, portee)
         }
         return resultat
     }
 
-    /** Une déclaration extraite du texte neutralisé. */
+    /** Une déclaration de type extraite du texte neutralisé. */
     private fun declaration(
         correspondance: MatchResult,
         plage: IntRange,
-        paquet: String?,
-        uri: String,
+        portee: Portee,
     ): DeclarationProjet {
         val motCle = correspondance.groupValues[1]
         val estInterface = motCle == "interface" || motCle == "@interface"
         return DeclarationProjet(
             genre = if (estInterface) GenreDeclaration.INTERFACE else GenreDeclaration.CLASSE,
             nom = correspondance.groupValues[2],
-            uri = uri,
+            uri = portee.uri,
             debutNom = plage.first,
             finNom = plage.last + 1,
-            paquet = paquet,
+            paquet = portee.paquet,
             recepteur = null,
             typeRetour = null,
             parametres = emptyList(),
             conteneur = null,
             estJava = true,
         )
+    }
+
+    /**
+     * Membres de niveau 1 du corps du type [type] — champs et méthodes
+     * (constructeurs exclus : sans type de retour écrit, ils ne
+     * portent AUCUN membre résolvable ; leur arité reste non
+     * contrôlée, D3). Un membre se termine au `;` de profondeur 0
+     * (champ, méthode abstraite) ou à la FERMANTE qui ramène la
+     * profondeur à 0 (corps de méthode, classe anonyme d'un
+     * initialisateur) — le segment porte la signature ANCRÉE en tête.
+     */
+    private fun membresDuType(
+        neutralise: String,
+        type: DeclarationProjet,
+        portee: Portee,
+    ): List<DeclarationProjet> {
+        val ouverture = ouvertureCorps(neutralise, type.finNom) ?: return emptyList()
+        val fermeture = fermanteCorrespondante(neutralise, ouverture) ?: return emptyList()
+        val fqcn = (type.paquet?.let { "$it." } ?: "") + type.nom
+        val membres = mutableListOf<DeclarationProjet>()
+        var debutSegment = ouverture + 1
+        var profondeur = 0
+        for (indice in ouverture + 1 until fermeture) {
+            when (neutralise[indice]) {
+                '{' -> profondeur++
+                '}' -> profondeur--
+                ';' -> {}
+                else -> continue
+            }
+            // Fin de membre : séparateur de NIVEAU 1 uniquement (« ; »
+            // hors bloc, ou fermante d'un bloc de niveau 1).
+            if (profondeur != 0) continue
+            membre(neutralise, debutSegment, indice + 1, fqcn, portee)?.let { membres += it }
+            debutSegment = indice + 1
+            if (membres.size >= BORN_MEMBRES) return membres
+        }
+        return membres
+    }
+
+    /**
+     * Le membre d'un segment [debut, fin[ : signature ANCRÉE (le
+     * `Math.max(…)` d'un initialisateur vit APRÈS le `=` du champ, la
+     * regex ancrée ne l'atteint jamais) — champ (nom suivi de `=`, `,`
+     * ou fin) ou méthode (nom suivi de `(`). Les annotations de tête
+     * sont espacées avant le match (elles ne portent pas de membre).
+     */
+    private fun membre(
+        neutralise: String,
+        debut: Int,
+        fin: Int,
+        fqcn: String,
+        portee: Portee,
+    ): List<DeclarationProjet>? {
+        if (fin <= debut) return null
+        val segment = espacerAnnotations(neutralise, debut, fin)
+        val sansTete = MOTIF_MODIFICATEURS.find(segment) ?: return null
+        val corps = segment.substring(sansTete.value.length)
+        val correspondance = MOTIF_MEMBRE.find(corps) ?: return null
+        val typeEcrit = correspondance.groupValues[1]
+        if (typeEcrit in MOTS_CLES_TYPE) return null
+        val nom = correspondance.groupValues[2]
+        if (nom.isEmpty() || '$' in nom) return null
+        val debutNom = debut + sansTete.value.length + correspondance.groups[2]!!.range.first
+        val nomme = Nomme(nom, debutNom, debutNom + nom.length)
+        val apresNom = corps.substring(correspondance.value.length)
+        return when {
+            apresNom.startsWith("(") -> membresMethode(typeEcrit, nomme, apresNom, fqcn, portee)
+            else -> membreChamp(typeEcrit, nomme, fqcn, portee)?.let { listOf(it) }
+        }
+    }
+
+    /**
+     * Une méthode Java : FONCTION du conteneur + la PROPRIÉTÉ
+     * SYNTHÉTIQUE d'un getter 0-paramètre (`getTitre()` → `titre`,
+     * miroir du classpath ADR 0219 — depuis Kotlin, un POJO Java
+     * s'écrit en propriétés).
+     */
+    private fun membresMethode(
+        typeEcrit: String,
+        nomme: Nomme,
+        apresNom: String,
+        fqcn: String,
+        portee: Portee,
+    ): List<DeclarationProjet> {
+        val nombreParametres = compterParametres(apresNom)
+        val methode =
+            DeclarationProjet(
+                genre = GenreDeclaration.FONCTION,
+                nom = nomme.nom,
+                uri = portee.uri,
+                debutNom = nomme.debutNom,
+                finNom = nomme.finNom,
+                paquet = portee.paquet,
+                recepteur = null,
+                typeRetour = typeEcrit,
+                parametres = List(nombreParametres) { null to null },
+                conteneur = fqcn,
+                estJava = true,
+            )
+        val proprietes = mutableListOf(methode)
+        if (nombreParametres == 0) {
+            proprieteSynthetique(nomme.nom, typeEcrit)?.let { propriete ->
+                membreChamp(typeEcrit, Nomme(propriete, nomme.debutNom, nomme.finNom), fqcn, portee)
+                    ?.let { proprietes += it }
+            }
+        }
+        return proprietes
+    }
+
+    /** Le nom de propriété d'un getter `getTitre`/`isActif`, sinon null. */
+    private fun proprieteSynthetique(
+        nomMethode: String,
+        typeEcrit: String,
+    ): String? {
+        for (prefixe in PREFIXES_GETTER) {
+            if (nomMethode.startsWith(prefixe) && nomMethode.length > prefixe.length) {
+                val reste = nomMethode.substring(prefixe.length)
+                if (reste.isEmpty() || !reste[0].isUpperCase()) continue
+                if (typeEcrit == "void") return null
+                return reste[0].lowercaseChar() + reste.substring(1)
+            }
+        }
+        return null
+    }
+
+    /** Un champ Java : PROPRIÉTÉ du conteneur, type écrit porté. */
+    private fun membreChamp(
+        typeEcrit: String,
+        nomme: Nomme,
+        fqcn: String,
+        portee: Portee,
+    ): DeclarationProjet? =
+        if (typeEcrit.isEmpty()) {
+            null
+        } else {
+            DeclarationProjet(
+                genre = GenreDeclaration.PROPRIETE,
+                nom = nomme.nom,
+                uri = portee.uri,
+                debutNom = nomme.debutNom,
+                finNom = nomme.finNom,
+                paquet = portee.paquet,
+                recepteur = null,
+                typeRetour = typeEcrit,
+                parametres = emptyList(),
+                conteneur = fqcn,
+                estJava = true,
+            )
+        }
+
+    /**
+     * Nombre de paramètres de la liste `(...)` en tête de [apresNom]
+     * (virgules à profondeur d'imbriquement `<>`/`()`/`[]` nulle).
+     */
+    private fun compterParametres(apresNom: String): Int {
+        val fermante = apresNom.indexOf(')')
+        if (fermante < 0) return 0
+        val liste = apresNom.substring(1, fermante).trim()
+        if (liste.isEmpty()) return 0
+        var profondeur = 0
+        var nombre = 1
+        for (caractere in liste) {
+            when (caractere) {
+                '<', '(', '[' -> profondeur++
+                '>', ')', ']' -> if (profondeur > 0) profondeur--
+                ',' -> if (profondeur == 0) nombre++
+                else -> {}
+            }
+        }
+        return nombre
+    }
+
+    /**
+     * Espace les ANNOTATIONS `@Nom(…)` d'un segment (les arguments
+     * contiennent parenthèses et virgules — jamais de `;` Java légal)
+     * : longueurs conservées, le membre commence après.
+     */
+    private fun espacerAnnotations(
+        neutralise: String,
+        debut: Int,
+        fin: Int,
+    ): String {
+        val caracteres = neutralise.substring(debut, fin).toCharArray()
+        var indice = 0
+        while (indice < caracteres.size) {
+            indice =
+                if (estTeteAnnotation(caracteres, indice)) {
+                    espaceAnnotation(caracteres, indice)
+                } else {
+                    indice + 1
+                }
+        }
+        return String(caracteres)
+    }
+
+    /** `@` suivi d'une lettre : tête d'annotation Java ? */
+    private fun estTeteAnnotation(
+        caracteres: CharArray,
+        indice: Int,
+    ): Boolean = caracteres[indice] == '@' && indice + 1 < caracteres.size && caracteres[indice + 1].isLetter()
+
+    /** Espace UNE annotation (nom puis arguments appariés). */
+    private fun espaceAnnotation(
+        caracteres: CharArray,
+        debut: Int,
+    ): Int {
+        var indice = debut
+        caracteres[indice] = ' '
+        indice++
+        while (indice < caracteres.size && estCaractereNomJava(caracteres[indice])) {
+            caracteres[indice] = ' '
+            indice++
+        }
+        if (indice < caracteres.size && caracteres[indice] == '(') {
+            return espaceParentheses(caracteres, indice)
+        }
+        return indice
+    }
+
+    /** Espace les arguments d'une annotation (parenthèses appariées). */
+    private fun espaceParentheses(
+        caracteres: CharArray,
+        ouverture: Int,
+    ): Int {
+        var profondeur = 0
+        var indice = ouverture
+        while (indice < caracteres.size) {
+            val caractere = caracteres[indice]
+            caracteres[indice] = ' '
+            when (caractere) {
+                '(' -> profondeur++
+                ')' -> {
+                    profondeur--
+                    if (profondeur == 0) return indice + 1
+                }
+                else -> {}
+            }
+            indice++
+        }
+        return caracteres.size
+    }
+
+    /** Caractère d'un nom Java qualifié (annotation, type écrit) ? */
+    private fun estCaractereNomJava(caractere: Char): Boolean =
+        caractere.isLetterOrDigit() || caractere == '_' || caractere == '.'
+
+    /**
+     * Ouvrante du corps du type (premier `{` après le nom, sans
+     * traverser de `;` — un typealias/fragments multiples n'a pas de
+     * membres lisibles).
+     */
+    private fun ouvertureCorps(
+        neutralise: String,
+        depuis: Int,
+    ): Int? {
+        var indice = depuis
+        while (indice < neutralise.length) {
+            when (neutralise[indice]) {
+                '{' -> return indice
+                ';' -> return null
+                else -> {}
+            }
+            indice++
+        }
+        return null
+    }
+
+    /** Fermante appariée de l'accolade ouvrante [ouverture]. */
+    private fun fermanteCorrespondante(
+        neutralise: String,
+        ouverture: Int,
+    ): Int? {
+        var profondeur = 0
+        var indice = ouverture
+        while (indice < neutralise.length) {
+            when (neutralise[indice]) {
+                '{' -> profondeur++
+                '}' -> {
+                    profondeur--
+                    if (profondeur == 0) return indice
+                }
+                else -> {}
+            }
+            indice++
+        }
+        return null
     }
 
     /**

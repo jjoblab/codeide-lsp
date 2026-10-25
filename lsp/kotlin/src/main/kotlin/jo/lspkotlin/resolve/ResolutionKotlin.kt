@@ -59,10 +59,13 @@ internal class ResolutionKotlin(
 
     /**
      * FQCN d'un nom de type ÉCRIT — imports exacts d'abord (l'alias
-     * gagne), paquet courant (classes du projet), imports par DÉFAUT
-     * de Kotlin (kotlin.*, kotlin.collections.*, kotlin.text…), puis
-     * les classes du projet (n'importe quel paquet : la résolution en
-     * dehors des imports est possible si le nom est UNIQUE au projet).
+     * gagne), paquet courant (classes du projet PUIS classe de la vue —
+     * retour utilisateurs 25/10/2026 : un nom du MÊME PAQUET n'exige
+     * aucun import, la classe peut vivre dans le classpath, R du build
+     * en tête), imports par DÉFAUT de Kotlin (kotlin.*,
+     * kotlin.collections.*, kotlin.text…), puis les classes du projet
+     * (n'importe quel paquet : la résolution en dehors des imports est
+     * possible si le nom est UNIQUE au projet).
      * `null` sinon — conservateur.
      *
      * ADR 0223 : le nom écrit est NORMALISÉ avant résolution — les
@@ -83,6 +86,14 @@ internal class ResolutionKotlin(
         contexte.importsParNom[nom]?.let { return it }
         contexte.paquet?.let { paquet ->
             contexte.classesProjet["$paquet.$nom"]?.let { return it }
+            // Même paquet, côté CLASSPATH (retour utilisateurs 25/10/2026
+            // — U2 « R sans import ») : un nom du PAQUET du document
+            // n'exige AUCUN import en Kotlin, et la classe peut vivre
+            // dans la vue (R du build, classes compilées voisines —
+            // miroir kotlinc : la résolution même-paquet sonde le
+            // classpath, pas les seules sources du projet).
+            val candidat = "$paquet.$nom"
+            if (vue?.membres(candidat) != null) return candidat
         }
         IMPORTS_DEFAUT[nom]?.let { return it }
         // Import implicite kotlin.* (retour utilisateurs 25/10/2026 — U1

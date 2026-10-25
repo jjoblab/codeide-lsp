@@ -348,32 +348,27 @@ class ExperienceU2ViewsE2ETest {
 
         // ── Sondes : survols et complétions, comme quand je tape ───────
         sonderHovers(serveurJava, serveurKotlin, contenus, sources, projet)
-        sonderCompletions(Triple(serveurJava, serveurKotlin, serveurXml), contenus, sources, projet)
+        val completionsKotlin =
+            sonderCompletions(Triple(serveurJava, serveurKotlin, serveurXml), contenus, sources, projet)
 
         // ── Asserts souples : tout le constat en UNE failure ──────────
-        // Limitations CONNUES (25/10/2026 — backlog monde mixte Java/Kotlin) :
-        // symboles JAVA du projet invisibles au moteur Kotlin (getTitre,
-        // normaliser, catalogueDemo), statiques des synthétiques (inflate),
-        // segments imbriqués de R (R.string) + R sans import (même package),
-        // noms QUALIFIÉS complets sans import (androidx...), membres hérités
-        // du classpath (submitList, setOnClickListener via chaînes), args de
-        // super(...), field/valeur des setters, FilterResults/values,
-        // ItemDecoration/State. TOUT NOUVEAU faux positif fait échouer.
+        // Limitations CONNUES (25/10/2026 — backlog monde Views/XML) :
+        // noms QUALIFIÉS complets sans import (androidx...), membres
+        // hérités du classpath (submitList, setOnClickListener, getString
+        // via chaînes), args de super(...), field/valeur des setters,
+        // FilterResults/values, ItemDecoration/State, ViewHolder.
+        // ÉTEINTS le 25/10/2026 : membres Java projet (getTitre, getArtiste,
+        // getAnnee, getEtat, getEtiquette, getId, catalogueDemo, normaliser
+        // — SourcesJava), R SANS IMPORT même-paquet + segments R.string
+        // (fqcnDuNomEcrit sonde la vue du même paquet), inflate des
+        // bindings (statiques synthétiques) — PLUS dans cette liste :
+        // tout nouveau faux positif fait échouer la CI.
         val limitationsConnues =
             setOf(
-                "« inflate »",
-                "« R »",
-                "« string »",
                 "« androidx »",
                 "« LinearLayoutManager »",
                 "« addItemDecoration »",
                 "« setOnClickListener »",
-                "« getTitre »",
-                "« getArtiste »",
-                "« getAnnee »",
-                "« getEtiquette »",
-                "« getEtat »",
-                "« getId »",
                 "« getString »",
                 "« FilterResults »",
                 "« values »",
@@ -390,8 +385,6 @@ class ExperienceU2ViewsE2ETest {
                 "« strokeCap »",
                 "« Cap »",
                 "« color »",
-                "« catalogueDemo »",
-                "« normaliser »",
             )
         val fauxPositifs =
             diagnosticsParFichier
@@ -408,6 +401,22 @@ class ExperienceU2ViewsE2ETest {
                     fauxPositifs.isEmpty(),
                     "FAUX POSITIFS sur fichiers corrects (référence non résolue) — obtenu :\n" +
                         fauxPositifs.joinToString("\n"),
+                )
+            },
+            {
+                // Membres Java du projet ÉTEINTS (25/10/2026) : la
+                // complétion sur une instance d'un POJO Java offre ses
+                // getters, l'utilitaire statique offre normaliser —
+                // « mes POJO Java sont invisibles » n'est PLUS vrai.
+                val surVinyle = completionsKotlin["= vinyle."].orEmpty()
+                org.junit.jupiter.api.Assertions.assertTrue(
+                    surVinyle.any { it.startsWith("getTitre") },
+                    "complétion vinyle. devait offrir getTitre : $surVinyle",
+                )
+                val surNormaliseur = completionsKotlin["NormaliseurTitre."].orEmpty()
+                org.junit.jupiter.api.Assertions.assertTrue(
+                    surNormaliseur.any { it.startsWith("normaliser") },
+                    "complétion NormaliseurTitre. devait offrir normaliser : $surNormaliseur",
                 )
             },
             {
@@ -565,13 +574,17 @@ class ExperienceU2ViewsE2ETest {
         contenus: Map<File, String>,
         sources: File,
         projet: File,
-    ) {
+    ): Map<String, List<String>> {
         val (serveurJava, serveurKotlin, serveurXml) = serveurs
+        // Le motif « vinyle. » DOIT viser l'instance de lier() : le
+        // premier « vinyle. » du fichier vit dans la directive package
+        // (« com.atelier-VINYLE.-app ») — la sonde y serait muette.
         val sondesKotlin =
             listOf(
-                "adapter/VinyleAdapter.kt" to "vinyle.",
+                "adapter/VinyleAdapter.kt" to "= vinyle.",
                 "vm/CatalogueViewModel.kt" to "NormaliseurTitre.",
             )
+        val resultatsKotlin = mutableMapOf<String, List<String>>()
         for ((chemin, motif) in sondesKotlin) {
             val fichier = contenus.keys.first { it.relativeTo(sources).path == chemin }
             val contenu = contenus.getValue(fichier)
@@ -586,11 +599,14 @@ class ExperienceU2ViewsE2ETest {
                     ).join()
             }.onSuccess { completion ->
                 val items = completion?.right?.items ?: completion?.left ?: emptyList()
+                val libelles = items.map { it.label }
+                resultatsKotlin[motif] = libelles
                 System.out.println(
                     "U2 COMPLETION KOTLIN [$chemin après « $motif »] => ${items.size} items — " +
                         items.take(12).joinToString { it.label },
                 )
             }.onFailure { echec ->
+                resultatsKotlin[motif] = emptyList()
                 System.out.println("U2 COMPLETION KOTLIN [$chemin] ÉCHEC : ${echec.message}")
             }
         }
@@ -638,5 +654,6 @@ class ExperienceU2ViewsE2ETest {
         }.onFailure { echec ->
             System.out.println("U2 COMPLETION JAVA NON DISPONIBLE : ${echec.message}")
         }
+        return resultatsKotlin
     }
 }
