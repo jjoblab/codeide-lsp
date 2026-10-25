@@ -53,9 +53,22 @@ class ReproductionGradleModeleE2ETest {
                         .firstOrNull { it.isDirectory }
                 }
                 ?: return@lazy null
-        val extensions = lib.listFiles { f: File -> f.name.startsWith("gradle-stdlib-java-extensions-") }?.firstOrNull()
-        val kotlinDsl = lib.listFiles { f: File -> f.name.startsWith("gradle-kotlin-dsl-") }?.firstOrNull()
-        val coreApi = lib.listFiles { f: File -> f.name.startsWith("gradle-core-api-") }?.firstOrNull()
+        val extensions =
+            lib
+                .listFiles { f: File ->
+                    f.name.startsWith("gradle-stdlib-java-extensions-") &&
+                        f.name.endsWith(".jar")
+                }?.firstOrNull()
+        val kotlinDsl =
+            lib
+                .listFiles { f: File ->
+                    f.name.startsWith("gradle-kotlin-dsl-") && f.name.endsWith(".jar")
+                }?.firstOrNull()
+        val coreApi =
+            lib
+                .listFiles { f: File ->
+                    f.name.startsWith("gradle-core-api-") && f.name.endsWith(".jar")
+                }?.firstOrNull()
         if (extensions == null || kotlinDsl == null || coreApi == null) return@lazy null
         listOf(coreApi, kotlinDsl, extensions)
     }
