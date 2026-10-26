@@ -209,6 +209,31 @@ internal object DiagnosticsSemantiques {
             if (contexte.script && estNuDansScript(racine, reference)) return@parcourir
             if (estResolu(racine, reference, nom, contexte, index)) return@parcourir
             val jeton = reference.jetonsDescendants().firstOrNull { it.type == KtTokens.IDENTIFIER }
+            // Mission fiabilisation, étape A — instrumentation « explain » :
+            // chaque ÉMISSION est journalisée en FINE (jamais active par
+            // défaut en production) : forme de la référence, issue de la
+            // sélection par types complets (la voie de preuve de
+            // l'absence), récepteur TYPÉ et état de l'univers des preuves
+            // (scan du projet, index des appelables, régime script).
+            // Paresseux : la construction ne court que si le journal
+            // écoute — aucun coût en production.
+            ExplicationsNonResolus.enregistrer {
+                val (ligne, colonne) = ExplicationsNonResolus.position(
+                    contexte.texte,
+                    jeton?.debut ?: reference.debut,
+                )
+                ExplicationsNonResolus.Explication(
+                    nom = nom,
+                    ligne = ligne,
+                    colonne = colonne,
+                    forme = formeDeReference(racine, reference, selection),
+                    selection = selection.name,
+                    recepteurType = typeDuRecepteurSiSelection(racine, reference, contexte, index),
+                    scanProjetComplet = contexte.scanProjetComplet,
+                    indexPortant = index.connaitDesEntrees,
+                    script = contexte.script,
+                )
+            }
             resultats +=
                 DiagnosticKotlin(
                     code = CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE,
@@ -516,6 +541,54 @@ internal object DiagnosticsSemantiques {
     }
 
     /**
+     * FORME syntaxique de la référence ÉMISE — pour le journal
+     * « explain » (mission fiabilisation, étape A) : nom nu, sélecteur
+     * qualifié, callee d'appel qualifié ou premier segment d'une
+     * chaîne qualifiée. L'issue ADR 0223 prime sur la forme nue : une
+     * `ABSENCE_PROUVEE` EST un sélecteur (ou un callee) dont la
+     * preuve est complète — c'est la voie de preuve qui a conclu à
+     * l'absence.
+     */
+    private fun formeDeReference(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+        selection: SelectionTypes,
+    ): String =
+        when {
+            selection == SelectionTypes.ABSENCE_PROUVEE -> "selecteur-qualifie-absence-prouvee"
+            selection == SelectionTypes.RECEPTEUR_TYPE -> "recepteur-type-sans-preuve"
+            estCalleeDAppel(racine, reference) -> "callee-d-appel-qualifie"
+            estSelecteurQualifie(racine, reference) -> "selecteur-qualifie"
+            estRecepteurRacineQualifie(racine, reference) -> "premier-segment-qualifie"
+            else -> "nom-nu"
+        }
+
+    /**
+     * La référence est-elle le RÉCEPTEUR RACINE (premier segment) d'une
+     * expression qualifiée — `ArticleRepoInconnu` de
+     * `ArticleRepoInconnu.tenter()` (E4-ter : premier segment FAILLIBLE
+     * par la voie normale) ? Miroir du volet récepteur
+     * d'[estNuDansScript], sans le régime script — sert à la FORME du
+     * journal « explain » uniquement.
+     */
+    private fun estRecepteurRacineQualifie(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        val indice = chaine.indexOf(reference)
+        if (indice <= 0) return false
+        val parent = chaine[indice - 1]
+        if (parent.type != KtNodeTypes.DOT_QUALIFIED_EXPRESSION &&
+            parent.type != KtNodeTypes.SAFE_ACCESS_EXPRESSION
+        ) {
+            return false
+        }
+        val recepteur = parent.sousNoeuds.firstOrNull() ?: return false
+        return couvre(recepteur, reference)
+    }
+
+    /**
      * Issue de la SÉLECTION D'APPELÉ PAR TYPES COMPLETS (ADR 0223).
      */
     private enum class SelectionTypes {
@@ -575,57 +648,12 @@ internal object DiagnosticsSemantiques {
     ): SelectionTypes {
         val nom = nomReference(reference) ?: return SelectionTypes.INCONNU
         if (nom.isBlank()) return SelectionTypes.INCONNU
-        // 1. L'expression qualifiée PORTEUSE : remonte la chaîne — un
-        //    DOT/SAFE/CALLABLE_REF dont la référence est HORS du
-        //    récepteur (sélecteur, ou callee du CALL sélecteur) ; la
-        //    remontée TRAVERSE le CALL qui PORTE la référence comme
-        //    callee (`tv.setTexe(…)`), mais S'ARRÊTE aux arguments
-        //    (premier enfant du CALL ≠ référence : un argument n'est
-        //    pas une sélection).
-        val chaine = chaineAncetresA(racine, reference.debut)
-        val indice = chaine.indexOf(reference)
-        if (indice <= 0) return SelectionTypes.INCONNU
-        var porteur: NoeudSyntaxique? = null
-        for (profondeur in (indice - 1) downTo 0) {
-            val parent = chaine[profondeur]
-            if (parent.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
-                parent.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION ||
-                parent.type == KtNodeTypes.CALLABLE_REFERENCE_EXPRESSION
-            ) {
-                val recepteur = parent.sousNoeuds.firstOrNull() ?: return SelectionTypes.INCONNU
-                // La référence DANS le récepteur : c'est une
-                // sous-chaîne (`a.b.c` sur `a`), pas une sélection.
-                if (couvre(recepteur, reference)) return SelectionTypes.INCONNU
-                porteur = parent
-                break
-            }
-            if (parent.type == KtNodeTypes.CALL_EXPRESSION) {
-                if (parent.sousNoeuds.firstOrNull() != reference) return SelectionTypes.INCONNU
-            }
-        }
-        val expression = porteur ?: return SelectionTypes.INCONNU
-        val recepteur = expression.sousNoeuds.firstOrNull() ?: return SelectionTypes.INCONNU
-        // 2. Type COMPLET du récepteur — valeur d'abord, CLASSE ensuite
-        //    (`Boite.creer()`, `Int.MAX_VALUE` — ADR 0222), puis la voie
-        //    GÉNÉRIQUE (vague 4, retour utilisateurs 25/10/2026 — U1
-        //    « showSnackbar » après `remember { SnackbarHostState() }`) :
-        //    un appel top-level SANS récepteur à retour TYPE GÉNÉRIQUE
-        //    (`fun <T> remember(calculation: () -> T): T`) se LIE par
-        //    son lambda — le type de l'appel est le type de la DERNIÈRE
-        //    expression du corps du littéral (règle EXACTE sur ce
-        //    périmètre : sans récepteur, T ne peut venir QUE du lambda ;
-        //    les retours concrets — Long, Unit, List… — portent des noms
-        //    de 3+ lettres et sont EXCLUS par le marqueur).
+        // 1-2. Porteur qualifié et type COMPLET du récepteur — extraits
+        //      dans [typeDuRecepteurSiSelection] (mission fiabilisation,
+        //      étape A — instrumentation « explain » : le journal des
+        //      émissions rappelle la sonde SANS recalcul côté émission).
         val typeRecepteur =
-            TypageExpression.typeExpression(
-                recepteur,
-                racine,
-                contexte.contexteNom,
-                contexte.resolution,
-                contexte.declarationsProjet,
-            ) ?: TypageExpression.typeStatiqueDe(recepteur, contexte.contexteNom, contexte.resolution)
-                ?: typeAppelGenerique(recepteur, contexte, index)
-                ?: typeLocaleGenerique(recepteur, racine, contexte, index)
+            typeDuRecepteurSiSelection(racine, reference, contexte, index)
                 ?: return SelectionTypes.INCONNU
         // 3. Membre PROUVÉ sur la chaîne de supertypes du récepteur :
         //    champ, méthode, accesseur synthétique, COMPANION du
@@ -706,6 +734,76 @@ internal object DiagnosticsSemantiques {
             return SelectionTypes.RECEPTEUR_TYPE
         }
         return SelectionTypes.ABSENCE_PROUVEE
+    }
+
+    /**
+     * Étapes 1-2 de [selectionParTypes] — le type COMPLET du
+     * RÉCEPTEUR d'une sélection, `null` quand la référence n'est PAS
+     * une sélection (nom nu, sous-chaîne du récepteur, argument
+     * d'appel) ou que le récepteur reste SANS type.
+     *
+     * Extraite telle quelle (mission fiabilisation, étape A —
+     * instrumentation « explain ») : le journal des `kt.unresolved`
+     * émis rappelle cette sonde pour rendre le récepteur TYPÉ sans
+     * recalcul ni duplication de la cascade.
+     */
+    @Suppress("ReturnCount") // chaque issue (porteur, sous-chaîne, récepteur, typage) est une ISSUE du catalogue
+    private fun typeDuRecepteurSiSelection(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+        contexte: Contexte,
+        index: IndexAppelablesKotlin,
+    ): String? {
+        // 1. L'expression qualifiée PORTEUSE : remonte la chaîne — un
+        //    DOT/SAFE/CALLABLE_REF dont la référence est HORS du
+        //    récepteur (sélecteur, ou callee du CALL sélecteur) ; la
+        //    remontée TRAVERSE le CALL qui PORTE la référence comme
+        //    callee (`tv.setTexe(…)`), mais S'ARRÊTE aux arguments
+        //    (premier enfant du CALL ≠ référence : un argument n'est
+        //    pas une sélection).
+        val chaine = chaineAncetresA(racine, reference.debut)
+        val indice = chaine.indexOf(reference)
+        if (indice <= 0) return null
+        var porteur: NoeudSyntaxique? = null
+        for (profondeur in (indice - 1) downTo 0) {
+            val parent = chaine[profondeur]
+            if (parent.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
+                parent.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION ||
+                parent.type == KtNodeTypes.CALLABLE_REFERENCE_EXPRESSION
+            ) {
+                val recepteur = parent.sousNoeuds.firstOrNull() ?: return null
+                // La référence DANS le récepteur : c'est une
+                // sous-chaîne (`a.b.c` sur `a`), pas une sélection.
+                if (couvre(recepteur, reference)) return null
+                porteur = parent
+                break
+            }
+            if (parent.type == KtNodeTypes.CALL_EXPRESSION) {
+                if (parent.sousNoeuds.firstOrNull() != reference) return null
+            }
+        }
+        val expression = porteur ?: return null
+        val recepteur = expression.sousNoeuds.firstOrNull() ?: return null
+        // 2. Type COMPLET du récepteur — valeur d'abord, CLASSE ensuite
+        //    (`Boite.creer()`, `Int.MAX_VALUE` — ADR 0222), puis la voie
+        //    GÉNÉRIQUE (vague 4, retour utilisateurs 25/10/2026 — U1
+        //    « showSnackbar » après `remember { SnackbarHostState() }`) :
+        //    un appel top-level SANS récepteur à retour TYPE GÉNÉRIQUE
+        //    (`fun <T> remember(calculation: () -> T): T`) se LIE par
+        //    son lambda — le type de l'appel est le type de la DERNIÈRE
+        //    expression du corps du littéral (règle EXACTE sur ce
+        //    périmètre : sans récepteur, T ne peut venir QUE du lambda ;
+        //    les retours concrets — Long, Unit, List… — portent des noms
+        //    de 3+ lettres et sont EXCLUS par le marqueur).
+        return TypageExpression.typeExpression(
+            recepteur,
+            racine,
+            contexte.contexteNom,
+            contexte.resolution,
+            contexte.declarationsProjet,
+        ) ?: TypageExpression.typeStatiqueDe(recepteur, contexte.contexteNom, contexte.resolution)
+            ?: typeAppelGenerique(recepteur, contexte, index)
+            ?: typeLocaleGenerique(recepteur, racine, contexte, index)
     }
 
     /**
