@@ -12,6 +12,55 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.15.0
+
+### 1. État
+
+- `main` de codeide-lsp : release `v1.15.0` (tag de publication — le
+  SHA courant est celui du commit `release: v1.15.0`), CI **verte**
+  attendue sur `main`.
+- **Vague 5 du programme utilisateurs** : les items 1 et 2 du backlog
+  — les QUATRE mondes du programme sont à **ZÉRO faux positif
+  déclaré** : le monde Compose de Léa et le monde KMP de Nina
+  rejoignent celui de Marc (leurs contrats E2E sont VIDES : tout
+  nouveau FP casse la CI). Détails dans `CHANGELOG.md` § 1.15.0 et
+  `docs/RETOURS-UTILISATEURS-2026-10-25.md` §2.
+
+### 2. Changements de comportement visibles
+
+- **Kotlin** : les extensions de **SCOPE Compose** résolvent —
+  `Modifier.weight(1f)` dans `Row { … }`, `Modifier.align(…)` dans
+  `Box { … }` (le récepteur de portée du lambda, candidates PROJET
+  et CLASSPATH, pile des littéraux emboîtés) ; les paramètres
+  DESTRUCTURÉS de lambda (`sortedByDescending { (_, total) ->
+  total }`) sont en portée ; les propriétés builtins de Map
+  (`totaux.entries`, `.keys`, `.values` → `entrySet()`/`keySet()`/
+  `values()`) et `buildList { add(…) }` (alias `Mutable*` ADR 0218).
+- **Vrais positifs gardés** : un membre inconnu DANS le scope reste
+  signalé (`grincher`), un nom inconnu dans un corps de lambda
+  destructuré reste signalé (`totalInconnu`).
+
+### 3. API/contrat modifiés
+
+- **AUCUN** : la vague est interne au moteur (résolution, portée
+  locale, chaîne des collections). La montée de version est un
+  remplacement de coordonnées pur.
+
+### 4. Ce que CodeIDE doit faire
+
+1. **Monter codeide-lsp dans le catalogue** : `scripts/bump-frere.sh
+   lsp minor` (la section du registre TESTS_MANUELS suit).
+2. **Rejouer les scénarios d'appareil des sections 1.13.0/1.14.0 §5**
+   (ils restent valides) PLUS : un écran Compose complet avec
+   `Row { Text(Modifier.weight(1f)) }` et `Box {
+   Modifier.align(Alignment.BottomCenter) }` — aucun diagnostic
+   attendu sur fichier correct ; une erreur volontaire dans le
+   scope (`Modifier.wight(1f)`) doit rester ROUGE.
+3. **Surveiller le backlog partagé** (RETOURS §4) : jar illisible →
+   PARTIEL en tête, puis attributs XML, NUS des lambdas Gradle,
+   complétion du récepteur de portée et typage des composants
+   destructurés.
+
 ## 1.14.0
 
 ### 1. État
