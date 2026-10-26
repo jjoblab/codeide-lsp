@@ -12,6 +12,61 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.14.0
+
+### 1. État
+
+- `main` de codeide-lsp : release `v1.14.0` (tag de publication — le
+  SHA courant est celui du commit `release: v1.14.0`), CI **verte**
+  attendue sur `main`.
+- **Vague 4 du programme utilisateurs** (`cac026a`) : les items 1 à 4
+  du backlog — le monde Views/XML de l'utilisateur Marc atteint ZÉRO
+  faux positif (le contrat E2E de son test est VIDE : tout nouveau FP
+  casse la CI). Détails dans `CHANGELOG.md` § 1.14.0 et
+  `docs/RETOURS-UTILISATEURS-2026-10-25.md` §2.
+
+### 2. Changements de comportement visibles
+
+- **Kotlin** : les membres HÉRITÉS du classpath résolvent depuis les
+  types du projet (`submitList` nu dans un adaptant, `getString`
+  dans une Activity, y compris depuis un objet anonyme — la PILE des
+  this) ; les types IMBRIQUÉS des supertypes par nom simple
+  (`FilterResults` dans un `object : Filter()`) ; les sélecteurs
+  d'accès sûr `results?.values` ne bavent PLUS (bug de frontière
+  transversal) ; les paramètres du constructeur primaire sont lus
+  dans la zone de construction (`super(contexte, attributs,
+  styleDef)`, initialisateurs, `init`) ; `field` et le paramètre des
+  setters custom résolvent ; les FQN complets sans import en
+  expression (`androidx.recyclerview…LinearLayoutManager(this)`) et
+  les imbriqués qualifiés en position de type
+  (`ViewModelProvider.Factory`) ; `remember { X() }.membre` après une
+  locale générique (`hoteSnackbar.showSnackbar`) ; les propriétés
+  synthétiques Java dans `apply { }` (`style =`, `color =` sur Paint)
+  et les chaînes de binding (`liaison.texteAnnee.context.getString`).
+- **Vrais positifs rattrapés** : un paramètre du constructeur primaire
+  utilisé HORS zone de construction (dans un corps de méthode) est
+  SIGNALÉ, miroir kotlinc ; le PREMIER segment d'une chaîne qualifiée
+  inconnue (`ArticleRepoInconnu.tenter()`) est signalé.
+
+### 3. API/contrat modifiés
+
+- **AUCUN** : la vague est interne au moteur (diagnostic, typage,
+  décodage des métadonnées). La montée de version est un
+  remplacement de coordonnées pur.
+
+### 4. Ce que CodeIDE doit faire
+
+1. **Monter codeide-lsp dans le catalogue** : `scripts/bump-frere.sh
+   lsp minor` (la section du registre TESTS_MANUELS suit).
+2. **Rejouer les scénarios d'appareil de la section 1.13.0 §5** (ils
+   restent valides) PLUS : ouvrir un adaptant RecyclerView complet
+   (objets anonymes `Filter`, `submitList`, `super(...)` à trois
+   args, `apply` sur Paint) — aucun diagnostic attendu sur fichier
+   correct ; un `results?.values` ne doit plus baver.
+3. **Surveiller le backlog partagé** (RETOURS §4) : extensions de
+   SCOPE Compose (weight/align) en tête, puis destructuring de lambda
+   et `Map.entries`.
+
 ## 1.13.0
 
 ### 1. État
