@@ -26,6 +26,11 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Mission fiabilisation, étape A.3 — test différentiel du lecteur de
+    // membres : android.jar RÉEL (AOSP API 16, Maven Central — le SDK
+    // Android est absent des environnements de test JVM).
+    testImplementation("com.google.android:android:4.1.1.4")
 }
 
 kover {

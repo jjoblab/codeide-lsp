@@ -80,6 +80,12 @@ dependencies {
     implementation(libs.kotlin.metadata.jvm)
 
     testImplementation(libs.junit4)
+
+    // Mission fiabilisation, étape A.3 — test différentiel du lecteur de
+    // classes : android.jar RÉEL (AOSP API 16, Maven Central — le SDK
+    // Android est absent des environnements de test JVM). Localisé au
+    // runtime par son ancre android.util.Log, jamais résolu en code.
+    testImplementation("com.google.android:android:4.1.1.4")
 }
 
 tasks.withType<Test>().configureEach {
