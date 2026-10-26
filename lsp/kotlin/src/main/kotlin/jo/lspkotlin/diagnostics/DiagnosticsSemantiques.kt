@@ -69,6 +69,12 @@ internal object DiagnosticsSemantiques {
      * @property script vrai pour un `.kts` (ADR 0221 — le récepteur
      *        implicite d'un script est le CONTEXTE HÔTE : DSL Gradle,
      *        arguments du shell… que le moteur ne modélise pas).
+     * @property scanProjetComplet l'univers des sources projet est-il
+     *        COMPLET (retour utilisateurs 25/10/2026, vague 3) ? La
+     *        preuve d'absence sur un type PROJET sans héritage écrit
+     *        n'est fondée QUE si le scan des racines a abouti — une
+     *        extension vivant dans un fichier NON ENCORE scanné
+     *        rendrait une absence « prouvée » fausse (D3).
      */
     internal data class Contexte(
         val texte: CharSequence,
@@ -78,6 +84,7 @@ internal object DiagnosticsSemantiques {
         val indexAppelables: IndexAppelablesKotlin?,
         val portFichier: jo.lspkotlin.resolve.SuperKotlin.PortFichier? = null,
         val script: Boolean = false,
+        val scanProjetComplet: Boolean = false,
     )
 
     /**
@@ -158,7 +165,17 @@ internal object DiagnosticsSemantiques {
             if (selection == SelectionTypes.MEMBRE_TROUVE) return@parcourir
             // Sélecteur qualifié : le récepteur peut être inconnu.
             // ADR 0223 : sauf absence TOTALEMENT prouvable, le
-            // sélecteur reste muet (D3 inchangé).
+            // sélecteur reste muet (D3 inchangé) — le CALLEE d'un appel
+            // suit la fortune de SON récepteur (retour utilisateurs
+            // 25/10/2026, famille E U1) : récepteur TYPÉ sans preuve
+            // (`vueModele.effets.collect { }`, erasure `remember`) →
+            // MUET ; récepteur SANS type (`java.io.Fichier(…)` garde
+            // D3) → voie normale inchangée, le callee reste rouge si
+            // `estResolu` échoue (miroir kotlinc : un callee après un
+            // récepteur inconnu est signalé par le compilateur).
+            if (selection == SelectionTypes.RECEPTEUR_TYPE && estCalleeDAppel(racine, reference)) {
+                return@parcourir
+            }
             if (selection != SelectionTypes.ABSENCE_PROUVEE &&
                 estSelecteurQualifie(racine, reference)
             ) {
@@ -316,7 +333,12 @@ internal object DiagnosticsSemantiques {
         return reference.debut != dernierIdentifiant.debut
     }
 
-    /** La référence est-elle le SÉLECTEUR d'une expression qualifiée ? */
+    /** La référence est-elle le SÉLECTEUR d'une expression qualifiée ?
+     *
+     * Les CALLEES d'appels (vivant dans un CALL_EXPRESSION) ne sont PAS
+     * des sélecteurs purs : ils suivent la fortune de leur récepteur via
+     * [estCalleeDAppel] (retour utilisateurs 25/10/2026, famille E U1) —
+     * le `break` au CALL les laisse à cette voie dédiée. */
     private fun estSelecteurQualifie(
         racine: NoeudSyntaxique,
         reference: NoeudSyntaxique,
@@ -339,6 +361,30 @@ internal object DiagnosticsSemantiques {
         return false
     }
 
+    /** La référence est-elle le CALLEE (premier enfant) d'un
+     *  CALL_EXPRESSION porté par une expression QUALIFIÉE ?
+     *  (`vueModele.effets.collect { … }` — le CALL est le sélecteur du
+     *  DOT) — le callee suit alors la fortune de SON récepteur :
+     *  [SelectionTypes.RECEPTEUR_TYPE] le tait, INCONNU le laisse à la
+     *  voie normale (garde D3 — `java.io.Fichier(…)` reste signalé).
+     *  Le parent DIRECT du CALL suffit : le callee est MUET dès que
+     *  l'appel EST le sélecteur d'un qualifié (`a.b.f()`, `a?.b?.f()`),
+     *  un appel PARENTHÉSÉ ou de bloc reste à la voie normale. */
+    private fun estCalleeDAppel(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        val indice = chaine.indexOf(reference)
+        if (indice <= 1) return false
+        val appel = chaine[indice - 1]
+        if (appel.type != KtNodeTypes.CALL_EXPRESSION) return false
+        if (appel.sousNoeuds.firstOrNull() != reference) return false
+        val parent = chaine[indice - 2]
+        return parent.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
+            parent.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION
+    }
+
     /**
      * Issue de la SÉLECTION D'APPELÉ PAR TYPES COMPLETS (ADR 0223).
      */
@@ -349,9 +395,18 @@ internal object DiagnosticsSemantiques {
         /** Absence TOTALEMENT prouvée — le sélecteur est diagnostiquable. */
         ABSENCE_PROUVEE,
 
-        /** Pas de preuve (récepteur inconnu, classe illisible, homonyme
-         * d'extension) — silence D3. */
+        /** Récepteur SANS type (introuvable, sous-chaîne) — aucun
+         * renseignement : le callee garde la voie normale (garde D3
+         * ADR 0221 : `java.io.Fichier(…)` reste signalé). */
         INCONNU,
+
+        /** Récepteur TYPÉ mais sans preuve NI absence (classe illisible
+         * dans la vue, type simple non résolu — écrit dans un fichier
+         * frère, erasure `java.lang.Object`) : un CALLEE y est MUET
+         * (D3 — retour utilisateurs 25/10/2026, famille E U1 : le type
+         * écrit d'un membre se résout dans le contexte de l'APPELANT,
+         * sans l'import du fichier déclarant). */
+        RECEPTEUR_TYPE,
     }
 
     /**
@@ -469,19 +524,102 @@ internal object DiagnosticsSemantiques {
         //     — U1 « showSnackbar » après remember { … } typé Object) :
         //     java.lang.Object est le type EFFACÉ de T — une absence
         //     « prouvée » sur Object est une absence sur N'IMPORTE quel
-        //     type générique inconnu : jamais prouvable (D3), INCONNU.
-        if (typeRecepteur == "java.lang.Object") return SelectionTypes.INCONNU
+        //     type générique inconnu : jamais prouvable (D3), le
+        //     récepteur reste TYPÉ (un callee y est muet — l'erasure
+        //     n'est pas une preuve d'absence).
+        if (typeRecepteur == "java.lang.Object") return SelectionTypes.RECEPTEUR_TYPE
         // 4. ABSENCE — conditions cumulatives (D3) : classe LISIBLE
         //    dans la vue + index PORTANT des entrées (une session nue ne
         //    connaît AUCUNE extension : l'absence n'y est pas prouvable)
         //    + aucune extension homonyme nulle part.
-        if (contexte.resolution.membresDe(typeRecepteur) == null) return SelectionTypes.INCONNU
-        if (!index.connaitDesEntrees) return SelectionTypes.INCONNU
+        if (contexte.resolution.membresDe(typeRecepteur) == null) {
+            // Hors classpath : le récepteur peut être un type du PROJET
+            // — son jeu de membres est ALORS prouvable par le scan
+            // (vague 3, retour utilisateurs 25/10/2026).
+            return selectionProjet(contexte, typeRecepteur, nom, index)
+        }
+        if (!index.connaitDesEntrees) return SelectionTypes.RECEPTEUR_TYPE
         if (index.topParNom(nom).any { it.recepteur != null }) {
-            return SelectionTypes.INCONNU
+            return SelectionTypes.RECEPTEUR_TYPE
         }
         return SelectionTypes.ABSENCE_PROUVEE
     }
+
+    /**
+     * Membres du supertype IMPLICITE — Any/Object (miroir kotlinc
+     * JVM) : présents sur TOUT type, jamais prouvable absent.
+     * `clone`/`finalize` (protégés en Java) y sont inclus : les tenir
+     * pour trouvés ne fait QUE TAIRE (D3), jamais signaler à tort.
+     */
+    private val MEMBRES_IMPLICITES =
+        setOf(
+            "toString", "equals", "hashCode", "wait", "notify", "notifyAll", "getClass", "clone", "finalize",
+        )
+
+    /**
+     * Issue de la SÉLECTION D'APPELÉ PAR TYPES COMPLETS (ADR 0223) —
+     * volet PROJET (vague 3, retour utilisateurs 25/10/2026) : le
+     * récepteur n'est PAS dans la vue classpath mais le scan du
+     * projet connaît SON TYPE. La preuve d'absence y est fondée
+     * QUAND le jeu de membres est COMPLET : type SANS héritage écrit
+     * ([DeclarationProjet.estSansHeritageEcrit] — membres DÉCLARÉS +
+     * implicites Any/Object, ni hérités ni compagnons cachés) ET
+     * l'univers des sources COMPLET ([Contexte.scanProjetComplet]).
+     * Le pas 3 a DÉJÀ sondé les membres déclarés (`conteneur ==
+     * récepteur`) — atteindre ici signifie « pas trouvés ».
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * (implicites, univers incomplet, type introuvable/à héritage,
+     * extensions classpath/projet) est une ISSUE du catalogue D3.
+     */
+    @Suppress("ReturnCount")
+    private fun selectionProjet(
+        contexte: Contexte,
+        typeRecepteur: String,
+        nom: String,
+        index: IndexAppelablesKotlin,
+    ): SelectionTypes {
+        // a) Supertype IMPLICITE (Any/Object) : membres de TOUT type.
+        if (nom in MEMBRES_IMPLICITES) return SelectionTypes.MEMBRE_TROUVE
+        // b) L'univers des sources doit être COMPLET : un scan en vol
+        //    rendrait une absence « prouvée » fausse (D3).
+        if (!contexte.scanProjetComplet) return SelectionTypes.RECEPTEUR_TYPE
+        // c) Le TYPE du récepteur doit être CONNU et SANS héritage
+        //    écrit — un maillon manquant rouvre les membres hérités.
+        if (typeProjet(contexte.declarationsProjet, typeRecepteur)?.estSansHeritageEcrit != true) {
+            return SelectionTypes.RECEPTEUR_TYPE
+        }
+        // d) Extensions du CLASSPATH homonymes (tout récepteur) : la
+        //    preuve d'absence d'extension exige l'index (ADR 0223).
+        if (!index.connaitDesEntrees) return SelectionTypes.RECEPTEUR_TYPE
+        if (index.topParNom(nom).any { it.recepteur != null }) return SelectionTypes.RECEPTEUR_TYPE
+        // e) Extensions du PROJET homonymes (tout récepteur — la
+        //    résolution de leur type écrit reste à faire, D3 large).
+        if (contexte.declarationsProjet.any { it.recepteur != null && it.nom == nom }) {
+            return SelectionTypes.RECEPTEUR_TYPE
+        }
+        return SelectionTypes.ABSENCE_PROUVEE
+    }
+
+    /**
+     * Déclaration de TYPE du projet portant ce FQCN (conteneur
+     * qualifié ou paquet + nom — miroir de la clé `conteneur` des
+     * MEMBRES), `null` si le scan ne connaît pas ce type.
+     */
+    private fun typeProjet(
+        declarations: List<DeclarationProjet>,
+        fqcn: String,
+    ): DeclarationProjet? =
+        declarations.firstOrNull { decl ->
+            (decl.genre == GenreDeclaration.CLASSE ||
+                decl.genre == GenreDeclaration.OBJET ||
+                decl.genre == GenreDeclaration.INTERFACE) &&
+                decl.recepteur == null &&
+                run {
+                    val parent = decl.conteneur ?: decl.paquet
+                    (parent?.plus('.')?.plus(decl.nom) ?: decl.nom) == fqcn
+                }
+        }
 
     /** [parent] couvre-t-il [enfant] (plages) ? */
     private fun couvre(

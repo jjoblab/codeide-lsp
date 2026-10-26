@@ -289,20 +289,19 @@ class ExperienceU3KmpE2ETest {
                 .flatMap { (fichier, diags) ->
                     diags
                         .filter { estNonResolue(it) }
-                        // Limitations CONNUES (25/10/2026 — backlog) : récepteurs
-                        // typés par GÉNÉRIQUES (copy après List<T>/update),
-                        // destructuring de lambda (_, total), Map.entries,
-                        // propriétés/héritage du classpath dans l'app (textSize,
-                        // setPadding), collect (index des suspend) — TOUT
-                        // NOUVEAU faux positif fait échouer le test.
+                        // Limitations CONNUES (26/10/2026, vague 3 — collect
+                        // et copy ÉTEINTS : le callee suit son récepteur
+                        // typé, le modificateur data est ENFIN lu du
+                        // MODIFIER_LIST) : destructuring de lambda
+                        // (_, total), Map.entries, propriétés/héritage du
+                        // classpath dans l'app (textSize, setPadding) —
+                        // TOUT NOUVEAU faux positif fait échouer le test.
                         .filter { diag ->
                             setOf(
-                                "« copy »",
                                 "« total »",
                                 "« entries »",
                                 "« textSize »",
                                 "« setPadding »",
-                                "« collect »",
                             ).none { diag.message.contains(it) }
                         }.map { "${fichier.name} : ${it.message.take(90)} @${it.range.start.line + 1}" }
                 }

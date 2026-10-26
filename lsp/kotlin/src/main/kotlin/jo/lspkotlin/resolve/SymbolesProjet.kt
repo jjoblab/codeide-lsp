@@ -50,6 +50,16 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  *           `kt.argumentCount` NE LA CONSUlte pas (sous-rapport D3,
  *           jamais de faux « 0 attendu » sur un constructeur Java à
  *           N paramètres).
+ * @property estSansHeritageEcrit un TYPE sans clause ÉCRITE de
+ *           supertype (`class Foo`/`object Foo`/`interface Foo` Kotlin,
+ *           `class`/`interface` Java sans `extends`/`implements` —
+ *           retour utilisateurs 25/10/2026, vague 3) : son jeu de
+ *           membres est alors exactement les DÉCLARÉS du scan + les
+ *           membres IMPLICITES de Any/Object — la preuve d'ABSENCE
+ *           d'un sélecteur y est donc fondée (D3 : un type avec
+ *           héritage écrit — ou enum/annotation, supertype implicite
+ *           Comparable/Annotation — ne prouve JAMAIS l'absence de
+ *           ses membres hérités).
  */
 public data class DeclarationProjet(
     public val genre: GenreDeclaration,
@@ -65,6 +75,7 @@ public data class DeclarationProjet(
     public val nombreParametresDefaut: Int = 0,
     public val aVararg: Boolean = false,
     public val estJava: Boolean = false,
+    public val estSansHeritageEcrit: Boolean = false,
 )
 
 /** Genre de déclaration projet. */
@@ -201,6 +212,13 @@ public object SymbolesProjet {
                     // du quotidien Kotlin (data classes à défauts).
                     nombreParametresDefaut = parametresPrimairesKt(declaration)
                         .count { parametre -> parametre.aDefaut() },
+                    // Vague 3 : SANS supertype ÉCRIT et hors enum
+                    // (Comparable implicite)/annotation (Annotation
+                    // implicite) — le jeu de membres est exactement
+                    // DECLARÉS + synthétiques data + Any implicite :
+                    // l'absence d'un sélecteur y est prouvable (D3).
+                    estSansHeritageEcrit = declaration.superTypes().isEmpty() &&
+                        !declaration.estEnum() && !declaration.estAnnotation(),
                 )
                 // ADR 0206 : chaque paramètre `val`/`var` du constructeur
                 // primaire est AUSSI une PROPRIÉTÉ membre de la classe —
@@ -379,6 +397,11 @@ public object SymbolesProjet {
                 typeRetour = null,
                 parametres = emptyList(),
                 conteneur = conteneur,
+                // Vague 3 : `object Foo` SANS supertype écrit ne porte
+                // que ses membres DÉCLARÉS + Any implicite (un object
+                // n'a NI compagnon prêt, NI méthode synthétique — la
+                // preuve d'absence y est fondée, D3).
+                estSansHeritageEcrit = declaration.superTypes().isEmpty(),
             )
         // Membres sous l'OBJET (accès `Boite.Companion.creer()` et
         // corps du compagnon — this implicite).

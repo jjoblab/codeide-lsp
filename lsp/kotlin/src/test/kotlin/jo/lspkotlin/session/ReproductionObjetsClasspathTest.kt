@@ -222,7 +222,7 @@ class ReproductionObjetsClasspathTest {
     /** COMPAGNON D'EXPÉRIENCE (E2E U1) : session avec le VRAI jar
      *  kotlinx-coroutines-core-jvm du corpus — la sonde empirique du
      *  « collect » non résolu (famille E : suspend du classpath). */
-    private fun sessionCoroutines(): jo.lspkotlin.api.SessionLangageKotlin {
+    private fun sessionCoroutines(avecRacines: List<File> = emptyList()): jo.lspkotlin.api.SessionLangageKotlin {
         val session = ServiceMoteurLangageKotlin.unique().creerSession()
         val jars =
             listOf(
@@ -242,7 +242,7 @@ class ReproductionObjetsClasspathTest {
             ClasspathKotlin(
                 entrees = jars,
                 vue = vueChainee(jarCoroutines),
-                racinesSources = emptyList(),
+                racinesSources = avecRacines,
                 dossierIndex = null,
             ),
         )
@@ -278,14 +278,15 @@ class ReproductionObjetsClasspathTest {
     }
 
     /** U1-Léa : `etat.collect { }` sur StateFlow — suspend du classpath.
-     *  REPRODUCTION OUVERTE (backlog 25/10/2026) : échec constaté sur le
-     *  classpath réel (corpus U1) comme en E2E — le jar coroutines porte
-     *  bien son .kotlin_module, la chaîne StateFlow→Flow est lisible :
-     *  l'extension `collect` n'est PAS offerte par l'index des appelables
-     *  (membres suspend/inline du classpath — à investiguer dans le
-     *  DecodeurMetadonnees). Désactivée pour laisser la chaîne verte, la
-     *  reproduction reste prête. */
-    @org.junit.Ignore("reproduction ouverte — backlog correctifs, famille E")
+     *  REPRODUCTION FERMÉE (25/10/2026, vague 1 d89544d) : la garde
+     *  erasure Object (E1) et les extensions de la chaîne
+     *  StateFlow→Flow suffisent désormais — le jar coroutines réel
+     *  (corpus U1) prouve ZÉRO faux positif. Le test reste actif :
+     *  toute régression de l'index des appelables (DecodeurMetadonnees)
+     *  ou de la sélection par types le fait échouer. Sans U1_CORPUS,
+     *  le jar coroutines est absent : l'index ne connaît AUCUNE
+     *  extension collect, l'étape 3bis (fqcn$Nom) et la garde Object
+     *  gardent le silence D3 — le test reste vert par sous-rapport. */
     @Test
     fun `coroutines reel - collect suspend extension, zero faux positif`() {
         val session = sessionCoroutines()
@@ -312,6 +313,148 @@ class ReproductionObjetsClasspathTest {
             "collect (extension suspend du classpath réel) ne doit pas être non résolu — obtenu : " +
                 recus.filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }.joinToString { it.message },
             recus.none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+    }
+
+    /**
+     * U1-Léa, pattern EXACT de MainActivity : le récepteur est un
+     * MEMBRE typé (`vueModele.effets.collect { }` — SharedFlow écrit
+     * sur une propriété d'AUTRE classe), PAS une propriété locale du
+     * document courant. REPRODUCTION FERMÉE (25/10/2026, vague 2) : le
+     * callee d'un appel sélecteur traverse désormais estSelecteurQualifie
+     * — le type INCONNU du récepteur (type écrit résolu dans le contexte
+     * de l'APPELANT, sans l'import du fichier déclarant) redevient MUET
+     * (D3) au lieu de produire un faux « non résolu » par la voie
+     * normale.
+     */
+    @Test
+    fun `coroutines reel - collect sur membre distancie SharedFlow, zero faux positif`() {
+        val session = sessionCoroutines()
+        val source =
+            """
+            import kotlinx.coroutines.flow.MutableSharedFlow
+            import kotlinx.coroutines.flow.SharedFlow
+            import kotlinx.coroutines.flow.asSharedFlow
+
+            sealed interface Effet {
+                data class Vide(val n: Int = 0) : Effet
+            }
+
+            class VueModele {
+                private val _effets = MutableSharedFlow<Effet>(extraBufferCapacity = 8)
+                val effets: SharedFlow<Effet> = _effets.asSharedFlow()
+            }
+
+            fun ecoute(vueModele: VueModele, bloc: (Effet) -> Unit) {
+                vueModele.effets.collect { effet -> bloc(effet) }
+            }
+            """.trimIndent()
+        val fichier = java.nio.file.Files.createTempDirectory("repro-membre").resolve("Ecoute.kt").toFile()
+        fichier.writeText(source)
+        session.ouvrirDocument(fichier.toURI().toString(), source)
+        val recus = session.diagnostics(fichier.toURI().toString())
+        session.close()
+        assertTrue(
+            "collect sur membre distancié (SharedFlow écrit) ne doit pas être non résolu — obtenu : " +
+                recus.filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }.joinToString { it.message },
+            recus.none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+    }
+
+    /**
+     * U1-Léa, pattern EXACT de MainActivity DEUX FICHIERS : la
+     * DÉCLARATION vit dans VueModele.kt (QUI IMPORTE SharedFlow),
+     * l'USAGE dans Ecouteur.kt (QUI NE L'IMPORTE PAS — le fichier de
+     * Léa n'importe que le ViewModel). Le type ÉCRIT du membre est
+     * résolu par le contexte du document APPELANT : sans import, le
+     * typage retombe au nom SIMPLE et l'extension collect (récepteur
+     * FQCN) échappe. REPRODUCTION FERMÉE (25/10/2026, vague 2) : le
+     * callee sélecteur est reconnu (traversée du CALL), le sélecteur
+     * INCONNU redevient MUET (D3). Le chemin POSITIF (résoudre par le
+     * contexte du fichier PORTeur) reste au backlog génériques.
+     */
+    @Test
+    fun `coroutines reel - collect sur membre dont l import vit ailleurs, zero faux positif`() {
+        val dossier = java.nio.file.Files.createTempDirectory("repro-membre-2f").toFile()
+        val paquet = File(dossier, "com/ex/app")
+        assertTrue(paquet.mkdirs())
+        File(paquet, "VueModele.kt").writeText(
+            """
+            package com.ex.app
+
+            import kotlinx.coroutines.flow.MutableSharedFlow
+            import kotlinx.coroutines.flow.SharedFlow
+
+            class VueModele {
+                private val _effets = MutableSharedFlow<Int>(extraBufferCapacity = 8)
+                val effets: SharedFlow<Int> = _effets.asSharedFlow()
+            }
+            """.trimIndent(),
+        )
+        val usage =
+            """
+            package com.ex.app
+
+            fun ecoute(vueModele: VueModele, bloc: (Int) -> Unit) {
+                vueModele.effets.collect { effet -> bloc(effet) }
+            }
+            """.trimIndent()
+        val fichier = File(paquet, "Ecouteur.kt")
+        fichier.writeText(usage)
+        val session = sessionCoroutines(avecRacines = listOf(dossier))
+        session.ouvrirDocument(fichier.toURI().toString(), usage)
+        val recus = session.diagnostics(fichier.toURI().toString())
+        session.close()
+        assertTrue(
+            "collect (membre typé ailleurs que l'appelant) ne doit pas être non résolu — obtenu : " +
+                recus.filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }.joinToString { it.message },
+            recus.none { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE },
+        )
+    }
+
+    /**
+     * U3-Nina : `CalculatriceBudget.consulterInconnu(budget)` — le membre
+     * inexistant d'un OBJECT :shared SANS héritage, appelé depuis :app qui
+     * l'IMPORTE. La preuve d'absence projet (vague 3) doit le SIGNALER :
+     * l'object est scanné (racines = :shared + :app), sans supertype
+     * écrit, son jeu de membres est exactement les DÉCLARÉS.
+     * REPRODUCTION du faux négatif constaté en E2E U3 le 26/10/2026.
+     */
+    @Test
+    fun `objectimporte - le membre inexistant d un object du projet est signale`() {
+        val dossier = java.nio.file.Files.createTempDirectory("repro-u3-object").toFile()
+        val partage = File(dossier, "budget/partage/logique")
+        assertTrue(partage.mkdirs())
+        File(partage, "CalculatriceBudget.kt").writeText(
+            """
+            package budget.partage.logique
+
+            object CalculatriceBudget {
+                fun solde(v: Double): Double = v
+            }
+            """.trimIndent(),
+        )
+        val source =
+            """
+            package budget.partage.app.vm
+
+            import budget.partage.logique.CalculatriceBudget
+
+            fun essai(v: Double): Double = CalculatriceBudget.consulterInconnu(v)
+            """.trimIndent()
+        val fichier = File(dossier, "budget/partage/app/vm/Essai.kt")
+        fichier.parentFile.mkdirs()
+        fichier.writeText(source)
+        val session = sessionCoroutines(avecRacines = listOf(dossier))
+        session.ouvrirDocument(fichier.toURI().toString(), source)
+        val recus = session.diagnostics(fichier.toURI().toString())
+        session.close()
+        assertTrue(
+            "consulterInconnu (membre inexistant d'un object importé sans héritage) doit être signalé — obtenu : " +
+                recus.filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }.joinToString { it.message },
+            recus.any {
+                it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE && it.message.contains("consulterInconnu")
+            },
         )
     }
 }

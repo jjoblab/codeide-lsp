@@ -30,6 +30,14 @@ import java.io.File
  *    PROPRIÉTÉ synthétique `titre`/`actif` — le miroir exact du
  *    classpath (ADR 0219) : depuis Kotlin, un POJO Java s'écrit en
  *    propriétés (`vinyle.titre`), pas en getters ;
+ *  - un `class`/`interface` sans clause ÉCRITE `extends`/`implements`
+ *    (hors contraintes de paramètres génériques) porte
+ *    [DeclarationProjet.estSansHeritageEcrit] : son jeu de membres
+ *    est exactement les DÉCLARÉS + les IMPLICITES de
+ *    java.lang.Object — la preuve d'absence d'un sélecteur y est
+ *    fondée (retour utilisateurs 25/10/2026, vague 3) ; les `enum`
+ *    (Comparable implicite), `record` (java.lang.Record) et
+ *    `@interface` (Annotation) ne le portent JAMAIS ;
  *  - analyse lexicale (commentaires, chaînes et caractères
  *    neutralisés) — un fichier Java illisible produit RIEN.
  *
@@ -89,6 +97,9 @@ internal object SourcesJava {
     /** Préfixes de getter Java porteurs d'une propriété synthétique. */
     private val PREFIXES_GETTER = listOf("get", "is")
 
+    /** Mots-clés de SUPERTYPE écrit (bornes d'identifiant). */
+    private val MOTS_HERITAGE = listOf("extends", "implements")
+
     /** Borne de membres extraits par corps (fichier dégénéré — D3). */
     private const val BORN_MEMBRES = 500
 
@@ -130,7 +141,7 @@ internal object SourcesJava {
             // PREMIER NIVEAU SEUL (D3) : une classe imbriquée ou locale
             // portée comme top-niveau donnerait un FQCN FAUX — jamais.
             if (profondeurA(neutralise, plage.first) != 0) continue
-            val type = declaration(correspondance, plage, portee)
+            val type = declaration(correspondance, plage, portee, neutralise)
             resultat += type
             resultat += membresDuType(neutralise, type, portee)
         }
@@ -142,9 +153,21 @@ internal object SourcesJava {
         correspondance: MatchResult,
         plage: IntRange,
         portee: Portee,
+        neutralise: String,
     ): DeclarationProjet {
         val motCle = correspondance.groupValues[1]
         val estInterface = motCle == "interface" || motCle == "@interface"
+        // Vague 3 (retour utilisateurs 25/10/2026) : preuve d'absence
+        // fondée pour `class`/`interface` sans supertype ÉCRIT — enum
+        // (Comparable implicite), record (java.lang.Record implicite)
+        // et @interface (Annotation implicite) ne le portent JAMAIS ;
+        // un en-tête SANS accolade (`sealed interface Foo;` implicite)
+        // n'est pas prouvable non plus (D3).
+        val ouverture = ouvertureCorps(neutralise, plage.last + 1)
+        val sansHeritage =
+            (motCle == "class" || motCle == "interface") &&
+                ouverture != null &&
+                !heritageEcrit(neutralise, plage.last + 1, ouverture)
         return DeclarationProjet(
             genre = if (estInterface) GenreDeclaration.INTERFACE else GenreDeclaration.CLASSE,
             nom = correspondance.groupValues[2],
@@ -157,7 +180,54 @@ internal object SourcesJava {
             parametres = emptyList(),
             conteneur = null,
             estJava = true,
+            estSansHeritageEcrit = sansHeritage,
         )
+    }
+
+    /**
+     * L'en-tête d'un type ([debut, fin[ — du nom à l'accolade du corps)
+     * porte-t-il `extends`/`implements` de NIVEAU 0 ? Une CONTRAINTE de
+     * paramètre générique (`class Boite<T extends Comparable<T>>`)
+     * vit à profondeur `<>` STRICTEMENT POSITIVE : elle ne compte PAS
+     * — seul un SUPERTYPE ÉCRIT ferme la preuve d'absence (vague 3).
+     */
+    private fun heritageEcrit(
+        neutralise: String,
+        debut: Int,
+        fin: Int,
+    ): Boolean {
+        var profondeur = 0
+        var indice = debut
+        while (indice < fin) {
+            when (neutralise[indice]) {
+                '<' -> profondeur++
+                '>' -> if (profondeur > 0) profondeur--
+                'e', 'i' ->
+                    if (profondeur == 0 && motCleIci(neutralise, indice, fin)) {
+                        return true
+                    }
+            }
+            indice++
+        }
+        return false
+    }
+
+    /** `extends`/`implements` aux BORNES d'identifiant à [indice] ? */
+    private fun motCleIci(
+        texte: String,
+        indice: Int,
+        fin: Int,
+    ): Boolean {
+        for (mot in MOTS_HERITAGE) {
+            val finMot = indice + mot.length
+            if (finMot > fin) continue
+            if (!texte.regionMatches(indice, mot, 0, mot.length)) continue
+            val apres = if (finMot < fin) texte[finMot] else ' '
+            if (apres.isJavaIdentifierPart()) continue
+            if (indice > 0 && texte[indice - 1].isJavaIdentifierPart()) continue
+            return true
+        }
+        return false
     }
 
     /**

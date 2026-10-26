@@ -208,6 +208,13 @@ internal class SessionLangageKotlinParse(
                         // lecture disque + parse bornées) traverse les
                         // maillons PROJET de la fermeture des supertypes.
                         portFichier = portFichierDeclaration(declarations),
+                        // Vague 3 (retour utilisateurs 25/10/2026) : la
+                        // preuve d'absence sur un type PROJET sans
+                        // héritage écrit exige l'univers des sources
+                        // COMPLET — un scan amorcé mais pas publié
+                        // rendrait une absence « prouvée » fausse
+                        // (extension d'un fichier non scanné), D3.
+                        scanProjetComplet = scanProjet.estUniversConnu(),
                     ),
                 )
             (syntaxiques + semantiques).sortedWith(compareBy({ it.debut }, { it.code }))

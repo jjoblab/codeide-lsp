@@ -189,15 +189,41 @@ public class KtClass(
     /** Vrai si le jeton `interface` est présent (une interface n'a pas de corps de constructeur). */
     public fun estInterface(): Boolean = jetonsDescendants().any { it.type == KtTokens.INTERFACE_KEYWORD }
 
+    /**
+     * Types des MODIFICATEURS doux de la TÊTE de la déclaration —
+     * le MODIFIER_LIST DIRECT porte chaque modificateur soit en JETON
+     * feuille, soit en NŒUD REPLIÉ dont le type EST celui du jeton
+     * (sonde ADR 0222 sur `companion` : les deux formes existent).
+     * [jetons] (jetons DIRECTS du nœud déclaration) ne voit JAMAIS un
+     * modificateur — la liste vit dans un ENFANT : c'est la cause du
+     * code mort estData/estEnum corrigée en vague 3 (retour
+     * utilisateurs 25/10/2026 — copy/componentN n'étaient JAMAIS
+     * émis, `enum class` était pris pour une classe ordinaire).
+     */
+    public fun modificateurs(): List<SyntaxElementType> =
+        noeud.sousNoeuds
+            .firstOrNull { it.type == KtNodeTypes.MODIFIER_LIST }
+            ?.enfants
+            ?.map { it.type }
+            ?: emptyList()
+
     /** Vrai si la déclaration est une classe d'énumération (`enum class`). */
-    public fun estEnum(): Boolean = jetons().any { it.type == KtTokens.ENUM_MODIFIER }
+    public fun estEnum(): Boolean = modificateurs().any { it == KtTokens.ENUM_MODIFIER }
 
     /**
      * Vrai si la déclaration est une data class (`data class`) — le
      * modificateur doux vit dans le MODIFIER_LIST comme `enum` (retour
      * utilisateurs U1/U3 25/10/2026 : membres synthétisés copy/componentN).
      */
-    public fun estData(): Boolean = jetons().any { it.type == KtTokens.DATA_MODIFIER }
+    public fun estData(): Boolean = modificateurs().any { it == KtTokens.DATA_MODIFIER }
+
+    /**
+     * Classe ANNOTATION (`annotation class Foo`) ? Elle porte
+     * l'interface IMPLICITE kotlin.Annotation (`annotationClass`…) :
+     * jamais sans héritage pour la preuve d'absence (vague 3, même
+     * garde que [estEnum] — Comparable implicite des énumérations).
+     */
+    public fun estAnnotation(): Boolean = modificateurs().any { it == KtTokens.ANNOTATION_MODIFIER }
 
     /** Corps de la classe (CLASS_BODY), ou null (en-tête en cours d'édition). */
     public fun corps(): KtNoeud? = premierEnfantParType(KtNodeTypes.CLASS_BODY) as? KtNoeud
@@ -284,6 +310,25 @@ public class KtObjectDeclaration(
                 else -> null
             }
         } ?: emptyList()
+
+    /**
+     * Supertypes écrits de l'objet (`object Foo : Bar`), TEXTES tels
+     * qu'écrits — même contrat que [KtClass.superTypes] : vide si la
+     * clause est absente (l'objet ne porte alors que les membres
+     * IMPLICITES de Any — preuve d'absence projet, retour utilisateurs
+     * 25/10/2026 vague 3).
+     */
+    public fun superTypes(): List<String> {
+        val clause = noeud.sousNoeuds
+            .firstOrNull { it.type == KtNodeTypes.SUPER_TYPE_LIST } ?: return emptyList()
+        val entrees =
+            clause.sousNoeuds.filter {
+                it.type == KtNodeTypes.SUPER_TYPE_ENTRY ||
+                    it.type == KtNodeTypes.SUPER_TYPE_CALL_ENTRY ||
+                    it.type == KtNodeTypes.DELEGATED_SUPER_TYPE_ENTRY
+            }
+        return entrees.mapNotNull { typeTexteDepuis(it) }
+    }
 }
 
 /** Déclaration de fonction. */

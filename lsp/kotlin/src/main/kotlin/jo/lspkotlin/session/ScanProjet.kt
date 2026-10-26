@@ -285,6 +285,18 @@ internal class ScanProjet(
         observateur = obs
     }
 
+    /**
+     * L'univers des sources projet est-il COMPLET pour la PREUVE
+     * d'ABSENCE (retour utilisateurs 25/10/2026, vague 3) ? Racines
+     * VIDES (l'univers est alors exactement les documents OUVERTS —
+     * le moteur n'a jamais promis les fichiers fermés) ou dernier
+     * passage ABOUTI pour les racines courantes (`pret` — un scan
+     * amorcé mais pas publié rend le snapshot PARTIEL : une
+     * extension vivant dans un fichier non encore scanné rendrait
+     * une absence « prouvée » FAUSSE, D3 l'interdit). @Volatile : KP6.
+     */
+    internal fun estUniversConnu(): Boolean = racines.isEmpty() || pret
+
     /** Statistiques du dernier passage (progression + re-parses — bilan ADR 0213). */
     internal fun statsDernierPassage(): StatsPassage = statsPassage
 

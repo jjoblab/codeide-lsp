@@ -4,17 +4,18 @@
 > programme de quatre utilisateurs simulés (projets Android réels,
 > chaîne LSP de production, corpus normalisation v2) a testé les LSP
 > embarqués. Voici ce que CodeIDE doit savoir, faire et surveiller.
-> Correctifs correspondants : codeide-lsp `d89544d` (vague 1) puis
-> `33688a8` (vague 2 — membres Java projet, R sans import), CI verte
-> attendue sur main.
+> Correctifs correspondants : codeide-lsp `d89544d` (vague 1),
+> `33688a8` (vague 2 — membres Java projet, R sans import) puis vague 3
+> (callee suit son récepteur typé, modificateur `data` ENFIN lu,
+> preuve d'absence projet) — CI verte attendue sur main.
 
 ## 1. Ce qui a été fait
 
 | Utilisateur | Monde | Projet | Verdict initial | Après correctifs |
 |---|---|---|---|---|
-| Léa | Compose (Material3, ViewModel, coroutines) | MesCourses, 13 fichiers | 4/10 — 45 FP | **12 FP restants** (limites connues listées) |
-| Marc | Views/XML + Java (ViewBinding, RecyclerView) | AtelierVinyle, 11 fichiers | 5/10 — 47 FP | Java **impeccable**, complétion XML 134 items, **membres Java projet + R sans import ÉTEINTS** (vague 2) — 29 FP restants (membres hérités classpath, FQN sans import, super args, field/setter) |
-| Nina | KMP (:shared + :app, expect/actual) | PartageBudget, 9 fichiers | 5/10 — 15 FP | cross-module **VICTOIRE** (entrée MODULE), expect/actual **PARFAIT** |
+| Léa | Compose (Material3, ViewModel, coroutines) | MesCourses, 13 fichiers | 4/10 — 45 FP | **6 FP restants** (showSnackbar×2, Factory, weight, align, currency — limites connues listées), collect et copy ÉTEINTS |
+| Marc | Views/XML + Java (ViewBinding, RecyclerView) | AtelierVinyle, 11 fichiers | 5/10 — 47 FP | Java **impeccable**, complétion XML 134 items, **membres Java projet + R sans import ÉTEINTS** (vague 2), erreurs volontaires Java/Kotlin attrapées — 29 FP restants (membres hérités classpath, FQN sans import, super args, field/setter) |
+| Nina | KMP (:shared + :app, expect/actual) | PartageBudget, 9 fichiers | 5/10 — 15 FP | cross-module **VICTOIRE** (entrée MODULE), expect/actual **PARFAIT**, **4 FP restants** (total, entries, textSize, setPadding), copy et collect ÉTEINTS, consulterInconnu (vrai positif) SIGNALÉ |
 | Olivier | scripts .gradle.kts | usine-build, 5 scripts | 4/10 — 8 FP | complétion JavaVersion 37 items ✓, DSL blocs = backlog |
 
 ## 2. Correctifs livrés dans codeide-lsp
@@ -39,6 +40,31 @@ garde erasure (Object jamais preuve d'absence).
    du build inclus (le manifeste AGP 9 n'a plus de `package=`, le R
    vient du R.jar du montage v2).
 
+**Vague 3** — trois familles (récepteurs génériques, le n° 1 du
+backlog) :
+
+1. **Le callee suit son récepteur TYPÉ** (`vueModele.effets.collect
+   { }`) : le callee d'un appel sélecteur dont le récepteur porte un
+   TYPE sans preuve (générique, classe illisible) est MUET (D3) —
+   collect ÉTEINT chez Léa et Nina ; un récepteur SANS type garde la
+   voie normale (`java.io.Fichier(…)` reste rouge, miroir kotlinc) ;
+2. **Le modificateur `data` est ENFIN lu** — `estData`/`estEnum`
+   sondaient les jetons DIRECTS du nœud classe alors que les
+   modificateurs vivent dans le MODIFIER_LIST enfant : la branche
+   copy/componentN de la vague 1 était du CODE MORT. Corrigée, les
+   data classes émettent leurs membres synthétisés — les FP copy de
+   Léa (Article, ListeCoursesUi) et de Nina (Budget ×3) ÉTEINTS, la
+   complétion `p.` propose `copy` ;
+3. **Preuve d'absence PROJET** : un type du projet SANS héritage
+   écrit (class/object/interface Kotlin, class/interface Java — la
+   contrainte d'un paramètre générique `T extends Comparable<T>`
+   n'est PAS un supertype) porte exactement ses membres DÉCLARÉS +
+   les implicites de Any/Object — un membre inexistant y est
+   SIGNALÉ (vrai positif rattrapé : `CalculatriceBudget
+   .consulterInconnu` de Nina). Héritage écrit, enum (Comparable
+   implicite), annotation (Annotation implicite), extension
+   homonyme ou scan non abouti : silence D3.
+
 ## 3. Ce que CODEIDE doit faire
 
 1. **Toujours envoyer la notification `initialized`** après la réponse
@@ -56,19 +82,19 @@ garde erasure (Object jamais preuve d'absence).
    d'indexation (phases SyncHandler) et ne jamais rester muet sur une
    sync PARTIELLE.
 
-## 4. Backlog partagé (priorisé, après vague 2)
+## 4. Backlog partagé (priorisé, après vague 3)
 
-1. Récepteurs **génériques** (collect/showSnackbar/copy après
-   remember/List<T>/Flow<T>) — reproduction prête
-   (`ReproductionObjetsClasspathTest`, ignorée) ;
-2. Membres **hérités du classpath** sur chaînes profondes
-   (submitList/getString/setOnClickListener/addItemDecoration) et
-   ViewHolder dans les clauses supertype ;
-3. Noms **QUALIFIÉS complets sans import** (`androidx.recycler...` en
-   expression) ;
-4. Jar illisible → **PARTIEL + avertissement** (au lieu du blocage) ;
-5. Extensions de **scope** Compose (weight/align), args de
+1. Membres **hérités du classpath** (submitList/getString/
+   FilterResults.values) et récepteur IMPLICITE `this` dans les
+   sous-classes (la vague 3 ne taît que la forme QUALIFIÉE) ;
+2. Erasure après `remember { }` (showSnackbar : le type EFFACÉ Object
+   masque SnackbarHostState) et imbriqués en POSITION DE TYPE
+   (ViewModelProvider.Factory) ;
+3. Extensions de **scope** Compose (weight/align), args de
    super(...), field/setter, propriétés Java dans apply ;
+4. Noms **QUALIFIÉS complets sans import** (`androidx.recycler...` en
+   expression) ;
+5. Jar illisible → **PARTIEL + avertissement** (au lieu du blocage) ;
 6. Validation d'**attributs XML** des layouts (complétion existe,
    diagnostic non) ;
 7. ADR 0221 lettre violée : NUS dans les lambdas `tasks.register` ;
