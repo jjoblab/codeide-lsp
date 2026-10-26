@@ -47,7 +47,7 @@ mission (le versionnement du dépôt est piloté par release).
 | 3 | Membres de classes Java du projet non modélisés | **PARTIELLE** (voir détail) | `ReproductionJavaImbriqueTest` |
 | 4 | Garde ADR 0211 incomplète (segment partiel/périmé, jar ajouté) | **INFIRMÉE** (scénarios testés) | `ReproductionSegmentsPersistantsTest` |
 | 5 | Écarts du lecteur de classes (membres default, `$`, `entries`…) | **Lecture brute : INFIRMÉE. Moteur : 2 confirmées** (voir §3) | `LecteurClassBrutDifferentielTest`, `AnalyseurClassFileDifferentielTest`, `ReproductionMembresClasspathTest`, `ReproductionAppelablesBuiltinTest` |
-| 6 | `typealias` de bibliothèques Kotlin | **NON CONCLUANT** (voir §4) | statistiques imprimées du différentiel |
+| 6 | `typealias` de bibliothèques Kotlin | **CONFIRMÉE au rejeu §4, ÉTEINTE (ADR 0226)** | `SondeTypealiasKotlinxTest`, `ReproductionTypealiasClasspathTest` |
 | 7 | Un marqueur d'erreur du parseur coupe tout le sémantique | **CONFIRMÉE par lecture** — comportement VOULU (D3), pas un faux positif | `DiagnosticsSemantiques.kt:101` (KDoc) |
 | 8 | `diagnostics(uri)` recalcule tout, sans cache, sync complète | **CONFIRMÉE + CHIFFRÉE** | `MesuresPerfDiagnosticsTest` |
 
@@ -126,9 +126,19 @@ récepteur) : les statistiques sont imprimées par le test pour la traçabilité
 
 ## 4. Non concluants et angles morts assumés
 
-- **`typealias` de bibliothèques** : aucun typealias public JVM du stdlib n'est isolable par la
-  sonde (l'écart de noms métadonnées les mélange aux propriétés). À rejouer en étape B sur un
-  corpus kotlinx (p. ex. `kotlinx.serialization`).
+- **`typealias` de bibliothèques — REJOUÉ en étape B, verdict CONCLUANT** (ADR 0226) : le
+  corpus CITÉ par ce rapport (`kotlinx.serialization`) porte **ZÉRO typealias public**
+  (1.9.0, sonde `SondeTypealiasKotlinxTest` — l'hypothèse n'y est pas éprouvable) ; le
+  corpus du rejeu est **kotlinx-datetime 0.6.1** qui en porte TROIS (`DayOfWeek`, `Month`,
+  `ZoneOffset`). **FP CONFIRMÉ sur deux formes d'usage** : le type QUALIFIÉ complet
+  (`kotlinx.datetime.Month` — dernier segment faillible de la garde E4, le FQCN d'un
+  alias ne vit JAMAIS dans la vue) et le type NU derrière un import JOKER
+  (`import kotlinx.datetime.*` + `ZoneOffset`, alias pur SANS fonction usine
+  expect/actual — `Month`/`DayOfWeek` n'étaient sauvés QUE par leurs usines
+  `fun Month(int)` : un hasard du mécanisme expect class, pas une résolution d'alias).
+  **Correctif livré** : décodeur → genre `ALIAS` dans une carte DÉDIÉE de l'index
+  (segments v2), voie 6 avec le prédicat ADR 0203, gardes E4/E4-ter sur le FQCN
+  complet. Verrouillé par `ReproductionTypealiasClasspathTest` (5 tests, corpus réel).
 - **Interfaces `default` des jars** : le différentiel des MEMBRES les couvre implicitement
   (noms déclarés identiques à la réflexion, méthodes `default` comprises — elles sont des
   méthodes déclarées ordinaires du class file).
