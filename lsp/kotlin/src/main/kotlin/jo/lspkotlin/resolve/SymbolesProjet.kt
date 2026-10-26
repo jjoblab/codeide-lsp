@@ -10,6 +10,7 @@ import jo.lspkotlin.parse.kt.KtObjectDeclaration
 import jo.lspkotlin.parse.kt.KtParameter
 import jo.lspkotlin.parse.kt.KtProperty
 import jo.lspkotlin.parse.kt.chaineAncetresA
+import org.jetbrains.kotlin.kmp.lexer.KtTokens
 import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
 
 /**
@@ -559,13 +560,46 @@ public object SymbolesProjet {
                     // de lambda était un faux `kt.unresolved` (le code
                     // Compose en est saturé : trailing lambdas partout) —
                     // miroir kotlinc : le paramètre lie TOUTE la fonction.
+                    // Vague 5 (retour utilisateurs 25/10/2026 — U3
+                    // « sortedByDescending { (_, total) -> total } ») :
+                    // un paramètre DESTRUCTURÉ (parenthèse directe — le
+                    // type écrit vit dans un NŒUD enfant TYPE_REFERENCE,
+                    // jamais en jeton direct) prête CHAQUE composant
+                    // nommé (`_` exclu) comme locale, miroir kotlinc :
+                    // `{ (a, b) -> a + b }` lie les deux noms.
                     val liste =
                         noeud.sousNoeuds.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
                     liste?.sousNoeuds
                         ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
                         ?.forEach { parametre ->
-                            parametreDeclarationLocal(jo.lspkotlin.parse.kt.KtParameter(parametre))
-                                ?.let { resultat.add(LocaleEnPortee(it, null)) }
+                            if (parametre.jetonsDirects.any { it.type == KtTokens.LPAR }) {
+                                parametre.jetonsDirects
+                                    .filter { jeton ->
+                                        jeton.type == KtTokens.IDENTIFIER &&
+                                            jeton.texte.toString() != "_"
+                                    }
+                                    .forEach { identifiant ->
+                                        resultat +=
+                                            LocaleEnPortee(
+                                                DeclarationProjet(
+                                                    genre = GenreDeclaration.LOCALE,
+                                                    nom = identifiant.texte.toString(),
+                                                    uri = "",
+                                                    debutNom = identifiant.debut,
+                                                    finNom = identifiant.fin,
+                                                    paquet = null,
+                                                    recepteur = null,
+                                                    typeRetour = null,
+                                                    parametres = emptyList(),
+                                                    conteneur = null,
+                                                ),
+                                                null,
+                                            )
+                                    }
+                            } else {
+                                parametreDeclarationLocal(jo.lspkotlin.parse.kt.KtParameter(parametre))
+                                    ?.let { resultat.add(LocaleEnPortee(it, null)) }
+                            }
                         }
                     for (enfant in noeud.sousNoeuds) {
                         if (enfant.type != KtNodeTypes.PROPERTY) continue

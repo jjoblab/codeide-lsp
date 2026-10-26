@@ -231,21 +231,15 @@ class ExperienceU1ComposeE2ETest {
         // ── Asserts souples : tout le constat en UNE failure (assertAll)
         //    — n'échoue QUE si (1) faux positifs sur fichiers corrects,
         //    (2) une erreur volontaire non signalée (faux négatif) ──
-        // Limitations CONNUES du moteur (26/10/2026, vague 4 — showSnackbar
-        // ÉTEINT : la voie générique type `remember { … }` par la
-        // dernière expression de son lambda (locale ET récepteur-appel),
-        // le décodeur rend le retour paramètre de type « T » ; Factory
-        // ÉTEINT : imbriqués qualifiés en position de type ; currency
-        // ÉTEINT : propriétés synthétiques Java du récepteur apply) :
-        // RESTENT les extensions de SCOPE Compose (weight dans Row,
-        // align dans Box — le récepteur implicite du lambda de scope).
-        // TOUT NOUVEAU faux positif hors de cette liste fait ÉCHOUER
-        // le test.
-        val limitationsConnues =
-            setOf(
-                "« weight »",
-                "« align »",
-            )
+        // Contrat VAGUE 5 (26/10/2026) : les extensions de SCOPE Compose
+        // sont ÉTEINTES — le récepteur implicite du lambda de scope
+        // (`Row { Modifier.weight(1f) }`, `Box { Modifier.align(…) }`)
+        // est prété par RecepteursPortee : candidates PROJET (type
+        // écrit `A.() -> B`) et CLASSPATH (Function1<RowScope, Unit>
+        // rendu par l'index, unicité du nom simple dans la vue). La
+        // liste de limitations est VIDE : le monde Compose de Léa est
+        // PROPRE — TOUT NOUVEAU faux positif fait ÉCHOUER le test.
+        val limitationsConnues = setOf<String>()
         val fauxPositifs =
             diagnosticsParFichier
                 .filterKeys { it.name !in fichiersAvecErreurs }

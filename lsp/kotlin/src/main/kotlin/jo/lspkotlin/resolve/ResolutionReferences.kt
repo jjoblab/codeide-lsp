@@ -93,6 +93,21 @@ internal object ResolutionReferences {
             if (resolution.accesseurSynthetique(fqcn, nom) != null) return true
             if (declarationsProjet.any { it.conteneur == fqcn && it.nom == nom }) return true
         }
+        // 2-quater. Vague 5 (retour utilisateurs 25/10/2026 — U1
+        // « weight »/« align ») : membre du RÉCEPTEUR DE PORTÉE d'un
+        // lambda de SCOPE englobant — `Row { Modifier.weight(1f) }`
+        // prête RowScope comme this implicite à TOUT le corps du
+        // littéral (miroir kotlinc : les récepteurs s'empilent, le
+        // plus profond d'abord).
+        for (fqcnPortee in RecepteursPortee.recepteursDePortee(
+                racine, decalage, contexteNom, resolution, declarationsProjet, index,
+            )
+        ) {
+            if (resolution.champsNommes(fqcnPortee, nom).isNotEmpty()) return true
+            if (resolution.methodesNommees(fqcnPortee, nom).isNotEmpty()) return true
+            if (resolution.accesseurSynthetique(fqcnPortee, nom) != null) return true
+            if (declarationsProjet.any { it.conteneur == fqcnPortee && it.nom == nom }) return true
+        }
         // 3. Déclarations de premier niveau du FICHIER.
         if (KtFile(racine).declarations().any { it.nom() == nom }) return true
         // 4. Déclarations du PROJET (tous genres — objets, alias, entrées).

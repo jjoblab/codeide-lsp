@@ -14,6 +14,7 @@ import jo.lspkotlin.parse.kt.nomAppele
 import jo.lspkotlin.parse.kt.nomReference
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
+import jo.lspkotlin.resolve.RecepteursPortee
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SymbolesProjet
 import jo.lspkotlin.resolve.TypageExpression
@@ -668,6 +669,28 @@ internal object DiagnosticsSemantiques {
         //     récepteur reste TYPÉ (un callee y est muet — l'erasure
         //     n'est pas une preuve d'absence).
         if (typeRecepteur == "java.lang.Object") return SelectionTypes.RECEPTEUR_TYPE
+        // 3 quater. RÉCEPTEUR DE PORTÉE (vague 5, retour utilisateurs
+        //     25/10/2026 — U1 « weight »/« align ») : le sélecteur peut
+        //     être un MEMBRE-EXTENSION du this implicite d'un lambda de
+        //     SCOPE englobant — `Modifier.weight(1f)` dans `Row { … }`
+        //     (weight vit DANS RowScope, le récepteur d'extension est
+        //     le PREMIER paramètre JVM, miroir kotlinc : les
+        //     récepteurs de portée s'empilent, le plus profond
+        //     d'abord). Un membre introuvable N'y prouve rien : la
+        //     preuve d'absence reste celle de l'étape 4.
+        for (fqcnPortee in RecepteursPortee.recepteursDePortee(
+                racine, reference.debut, contexte.contexteNom, contexte.resolution,
+                contexte.declarationsProjet, index,
+            )
+        ) {
+            if (contexte.resolution.champsNommes(fqcnPortee, nom).isNotEmpty()) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.resolution.methodesNommees(fqcnPortee, nom).isNotEmpty()) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.resolution.getterSynthetique(fqcnPortee, nom) != null) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.resolution.setterSynthetique(fqcnPortee, nom) != null) return SelectionTypes.MEMBRE_TROUVE
+            if (contexte.declarationsProjet.any { it.conteneur == fqcnPortee && it.nom == nom }) {
+                return SelectionTypes.MEMBRE_TROUVE
+            }
+        }
         // 4. ABSENCE — conditions cumulatives (D3) : classe LISIBLE
         //    dans la vue + index PORTANT des entrées (une session nue ne
         //    connaît AUCUNE extension : l'absence n'y est pas prouvable)

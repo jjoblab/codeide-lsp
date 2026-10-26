@@ -289,20 +289,15 @@ class ExperienceU3KmpE2ETest {
                 .flatMap { (fichier, diags) ->
                     diags
                         .filter { estNonResolue(it) }
-                        // Limitations CONNUES (26/10/2026, vague 4 —
-                        // textSize et setPadding ÉTEINTS : membres
-                        // hérités du classpath et propriétés
-                        // synthétiques Java atteints par la PILE des
-                        // this et l'unicité du nom simple dans la vue)
-                        // : destructuring de lambda (_, total),
-                        // Map.entries. TOUT NOUVEAU faux positif fait
-                        // échouer le test.
-                        .filter { diag ->
-                            setOf(
-                                "« total »",
-                                "« entries »",
-                            ).none { diag.message.contains(it) }
-                        }.map { "${fichier.name} : ${it.message.take(90)} @${it.range.start.line + 1}" }
+                        // Contrat VAGUE 5 (26/10/2026) : le
+                        // DESTRUCTURING de lambda (`(_, total) -> total`)
+                        // et les PROPRIÉTÉS BUILTINS de Map
+                        // (`totaux.entries` → entrySet()) sont ÉTEINTS.
+                        // La liste de limitations est VIDE : le monde
+                        // KMP de Nina est PROPRE — TOUT NOUVEAU faux
+                        // positif fait ÉCHOUER le test.
+                        .filter { diag -> setOf<String>().none { diag.message.contains(it) } }
+                        .map { "${fichier.name} : ${it.message.take(90)} @${it.range.start.line + 1}" }
                 }
         val diagsCalculatrice = diagnosticsParFichier.getValue(fichiers.first { it.name == "CalculatriceBudget.kt" })
         val diagsViewModel = diagnosticsParFichier.getValue(fichiers.first { it.name == "BudgetViewModel.kt" })

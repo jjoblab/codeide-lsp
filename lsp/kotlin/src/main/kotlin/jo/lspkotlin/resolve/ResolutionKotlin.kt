@@ -340,6 +340,30 @@ internal class ResolutionKotlin(
                 if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
             }
         }
+        // Vague 5 (retour utilisateurs 25/10/2026 — U3 « totaux.entries »)
+        // : PROPRIÉTÉ BUILTIN des collections Map — kotlin.collections.Map
+        // n'a AUCUN .class (déclaration expect dans collections.
+        // kotlin_builtins, l'actual JVM est java.util.Map), ses
+        // propriétés mappent vers des MÉTHODES Java renommées
+        // (miroir kotlinc, même famille que les alias ADR 0218) :
+        // `entries` → entrySet(), `keys` → keySet(). Garde ALIAS-AWARE :
+        // la chaîne de supertypes SAUTE le nom aliasé (les octets de
+        // kotlin.collections.Map vivent sous java.util.Map, le maillon
+        // suivant est java.lang.Object) — c'est l'ALIAS du maillon qui
+        // désigne la Map, pas son nom brut.
+        PROPRIETES_BUILTINS_MAP[nom]?.let { jvmNom ->
+            if (chaineSupertypes(fqcn).none { it == "java.util.Map" || aliasJvmDe(it) == "java.util.Map" }) {
+                return@let
+            }
+            for (courant in chaineSupertypes(fqcn)) {
+                val membres = membresDe(courant) ?: continue
+                val methode =
+                    membres.methodes.firstOrNull { m ->
+                        nomCorrespond(m.nom, jvmNom) && estAccesseurValide(m, unParametre = false)
+                    }
+                if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
+            }
+        }
         return null
     }
 
@@ -799,6 +823,21 @@ internal class ResolutionKotlin(
                 "kotlin.collections.Map" to "java.util.Map",
                 "kotlin.collections.Iterator" to "java.util.Iterator",
                 "kotlin.collections.ListIterator" to "java.util.ListIterator",
+                // Vague 5 — les MUTABLES n'ont pas plus de .class que
+                // leurs cousines lisibles (fiction JVM : la mutabilité
+                // est effacée au bytecode) : sans ces maillons, le
+                // RÉCEPTEUR DE PORTÉE de `buildList { add(…) }`
+                // (builderAction: MutableList<E>.() -> Unit, rendu
+                // Function1<MutableList<E>, Unit> par l'index)
+                // restait ILLISIBLE — l'absence d'`add` redevenait
+                // prouvable à tort.
+                "kotlin.collections.MutableIterable" to "java.lang.Iterable",
+                "kotlin.collections.MutableCollection" to "java.util.Collection",
+                "kotlin.collections.MutableList" to "java.util.List",
+                "kotlin.collections.MutableSet" to "java.util.Set",
+                "kotlin.collections.MutableMap" to "java.util.Map",
+                "kotlin.collections.MutableIterator" to "java.util.Iterator",
+                "kotlin.collections.MutableListIterator" to "java.util.ListIterator",
                 "kotlin.CharSequence" to "java.lang.CharSequence",
                 "kotlin.Number" to "java.lang.Number",
                 "kotlin.Enum" to "java.lang.Enum",
@@ -806,6 +845,20 @@ internal class ResolutionKotlin(
                 "kotlin.Comparable" to "java.lang.Comparable",
                 "kotlin.Comparator" to "java.util.Comparator",
                 "kotlin.collections.Map.Entry" to "java.util.Map.Entry",
+            )
+
+        /**
+         * Propriétés BUILTINS de l'interface Map réécrites côté Java
+         * (vague 5 — le récepteur de portée n'est pas le seul absent
+         * des .class : kotlin.collections.Map est une fiction JVM).
+         * Miroir kotlinc : `map.entries` → `entrySet()`,
+         * `map.keys` → `keySet()` (`values` suit déjà la méthode
+         * homonyme, `size`/`isEmpty` aussi).
+         */
+        private val PROPRIETES_BUILTINS_MAP: Map<String, String> =
+            mapOf(
+                "entries" to "entrySet",
+                "keys" to "keySet",
             )
 
         /** Rendus courts fixes (primitives, java.lang usuels). */
