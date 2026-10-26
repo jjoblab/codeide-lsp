@@ -1,5 +1,73 @@
 # Changelog — codeide-lsp
 
+## 1.13.0 (2026-10-26)
+
+- **Programme utilisateurs du 25/10/2026 — trois vagues de correctifs**
+  (`docs/RETOURS-UTILISATEURS-2026-10-25.md`) : quatre utilisateurs
+  simulés (projets Android réels CONSTRUITS et BUILDÉS — Compose
+  Material3, Views/XML+Java mixte, KMP expect/actual, scripts Gradle
+  kts) ont éprouvé la chaîne LSP de production sur corpus
+  normalisation v2 ; les 115 faux positifs consolidés en ~15 familles
+  ont été attaqués par priorité de quotidien.
+  - **Vague 1 — six familles** : arité des constructeurs à VALEURS PAR
+    DÉFAUT (le FP n° 1 : « 4 fourni(s), 6 attendu(s) » sur un
+    constructeur à défauts) ; membres SYNTHÉTISÉS des data classes
+    (`copy`/`componentN`) ; GETTERS Compose (signature
+    `(Composer,int)` — `MaterialTheme.typography`,
+    `Arrangement.spacedBy` résolvent) ; MANGING des inline classes
+    (`spacedBy-0680j_4` → `spacedBy(Dp)`) ; types IMBRIQUES du
+    classpath (`fqcn$Nom` : `Icons.Filled`, `Paint.Cap` — sélection
+    et typage) ; imports `kotlin.*` IMPLICITES (`@OptIn`,
+    `@Suppress`) + imports de DÉLÉGATION `by` (`getValue`/`setValue`
+    non marqués inutilisés) + garde erasure (un `Object` EFFACÉ n'est
+    jamais preuve d'absence — le récepteur `remember { }` reste muet
+    D3).
+  - **Vague 2 — membres des sources JAVA du projet** (le monde mixte,
+    47 FP chez l'utilisateur Views) : `SourcesJava` extrait champs +
+    méthodes de niveau 1 avec conteneur = FQCN, signature ANCRÉE en
+    tête de segment (un appel d'initialisateur n'est jamais lu comme
+    membre), propriétés SYNTHÉTIQUES des getters (`getTitre()` →
+    `titre`, miroir ADR 0219) — diagnostic, complétion (`vinyle.` :
+    0 → 21 items) et typage en chaîne (`v.getTitre().length`)
+    fonctionnent ; **R sans import** (même paquet) :
+    `fqcnDuNomEcrit` sonde la vue du classpath pour un nom du paquet
+    du document — miroir kotlinc, le `R` du build v2 résout.
+  - **Vague 3 — trois familles** (tête du backlog) : le CALLEE suit
+    son récepteur TYPÉ (`vueModele.effets.collect { }` — un callee
+    d'appel qualifié dont le récepteur porte un type sans preuve
+    (générique, classe illisible) est MUET D3, `collect` et ses
+    semblables éteints) ; le modificateur `data` est ENFIN LU —
+    `estData`/`estEnum` sondaient les jetons DIRECTS du nœud classe
+    alors que les modificateurs vivent dans le MODIFIER_LIST ENFANT :
+    la branche copy/componentN de la vague 1 était du CODE MORT,
+    corrigée les data classes émettent leurs membres synthétisés
+    (complétion `p.` propose `copy`) ; PREUVE D'ABSENCE PROJET — un
+    type du projet SANS héritage écrit (la contrainte d'un paramètre
+    générique `T extends Comparable<T>` n'est PAS un supertype)
+    porte exactement ses membres DÉCLARÉS + les implicites de
+    Any/Object : `CalculatriceBudget.consulterInconnu` est SIGNALÉ
+    (vrai positif rattrapé), héritage écrit/enum/annotation/extension
+    homonyme ou scan non abouti → silence D3.
+  - **Correctif CI — course WARM** : le test d'inline disque écrivait
+    un fichier APRÈS `definirClasspath` — le scan WARM amorcé par la
+    sync pouvait aboutir (dossier vide) AVANT l'écriture et figer un
+    snapshot sans le fichier (runner 2 cœurs = fenêtre ouverte).
+    `sessionProjet(fichiersDisque)` écrit les fichiers DISQUE AVANT
+    la sync — la course est fermée par construction (ADR 0212).
+  - **ADR 0224** (addendum ADR 0113) : le classpath applicatif est
+    acquis comme celui d'Android Studio PAR CONSTRUCTION (mêmes
+    modèles AGP v2 — `BasicAndroidProject`, `AndroidProject`,
+    `VariantDependencies` — dans la même action Tooling API du démon
+    Gradle) ; les heuristiques restent localisées aux scripts
+    `.gradle.kts` et aux règles de diagnostic, PAS dans le classpath.
+  - **Comptes** : Léa (Compose) 45 → 6 FP restants ; Marc (Views)
+    Java IMPECCABLE (0 FP), 29 restants (membres hérités classpath) ;
+    Nina (KMP) cross-module et expect/actual PARFAITS, 4 restants ;
+    les contrats E2E des quatre mondes durcis (limitations connues
+    listées en dur — tout nouveau faux positif casse la CI) ;
+    353 tests moteur + 246 hôte verts, baseline de parité 281
+    fichiers.
+
 ## 1.12.0 (2026-10-25)
 
 - **Chantier « suites recommandées du rapport d'audit §8 » — ADR

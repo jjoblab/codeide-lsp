@@ -4,6 +4,77 @@
 > décrit ce qu'une version de codeide-lsp apporte et ce que CodeIDE doit
 > faire pour en profiter. Les versions sont publiées par
 > `scripts/bump-frere.sh lsp minor` DEPUIS CodeIDE (jamais depuis ce dépôt).
+>
+> **Trou 1.4.0 → 1.12.0** : ces versions ont été publiées sans note de
+> passage ici (l'agent lsp consolidait dans le CHANGELOG du dépôt) —
+> consulter `CHANGELOG.md` de codeide-lsp pour le détail, en particulier
+> 1.8.0 (demandes D1–D5 de `DEMANDES_CODEIDE_LSP.md`), 1.11.0 (monde
+> Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
+> complets ADR 0223).
+
+## 1.13.0
+
+### 1. État
+
+- `main` de codeide-lsp : release `v1.13.0` (tag de publication — le
+  SHA courant est celui du commit `release: v1.13.0`), CI **verte**
+  sur `main` (chaque lot poussé validé par un run CI vert).
+- **Correctifs du programme utilisateurs du 25/10/2026** : trois vagues
+  qui éteignent les familles de faux positifs n° 1 du quotidien —
+  détails dans `CHANGELOG.md` § 1.13.0 et
+  `docs/RETOURS-UTILISATEURS-2026-10-25.md`.
+
+### 2. Changements de comportement visibles
+
+- **Kotlin** : les constructeurs à VALEURS PAR DÉFAUT ne sont plus
+  signalés à arité courte ; les data classes résolvent `copy`/
+  `componentN` (et les PROPOSENT en complétion) ; `collect` après un
+  récepteur typé (`vueModele.effets.collect { }`) ne produit plus de
+  faux `kt.unresolved` ; les getters Compose (`MaterialTheme
+  .typography`, `Arrangement.spacedBy`), les inline classes manglées
+  et les types imbriqués (`Icons.Filled`, `Paint.Cap`) résolvent ;
+  `@OptIn`/`@Suppress` et les imports `by` (`getValue`/`setValue`)
+  ne sont plus marqués inutilisés.
+- **Projets mixtes Java/Kotlin** : les membres des sources JAVA du
+  projet résolvent depuis le Kotlin (`getTitre()` → complétion,
+  typage en chaîne, propriété synthétique `titre`) ; `R` sans
+  import (même paquet) résout.
+- **Vrais positifs rattrapés** : un membre inexistant sur un type du
+  projet SANS héritage écrit est SIGNALÉ (preuve d'absence projet) —
+  comportement plus proche d'Android Studio sur les deux tableaux.
+
+### 3. API/contrat modifiés
+
+- **AUCUN** : les trois vagues sont internes au moteur (diagnostic,
+  complétion, typage). Aucune signature publique, aucune entrée
+  d'énumération, aucun SPI ne bougent — la montée de version est un
+  remplacement de coordonnées pur.
+
+### 4. Ce que CodeIDE doit faire
+
+1. **Monter codeide-lsp dans le catalogue** : `scripts/bump-frere.sh
+   lsp minor` (fait à la publication de cette note — la ligne
+   `codeide-lsp` du catalogue suit).
+2. **Rejouer les scénarios d'appareil des quatre mondes** (§5) — les
+   fichiers qui bavaient du faux positif ne doivent plus rien
+   signaler, les erreurs volontaires restent attrapées.
+3. **Surveiller le backlog partagé** (RETOURS §4) : membres hérités du
+   classpath (`submitList`/`getString`) en TÊTE, erasure après
+   `remember { }`, extensions de scope Compose — les prochaines
+   vagues côté lsp.
+
+### 5. Scénarios d'appareil
+
+1. **Compose** : ouvrir un écran avec data class (`data class
+   Article(...)`) — `article.copy(...)` passe sans diagnostic, la
+   complétion après `article.` propose `copy` ; un `collect { }` sur
+   un `StateFlow` du ViewModel reste muet.
+2. **Mixte Java/Kotlin** : depuis un `.kt`, utiliser un champ/méthode
+   d'une classe `.java` du projet — complétion et survol vivants.
+3. **Constructeur à défauts** : appeler un constructeur Compose sans
+   ses paramètres optionnels — aucun « 4 fourni(s), 6 attendu(s) ».
+4. **Vrai positif** : taper `article.prixInconnu` — SIGNALÉ (le type
+   est du projet, sans héritage écrit).
 
 ## 1.3.0
 
