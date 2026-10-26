@@ -63,7 +63,16 @@ internal object RecepteursWith {
      * Récepteur d'UN littéral : l'appel CONSOMMATEUR le plus proche
      * au-dessus, sans AUTRE littéral entre les deux — son callee doit
      * être `with` (stdlib), son premier argument porte le récepteur.
+     *
+     * Vague 4 (retour utilisateurs 25/10/2026 — U2 `paint.style = …`
+     * dans `Paint(…).apply { … }`) : les extensions `apply` et `run`
+     * portent AUSSI un récepteur implicite — le RÉCEPTEUR de l'appel
+     * (l'expression à GAUCHE du point, `Paint(…)`). Sans cette voie,
+     * TOUT nom nu du corps d'un `apply` (les propriétés synthétiques
+     * Java en tête — `style =`, `color =` sur Paint) était un faux
+     * `kt.unresolved`.
      */
+    @Suppress("ReturnCount")
     private fun recepteurDuLitteral(
         chaine: List<NoeudSyntaxique>,
         indiceLitteral: Int,
@@ -77,9 +86,34 @@ internal object RecepteursWith {
         // littéral est ailleurs — remonte au littéral suivant.
         val span = ancetres.subList(ancetres.indexOf(appel) + 1, ancetres.size)
         if (span.any { it.type == KtNodeTypes.FUNCTION_LITERAL }) return null
-        if (nomAppele(appel) != "with") return null
-        val argument = premierArgument(appel) ?: return null
-        return TypageExpression.typeExpression(argument, chaine[0], contexteNom, resolution, declarationsProjet)
+        when (nomAppele(appel)) {
+            "with" -> {
+                val argument = premierArgument(appel) ?: return null
+                return TypageExpression.typeExpression(argument, chaine[0], contexteNom, resolution, declarationsProjet)
+            }
+            // Extensions à récepteur implicite : le RÉCEPTEUR ÉCRIT de
+            // l'appel (`unObjet.apply { }` — le CALL est le sélecteur du
+            // DOT, son récepteur est le premier enfant du DOT parent).
+            "apply", "run" -> {
+                val indiceAppel = ancetres.indexOf(appel)
+                if (indiceAppel <= 0) return null
+                val parent = ancetres[indiceAppel - 1]
+                if (parent.type != KtNodeTypes.DOT_QUALIFIED_EXPRESSION &&
+                    parent.type != KtNodeTypes.SAFE_ACCESS_EXPRESSION
+                ) {
+                    return null
+                }
+                val recepteur = parent.sousNoeuds.firstOrNull() ?: return null
+                return TypageExpression.typeExpression(
+                    recepteur,
+                    chaine[0],
+                    contexteNom,
+                    resolution,
+                    declarationsProjet,
+                )
+            }
+            else -> return null
+        }
     }
 
     /** Expression du PREMIER argument ordinaire de l'appel. */

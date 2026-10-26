@@ -89,37 +89,51 @@ public fun chaineAncetresA(
     val chaine = mutableListOf<NoeudSyntaxique>()
     var courant: NoeudSyntaxique = racine
     chaine.add(courant)
-    var descente = true
-    while (descente) {
-        descente = false
-        // ADR 0218 : un enfant de LARGEUR NULLE (la PACKAGE_DIRECTIVE vide
-        // et l'IMPORT_LIST vide sont TOUJOURS présents — découverte de
-        // parité K2) ne doit JAMAIS capturer la descente quand un enfant
-        // RÉEL contient le même décalage : à l'offset 0 d'un fichier SANS
-        // paquet (`fun …` en première ligne), la directive vide [0,0]
-        // gagnait et la chaîne mourait SANS jamais voir la déclaration —
-        // survol/références/renommage muets au tout début du fichier.
-        // Priorité : le premier enfant NON VIDE contenant le décalage ;
-        // un enfant vide ne sert que s'il est le SEUL contenant.
-        var videChoisi: NoeudSyntaxique? = null
-        for (enfant in courant.enfants) {
-            if (enfant is NoeudSyntaxique && enfant.debut <= decalage && decalage <= enfant.fin) {
-                if (enfant.fin > enfant.debut) {
-                    chaine.add(enfant)
-                    courant = enfant
-                    descente = true
-                    break
-                }
-                if (videChoisi == null) videChoisi = enfant
-            }
-        }
-        if (!descente && videChoisi != null) {
-            chaine.add(videChoisi)
-            courant = videChoisi
-            descente = true
-        }
+    while (true) {
+        courant = enfantPortant(courant, decalage) ?: return chaine
+        chaine.add(courant)
     }
-    return chaine
+}
+
+/**
+ * L'enfant de [courant] qui porte [decalage] — la règle de priorité
+ * VAGUE 4 (bug de frontière du sélecteur `?.` : le jeton [89..91]
+ * captait le décalage 91, DÉBUT du sélecteur suivant — la référence
+ * n'entrait jamais dans la chaîne, faux positif sur chaque sélecteur
+ * d'accès sûr ; le jeton `.` d'UN caractère ne déclenchait pas le bug,
+ * `?.` de DEUX si) :
+ *
+ *  1. STRICT : l'enfant qui contient le décalage dans [debut, fin) ;
+ *  2. FERMÉ : celui qui ne le touche que par sa frontière droite
+ *     (curseur collé à la fin d'un mot — comportement historique : le
+ *     mot précédent garde le curseur tangent) ;
+ *  3. VIDE : l'enfant de largeur nulle (ADR 0218 — directive de
+ *     paquet/import vide), SEUL recours.
+ *
+ * `null` si aucun enfant ne porte le décalage (feuille atteinte).
+ *
+ * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements —
+ * les continue du non-portant et de l'enfant VIDE, et le return du
+ * gagnant STRICT, sont la PRIORITÉ elle-même (strict > fermé > vide).
+ */
+@Suppress("LoopWithTooManyJumpStatements")
+private fun enfantPortant(
+    courant: NoeudSyntaxique,
+    decalage: Int,
+): NoeudSyntaxique? {
+    var fermeChoisi: NoeudSyntaxique? = null
+    var videChoisi: NoeudSyntaxique? = null
+    for (enfant in courant.enfants) {
+        if (enfant !is NoeudSyntaxique) continue
+        if (enfant.debut > decalage || decalage > enfant.fin) continue
+        if (enfant.fin <= enfant.debut) {
+            if (videChoisi == null) videChoisi = enfant
+            continue
+        }
+        if (decalage < enfant.fin) return enfant
+        if (fermeChoisi == null) fermeChoisi = enfant
+    }
+    return fermeChoisi ?: videChoisi
 }
 
 /**

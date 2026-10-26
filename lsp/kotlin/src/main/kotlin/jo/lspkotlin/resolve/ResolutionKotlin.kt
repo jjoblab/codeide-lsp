@@ -221,6 +221,29 @@ internal class ResolutionKotlin(
         vue?.membres(fqcn) ?: vue?.membres(aliasJvmDe(fqcn))
 
     /**
+     * FQCN UNIQUE dans la vue portant ce nom SIMPLE (vague 4, retour
+     * utilisateurs 25/10/2026 — U2 `getString` via chaîne de binding :
+     * le champ ViewBinding `texteAnnee` porte le type écrit
+     * `TextView`, que le FICHIER COURANT n'importe pas — le contexte
+     * du fichier DÉCLARANT n'est pas dans le modèle du scan). Le
+     * nom simple UNIQUE dans la vue du classpath est la meilleure
+     * preuve disponible : AMBIGU (deux porteurs) = `null`, jamais
+     * le premier venu (miroir de l'unicité projet de
+     * [fqcnDuNomEcrit] ; bornée par la limite de la vue).
+     */
+    internal fun fqcnUniqueParNomSimple(nom: String): String? {
+        if (nom.isEmpty() || '.' in nom) return null
+        val porteurs =
+            vue
+                ?.nomsParPrefixe(nom, SONDE_NOMS_MAXI)
+                .orEmpty()
+                .filter { it.nomSimple == nom }
+                .flatMap { it.fqcns }
+                .distinct()
+        return if (porteurs.size == 1) porteurs.single() else null
+    }
+
+    /**
      * Membres d'un membre par NOM dans la chaîne de supertypes —
      * surcharges par nom seule (LSP_KOTLIN §4.3 : pas de sélection par
      * types complets en K3) ; le PREMIER porteur de la chaîne gagne.
@@ -541,6 +564,9 @@ internal class ResolutionKotlin(
          * liste aplatie, miroir de la résolution Java).
          */
         private const val BORN_PROFONDEUR: Int = 12
+
+        /** Budget de sondage du nom simple dans la vue (unicité — vague 4). */
+        private const val SONDE_NOMS_MAXI: Int = 8
 
         /**
          * Budget TOTAL de maillons par chaîne (ADR 0219) — défense des

@@ -10,6 +10,7 @@ import kotlin.metadata.KmFunction
 import kotlin.metadata.KmPackage
 import kotlin.metadata.KmProperty
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.Visibility
 import kotlin.metadata.jvm.KotlinClassMetadata
 import java.io.ByteArrayInputStream
@@ -146,8 +147,11 @@ internal object DecodeurMetadonnees {
             nom = fonction.name,
             paquet = paquet,
             recepteur = recepteurFqcn(fonction.receiverParameterType),
-            typeRetour = rendreType(fonction.returnType),
-            parametres = fonction.valueParameters.map { ParametreAppelable(it.name, rendreType(it.type)) },
+            typeRetour = rendreType(fonction.returnType, fonction.typeParameters),
+            parametres =
+                fonction.valueParameters.map {
+                    ParametreAppelable(it.name, rendreType(it.type, fonction.typeParameters))
+                },
             conteneur = conteneur,
         )
     }
@@ -164,7 +168,7 @@ internal object DecodeurMetadonnees {
             nom = propriete.name,
             paquet = paquet,
             recepteur = recepteurFqcn(propriete.receiverParameterType),
-            typeRetour = rendreType(propriete.returnType),
+            typeRetour = rendreType(propriete.returnType, propriete.typeParameters),
             parametres = emptyList(),
             conteneur = conteneur,
         )
@@ -189,20 +193,36 @@ internal object DecodeurMetadonnees {
 
     /**
      * Rend un type en affichage Kotlin court : nom simple du
-     * classificateur + arguments rendus récursivement (`List<String>`).
-     * Null pour un type non représentable simplement (paramètre de type
-     * nu, flexible…) — le détail de complétion omet alors le type.
+     * classificateur + arguments rendus récursivement (`List<String>`),
+     * ou le NOM du paramètre de type nu (« T » — vague 4 : la MARQUE
+     * du générique lisible par le diagnostic). Null pour un type non
+     * représentable simplement (flexible…) — le détail de complétion
+     * omet alors le type.
      */
-    private fun rendreType(type: KmType?): String? {
+    private fun rendreType(
+        type: KmType?,
+        parametresGeneriques: List<KmTypeParameter> = emptyList(),
+    ): String? {
         if (type == null) return null
+        // VAGUE 4 (retour utilisateurs 25/10/2026 — U1 « showSnackbar »
+        // après remember) : un retour PARAMÈTRE DE TYPE (`fun <T>
+        // remember(calculation: () -> T): T`) est rendu par son NOM
+        // (« T ») — la MARQUE du générique lisible par le diagnostic
+        // (les types concrets du runtime portent 3+ lettres). Le
+        // classifier TypeParameter était AVANT muet (null) : toute
+        // la famille remember/run/let restait non typée.
+        val classifier = type.classifier
+        if (classifier is KmClassifier.TypeParameter) {
+            return parametresGeneriques.firstOrNull { it.id == classifier.id }?.name
+        }
         // Les noms de classificateurs sont au format JVM (kotlin/String,
         // slashes) — normalisés en FQCN à points pour TOUT le moteur.
-        val nom = (type.classifier as? KmClassifier.Class)?.name?.remplacerSeparateurs() ?: return null
+        val nom = (classifier as? KmClassifier.Class)?.name?.remplacerSeparateurs() ?: return null
         val rendu = StringBuilder(nom.substringAfterLast('.'))
         if (type.arguments.isNotEmpty()) {
             rendu.append('<')
             rendu.append(type.arguments.joinToString(", ") { projection ->
-                rendreType(projection.type) ?: "?"
+                rendreType(projection.type, parametresGeneriques) ?: "?"
             })
             rendu.append('>')
         }

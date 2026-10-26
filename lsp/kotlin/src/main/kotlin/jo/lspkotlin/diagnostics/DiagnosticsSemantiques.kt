@@ -10,6 +10,7 @@ import jo.lspkotlin.parse.kt.KtFile
 import jo.lspkotlin.parse.kt.KtFunction
 import jo.lspkotlin.parse.kt.KtProperty
 import jo.lspkotlin.parse.kt.chaineAncetresA
+import jo.lspkotlin.parse.kt.nomAppele
 import jo.lspkotlin.parse.kt.nomReference
 import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
@@ -187,6 +188,13 @@ internal object DiagnosticsSemantiques {
             // résolution de NOM ne résout pas individuellement : le
             // « beaucoup d'unresolved » des projets Android réels).
             if (estSegmentTypeQualifie(racine, reference, contexte)) return@parcourir
+            // E4-ter (vague 4, retour utilisateurs 25/10/2026) : SEGMENT
+            // d'un nom COMPLET QUALIFIÉ écrit EN EXPRESSION — le miroir
+            // d'E4 pour les positions d'appel (`androidx.recycler...
+            // .LinearLayoutManager(this)` sans import : le FQCN complet
+            // vit dans la vue, ses segments sont muets ; introuvable,
+            // seul le DERNIER reste faillible).
+            if (estSegmentExpressionQualifiee(racine, reference, contexte)) return@parcourir
             // ADR 0221 — SCRIPT (.gradle.kts, .main.kts) : un nom NU
             // (sans récepteur écrit, sans type qualifié ancêtre) peut
             // venir du RÉCEPTEUR IMPLICITE DU CONTEXTE HÔTE — le DSL
@@ -325,6 +333,23 @@ internal object DiagnosticsSemantiques {
                     (d.paquet?.let { "$it." }.orEmpty()) + d.nom == nomComplet
             }
         if (fqcnProjet) return true
+        // Vague 4 (retour utilisateurs 25/10/2026 — U1
+        // « ViewModelProvider.Factory » en position de TYPE) : le type
+        // complet ÉCRIT peut désigner une classe IMBRIQUÉE par la
+        // forme « Conteneur.Imbrique » — la vue la porte sous
+        // « fqcn$Imbrique » (miroir de l'accès qualifié légal sans
+        // import). La BASE résout par les imports (« ViewModelProvider
+        // » → androidx.lifecycle.ViewModelProvider), puis la vue
+        // sonde la forme dollar — TOUS les segments sont muets.
+        val dernierPoint = nomComplet.lastIndexOf('.')
+        if (dernierPoint > 0) {
+            val base = nomComplet.substring(0, dernierPoint)
+            val segment = nomComplet.substring(dernierPoint + 1)
+            contexte.resolution.fqcnDuNomEcrit(base, contexte.contexteNom)?.let { fqcnBase ->
+                if (contexte.resolution.membresDe("$fqcnBase\$$segment") != null) return true
+                if (contexte.resolution.membresDe("$fqcnBase.$segment") != null) return true
+            }
+        }
         // Type complet introuvable : seul le DERNIER segment reste
         // diagnostiquable — les segments PAQUET sont TOUJOURS muets.
         val dernierIdentifiant =
@@ -359,6 +384,110 @@ internal object DiagnosticsSemantiques {
             if (parent.type == KtNodeTypes.CALL_EXPRESSION) break
         }
         return false
+    }
+
+    /**
+     * E4-ter (vague 4 — retour utilisateurs 25/10/2026, U2
+     * `androidx.recyclerview.widget.LinearLayoutManager(this)` sans
+     * import) : la référence est-elle un SEGMENT d'un nom COMPLET
+     * QUALIFIÉ écrit EN EXPRESSION — le miroir EXACT d'
+     * [estSegmentTypeQualifie] pour les positions d'expression ?
+     *
+     * La chaîne qualifiée RACINE (le DOT le plus externe de la chaîne
+     * contiguë partant du récepteur, SANS appel intermédiaire — les
+     * parenthèses d'un appel brisent le nom) est lue comme UN TEXTE :
+     * si la VUE du classpath porte CE FQCN (`membresDe`), TOUS les
+     * segments sont muets — l'accès qualifié complet est légal sans
+     * import. Sinon, seul le DERNIER segment reste diagnostiquable
+     * (miroir kotlinc : un segment faillible, pas trois faux
+     * positifs).
+     *
+     * Ne s'applique qu'au PREMIER segment (récepteur racine de la
+     * chaîne) ou au CALLEE final — les sélecteurs intermédiaires
+     * relèvent déjà d'[estSelecteurQualifie] (D3 inchangé, une
+     * absence prouvée y reste signalée).
+     */
+    private fun estSegmentExpressionQualifiee(
+        racine: NoeudSyntaxique,
+        reference: NoeudSyntaxique,
+        contexte: Contexte,
+    ): Boolean {
+        val chaine = chaineAncetresA(racine, reference.debut)
+        val indice = chaine.indexOf(reference)
+        if (indice <= 0) return false
+        // 1. Le PORT DIRECT de la référence : (a) un DOT/SAFE dont elle
+        //    est le RÉCEPTEUR (premier segment — `androidx` de la
+        //    chaîne), OU (b) le CALL dont elle est le callee ET dont le
+        //    parent est un DOT/SAFE (callee final — le dernier segment
+        //    du nom écrit porte l'appel). Les sélecteurs intermédiaires
+        //    ne passent PAS ici (déjà muets par estSelecteurQualifie,
+        //    une absence prouvée y reste signalée).
+        var port = chaine[indice - 1]
+        if (port.type == KtNodeTypes.CALL_EXPRESSION) {
+            if (port.sousNoeuds.firstOrNull() != reference) return false
+            if (indice < 2) return false
+            port = chaine[indice - 2]
+            if (port.type != KtNodeTypes.DOT_QUALIFIED_EXPRESSION &&
+                port.type != KtNodeTypes.SAFE_ACCESS_EXPRESSION
+            ) {
+                return false
+            }
+        } else if (port.type == KtNodeTypes.DOT_QUALIFIED_EXPRESSION ||
+            port.type == KtNodeTypes.SAFE_ACCESS_EXPRESSION
+        ) {
+            val recepteur = port.sousNoeuds.firstOrNull() ?: return false
+            if (!couvre(recepteur, reference)) return false
+        } else {
+            return false
+        }
+        // 2. La chaîne qualifiée RACINE : remonter les parents DOT/SAFE
+        //    contigus jusqu'au plus externe (tout autre parent stoppe).
+        var externe = port
+        var profondeur = indice - 2
+        while (profondeur >= 0) {
+            val candidat = chaine[profondeur]
+            if (candidat.type != KtNodeTypes.DOT_QUALIFIED_EXPRESSION &&
+                candidat.type != KtNodeTypes.SAFE_ACCESS_EXPRESSION
+            ) {
+                break
+            }
+            externe = candidat
+            profondeur--
+        }
+        // 3. Le NOM ÉCRIT complet de la chaîne racine : le RÉCEPTEUR du
+        //    DOT racine porte tous les segments sauf le dernier — le
+        //    dernier vit dans le SÉLECTEUR (référence, ou CALLEE du CALL
+        //    sélecteur : la grammaire vendorée pose le CALL EN sélecteur
+        //    du DOT, `exo.paq.ClassePublique()` = DOT(DOT(exo,paq),
+        //    CALL(ClassePublique, args)) — le texte du DOT racine porte
+        //    les PARENTHÈSES des arguments, il n'est PAS le nom).
+        val recepteurRacine = externe.sousNoeuds.firstOrNull() ?: return false
+        val selecteurRacine = externe.sousNoeuds.getOrNull(1) ?: return false
+        val dernier =
+            when (selecteurRacine.type) {
+                KtNodeTypes.CALL_EXPRESSION -> selecteurRacine.sousNoeuds.firstOrNull()
+                else -> selecteurRacine
+            } ?: return false
+        val texteRecepteur =
+            contexte.texte.subSequence(recepteurRacine.debut, recepteurRacine.fin).toString()
+        if ('(' in texteRecepteur || '?' in texteRecepteur) return false
+        val texteDernier =
+            contexte.texte.subSequence(dernier.debut, dernier.fin).toString()
+        if ('(' in texteDernier || '?' in texteDernier) return false
+        val nomComplet = "$texteRecepteur.$texteDernier".trim()
+        if ('.' !in nomComplet || nomComplet.isEmpty()) return false
+        // 4. Le FQCN complet vit-il dans la vue ? TOUS les segments
+        //    sont muets (accès qualifié légal sans import).
+        if (contexte.resolution.membresDe(nomComplet) != null) return true
+        // 5. Introuvable : le PREMIER segment (récepteur racine — une
+        //    référence inconnue, miroir kotlinc « unresolved: a » sur
+        //    `ArticleRepoInconnu.tenter()`) et le DERNIER (callee — il
+        //    suit la fortune de SON récepteur par les règles dédiées,
+        //    estCalleeDAppel/estSelecteurQualifie) restent FAILLIBLES
+        //    par la voie normale ; seuls les segments INTERMÉDIAIRES
+        //    (paquets potentiels d'un FQN presque bon) sont muets —
+        //    jamais trois faux positifs sur une seule faute.
+        return reference.debut != dernier.debut && reference.debut != recepteurRacine.debut
     }
 
     /** La référence est-elle le CALLEE (premier enfant) d'un
@@ -476,7 +605,16 @@ internal object DiagnosticsSemantiques {
         val expression = porteur ?: return SelectionTypes.INCONNU
         val recepteur = expression.sousNoeuds.firstOrNull() ?: return SelectionTypes.INCONNU
         // 2. Type COMPLET du récepteur — valeur d'abord, CLASSE ensuite
-        //    (`Boite.creer()`, `Int.MAX_VALUE` — ADR 0222).
+        //    (`Boite.creer()`, `Int.MAX_VALUE` — ADR 0222), puis la voie
+        //    GÉNÉRIQUE (vague 4, retour utilisateurs 25/10/2026 — U1
+        //    « showSnackbar » après `remember { SnackbarHostState() }`) :
+        //    un appel top-level SANS récepteur à retour TYPE GÉNÉRIQUE
+        //    (`fun <T> remember(calculation: () -> T): T`) se LIE par
+        //    son lambda — le type de l'appel est le type de la DERNIÈRE
+        //    expression du corps du littéral (règle EXACTE sur ce
+        //    périmètre : sans récepteur, T ne peut venir QUE du lambda ;
+        //    les retours concrets — Long, Unit, List… — portent des noms
+        //    de 3+ lettres et sont EXCLUS par le marqueur).
         val typeRecepteur =
             TypageExpression.typeExpression(
                 recepteur,
@@ -485,6 +623,8 @@ internal object DiagnosticsSemantiques {
                 contexte.resolution,
                 contexte.declarationsProjet,
             ) ?: TypageExpression.typeStatiqueDe(recepteur, contexte.contexteNom, contexte.resolution)
+                ?: typeAppelGenerique(recepteur, contexte, index)
+                ?: typeLocaleGenerique(recepteur, racine, contexte, index)
                 ?: return SelectionTypes.INCONNU
         // 3. Membre PROUVÉ sur la chaîne de supertypes du récepteur :
         //    champ, méthode, accesseur synthétique, COMPANION du
@@ -620,6 +760,83 @@ internal object DiagnosticsSemantiques {
                     (parent?.plus('.')?.plus(decl.nom) ?: decl.nom) == fqcn
                 }
         }
+
+    /**
+     * Type d'un APPEL top-level GÉNÉRIQUE lié par son lambda (vague 4,
+     * retour utilisateurs 25/10/2026 — U1 « showSnackbar » : le type
+     * EFFACÉ de `remember { … }` masquait SnackbarHostState) : quand
+     * le récepteur est un APPEL dont le callee est un appelable de
+     * premier niveau SANS récepteur, EN PORTÉE du fichier, au retour
+     * TYPE GÉNÉRIQUE (`T`, `R` — les noms concrets Long/Unit/List
+     * portent 3+ lettres), le type de l'appel est le type de la
+     * DERNIÈRE expression du corps du littéral — la seule source de
+     * la liaison de T sur ce périmètre (miroir kotlinc).
+     */
+    private fun typeAppelGenerique(
+        recepteur: NoeudSyntaxique,
+        contexte: Contexte,
+        index: IndexAppelablesKotlin,
+    ): String? {
+        if (recepteur.type != KtNodeTypes.CALL_EXPRESSION) return null
+        val nom = jo.lspkotlin.parse.kt.nomAppele(recepteur) ?: return null
+        // L'appelable doit être un TOP-LEVEL PUR (sans récepteur —
+        // apply/with sont des EXTENSIONS dont le T vient du RÉCEPTEUR,
+        // pas du lambda) au RETOUR GÉNÉRIQUE, en portée du fichier.
+        val generique =
+            index.topParNom(nom).any { appelable ->
+                appelable.recepteur == null &&
+                    appelable.typeRetour.estRetourGenerique() &&
+                    contexte.resolution.appelableEnPortee(appelable, contexte.contexteNom)
+            }
+        if (!generique) return null
+        // Le LITTÉRAL liant : premier FUNCTION_LITERAL du CALL (trailing
+        // ou argument ordinaire — T ne peut venir que de lui).
+        var litteral: NoeudSyntaxique? = null
+        parcourir(recepteur) { noeud ->
+            if (litteral == null && noeud.type == KtNodeTypes.FUNCTION_LITERAL) litteral = noeud
+        }
+        val liant = litteral ?: return null
+        // La DERNIÈRE expression du corps porte la valeur du littéral.
+        val corps = liant.sousNoeuds.firstOrNull { it.type == KtNodeTypes.BLOCK } ?: return null
+        val derniere = corps.sousNoeuds.lastOrNull() ?: return null
+        return TypageExpression.typeExpression(
+            derniere,
+            liant,
+            contexte.contexteNom,
+            contexte.resolution,
+            contexte.declarationsProjet,
+        )
+    }
+
+    /**
+     * Type d'une LOCALE dont l'INITIALISATEUR est un appel top-level
+     * GÉNÉRIQUE lié par son lambda (vague 4 — la suite de
+     * [typeAppelGenerique] : le récepteur du sélecteur est une
+     * RÉFÉRENCE, `hoteSnackbar.showSnackbar(…)` où
+     * `val hoteSnackbar = remember { SnackbarHostState() }` — le typage
+     * de la référence passe par l'initialiseur, que seule la voie
+     * générique d'ici sait lire).
+     */
+    private fun typeLocaleGenerique(
+        recepteur: NoeudSyntaxique,
+        racine: NoeudSyntaxique,
+        contexte: Contexte,
+        index: IndexAppelablesKotlin,
+    ): String? {
+        if (recepteur.type != KtNodeTypes.REFERENCE_EXPRESSION) return null
+        val nom = nomReference(recepteur) ?: return null
+        for (locale in SymbolesProjet.localesEnPortee(racine, recepteur.debut)) {
+            if (locale.declaration.nom != nom) continue
+            val initialiseur = locale.propriete?.initialisateur() ?: continue
+            return typeAppelGenerique(initialiseur.noeud, contexte, index)
+        }
+        return null
+    }
+
+    /** Le type écrit d'un appelable est-il un PARAMÈTRE GÉNÉRIQUE (`T`, `R`) ?
+     *  Les types concrets du runtime Kotlin portent tous 3+ lettres. */
+    private fun String?.estRetourGenerique(): Boolean =
+        this != null && length <= 2 && isNotEmpty() && first().isUpperCase() && '.' !in this
 
     /** [parent] couvre-t-il [enfant] (plages) ? */
     private fun couvre(

@@ -105,6 +105,8 @@ internal object TypageExpression {
             KtNodeTypes.CALL_EXPRESSION ->
                 typeAppel(
                     nomAppele(expression) ?: return null,
+                    expression,
+                    racine,
                     contexteNom,
                     resolution,
                     declarationsProjet,
@@ -186,6 +188,67 @@ internal object TypageExpression {
         return TypesKotlin.superTypesDe(englobante).mapNotNull { clause ->
             SuperKotlin.fqcnSupertype(clause, contexteFichier, resolution)
         }
+    }
+
+    /**
+     * FQCN des SUPERTYPES de la PILE des this IMPLICITES à [decalage]
+     * (vague 4 — miroir de la marche d'`estMembreHerite`) : l'objet
+     * ANONYME le plus interne D'ABORD (son this est le plus proche),
+     * PUIS les classes/objets englobants nommés — chacun prête les
+     * CLAUSES ÉCRITES de SA clause. La portée lexicale kotlinc empile
+     * les récepteurs implicites : un nom nu dans un `object : Filter()`
+     * posé dans un adaptant voit les membres ET les types IMBRIQUÉS de
+     * Filter, PUIS ceux des supertypes du this externe.
+     */
+    internal fun fqcnSupertypesDesThis(
+        racine: NoeudSyntaxique,
+        decalage: Int,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+    ): List<String> {
+        val chaine = chaineAncetresA(racine, decalage)
+        val contexteFichier = OccurrencesKotlin.ContexteFichier(contexteNom, declarationsProjet)
+        val resultat = mutableListOf<String>()
+        for (indice in chaine.indices.reversed()) {
+            val noeud = chaine[indice]
+            if (noeud.type != KtNodeTypes.CLASS && noeud.type != KtNodeTypes.OBJECT_DECLARATION) continue
+            TypesKotlin.superTypesDe(noeud).forEach { clause ->
+                SuperKotlin.fqcnSupertype(clause, contexteFichier, resolution)?.let { resultat.add(it) }
+            }
+        }
+        return resultat
+    }
+
+    /**
+     * FQCN d'un nom de TYPE écrit dans le CONTEXTE d'une position
+     * (vague 4, retour utilisateurs 25/10/2026 — U2 « FilterResults »
+     * nu en paramètre d'un override dans un `object : Filter()`) :
+     * la voie normale (imports/paquet/défauts) d'abord, PUIS la règle
+     * kotlinc PROUVÉE par expérience — HÉRITER d'une classe met ses
+     * classes IMBRIQUÉES en portée par nom simple dans toute la
+     * sous-classe (l'import du conteneur seul ne suffit PAS) : chaque
+     * maillon de la chaîne binaire de chaque this implicite est sondé
+     * sous sa forme dollar (`Filter$FilterResults`).
+     */
+    internal fun fqcnDuTypeEcritDansContexte(
+        nomEcrit: String,
+        racine: NoeudSyntaxique,
+        decalage: Int,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+    ): String? {
+        resolution.fqcnDuNomEcrit(nomEcrit, contexteNom)?.let { return it }
+        val nom = nomEcrit.substringBefore('<').trim().trimEnd('?')
+        if (nom.isEmpty() || '.' in nom) return null
+        for (depart in fqcnSupertypesDesThis(racine, decalage, contexteNom, resolution, declarationsProjet)) {
+            for (maillon in resolution.chaineSupertypes(depart)) {
+                val candidat = "$maillon\$$nom"
+                if (resolution.membresDe(candidat) != null) return candidat
+            }
+        }
+        return null
     }
 
     /**
@@ -271,11 +334,14 @@ internal object TypageExpression {
             return it
         }
         // 1. Locales/paramètres (la plus PROCHE gagne — ordre de
-        // localesEnPortee) : type écrit, sinon initialiseur.
+        // localesEnPortee) : type écrit, sinon initialiseur. Vague 4 :
+        // le type écrit peut être un IMBRIQUÉ de la chaîne d'un this
+        // implicite (`FilterResults` nu dans un override de Filter).
         for (locale in SymbolesProjet.localesEnPortee(racine, decalage)) {
             if (locale.declaration.nom != nom) continue
             locale.declaration.typeRetour?.let { ecrit ->
-                resolution.fqcnDuNomEcrit(ecrit, contexteNom)?.let { return it }
+                fqcnDuTypeEcritDansContexte(ecrit, racine, decalage, contexteNom, resolution, declarationsProjet)
+                    ?.let { return it }
             }
             locale.propriete?.initialisateur()?.let { initialiseur ->
                 typeExpression(initialiseur.noeud, racine, contexteNom, resolution, declarationsProjet, profondeur + 1)
@@ -287,7 +353,8 @@ internal object TypageExpression {
             val nomMembre = membre.nomJeton()?.texte?.toString() ?: continue
             if (nomMembre != nom) continue
             membre.type()?.let { ecrit ->
-                resolution.fqcnDuNomEcrit(ecrit, contexteNom)?.let { return it }
+                fqcnDuTypeEcritDansContexte(ecrit, racine, decalage, contexteNom, resolution, declarationsProjet)
+                    ?.let { return it }
             }
             membre.initialisateur()?.let { initialiseur ->
                 typeExpression(initialiseur.noeud, racine, contexteNom, resolution, declarationsProjet, profondeur + 1)
@@ -337,27 +404,33 @@ internal object TypageExpression {
 
     /**
      * Type d'un APPEL par nom : CONSTRUCTEUR (le nom est une classe
-     * importable/du projet — vérifiée contre la vue quand elle y est),
-     * sinon retour ÉCRIT d'une fonction du fichier/projet, sinon
-     * appelable de premier niveau de l'index (retour court résolu).
+     * importable/du projet — vérifiée contre la vue quand elle y est,
+     * Y COMPRIS l'imbriqué d'un this implicite — vague 4 : le constructeur
+     * `FilterResults()` nu vit dans la chaîne de Filter), sinon retour
+     * ÉCRIT d'une fonction du fichier/projet, sinon appelable de premier
+     * niveau de l'index (retour court résolu).
      */
     private fun typeAppel(
         nom: String,
+        expression: NoeudSyntaxique,
+        racine: NoeudSyntaxique,
         contexteNom: ResolutionKotlin.ContexteNom,
         resolution: ResolutionKotlin,
         declarationsProjet: List<DeclarationProjet>,
     ): String? {
         // 1. Constructeur : le nom résout en une classe.
-        val fqcnClasse = resolution.fqcnDuNomEcrit(nom, contexteNom) ?: run {
-            // Classe du projet non importée portant EXACTEMENT ce nom ?
-            val porteurs = declarationsProjet.filter { it.nom == nom && it.genre == GenreDeclaration.CLASSE }
-            if (porteurs.size == 1) {
-                val declaration = porteurs.single()
-                (declaration.paquet?.let { "$it." } ?: "") + declaration.nom
-            } else {
-                null
-            }
-        }
+        val fqcnClasse =
+            fqcnDuTypeEcritDansContexte(nom, racine, expression.debut, contexteNom, resolution, declarationsProjet)
+                ?: run {
+                    // Classe du projet non importée portant EXACTEMENT ce nom ?
+                    val porteurs = declarationsProjet.filter { it.nom == nom && it.genre == GenreDeclaration.CLASSE }
+                    if (porteurs.size == 1) {
+                        val declaration = porteurs.single()
+                        (declaration.paquet?.let { "$it." } ?: "") + declaration.nom
+                    } else {
+                        null
+                    }
+                }
         if (fqcnClasse != null && estConstructeurProbable(fqcnClasse, resolution, declarationsProjet)) {
             return fqcnClasse
         }
@@ -566,7 +639,14 @@ internal object TypageExpression {
     ): String? {
         val net = ecrit.substringBefore('<').trim().trimEnd('?')
         if (net.isEmpty()) return null
-        return resolution.fqcnDuNomEcrit(net, contexteNom) ?: net
+        // Vague 4 : le type écrit d'un membre du PROJET (champ ViewBinding
+        // `texteAnnee: TextView`, getter Java…) vit dans le CONTEXTE du
+        // fichier DÉCLARANT — hors du modèle du scan. Quand le fichier
+        // courant ne l'importe pas, le nom simple UNIQUE de la vue du
+        // classpath est la meilleure preuve (ambigu = null, conservateur).
+        return resolution.fqcnDuNomEcrit(net, contexteNom)
+            ?: resolution.fqcnUniqueParNomSimple(net)
+            ?: net
     }
 
     /** Descripteur de champ (`Ljava/lang/String;`) → FQCN. */

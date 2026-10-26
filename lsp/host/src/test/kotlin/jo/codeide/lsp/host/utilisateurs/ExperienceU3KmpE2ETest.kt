@@ -289,19 +289,18 @@ class ExperienceU3KmpE2ETest {
                 .flatMap { (fichier, diags) ->
                     diags
                         .filter { estNonResolue(it) }
-                        // Limitations CONNUES (26/10/2026, vague 3 — collect
-                        // et copy ÉTEINTS : le callee suit son récepteur
-                        // typé, le modificateur data est ENFIN lu du
-                        // MODIFIER_LIST) : destructuring de lambda
-                        // (_, total), Map.entries, propriétés/héritage du
-                        // classpath dans l'app (textSize, setPadding) —
-                        // TOUT NOUVEAU faux positif fait échouer le test.
+                        // Limitations CONNUES (26/10/2026, vague 4 —
+                        // textSize et setPadding ÉTEINTS : membres
+                        // hérités du classpath et propriétés
+                        // synthétiques Java atteints par la PILE des
+                        // this et l'unicité du nom simple dans la vue)
+                        // : destructuring de lambda (_, total),
+                        // Map.entries. TOUT NOUVEAU faux positif fait
+                        // échouer le test.
                         .filter { diag ->
                             setOf(
                                 "« total »",
                                 "« entries »",
-                                "« textSize »",
-                                "« setPadding »",
                             ).none { diag.message.contains(it) }
                         }.map { "${fichier.name} : ${it.message.take(90)} @${it.range.start.line + 1}" }
                 }

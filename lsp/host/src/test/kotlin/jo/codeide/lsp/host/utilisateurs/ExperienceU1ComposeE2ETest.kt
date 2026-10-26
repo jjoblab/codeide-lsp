@@ -231,21 +231,20 @@ class ExperienceU1ComposeE2ETest {
         // ── Asserts souples : tout le constat en UNE failure (assertAll)
         //    — n'échoue QUE si (1) faux positifs sur fichiers corrects,
         //    (2) une erreur volontaire non signalée (faux négatif) ──
-        // Limitations CONNUES du moteur (26/10/2026, vague 3 — collect et
-        // copy ÉTEINTS : le callee suit son récepteur typé, le
-        // modificateur data est ENFIN lu du MODIFIER_LIST) : récepteurs
-        // typés par ERASURE générique (showSnackbar après remember),
-        // extensions de SCOPE Compose (weight/align dans Row/Box),
-        // imbriqués en POSITION DE TYPE (ViewModelProvider.Factory),
-        // setter Java dans apply (currency =). TOUT NOUVEAU faux
-        // positif hors de cette liste fait ÉCHOUER le test.
+        // Limitations CONNUES du moteur (26/10/2026, vague 4 — showSnackbar
+        // ÉTEINT : la voie générique type `remember { … }` par la
+        // dernière expression de son lambda (locale ET récepteur-appel),
+        // le décodeur rend le retour paramètre de type « T » ; Factory
+        // ÉTEINT : imbriqués qualifiés en position de type ; currency
+        // ÉTEINT : propriétés synthétiques Java du récepteur apply) :
+        // RESTENT les extensions de SCOPE Compose (weight dans Row,
+        // align dans Box — le récepteur implicite du lambda de scope).
+        // TOUT NOUVEAU faux positif hors de cette liste fait ÉCHOUER
+        // le test.
         val limitationsConnues =
             setOf(
-                "« showSnackbar »",
-                "« Factory »",
                 "« weight »",
                 "« align »",
-                "« currency »",
             )
         val fauxPositifs =
             diagnosticsParFichier

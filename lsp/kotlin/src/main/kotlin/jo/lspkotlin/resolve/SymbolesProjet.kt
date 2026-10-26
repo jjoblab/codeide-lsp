@@ -489,6 +489,16 @@ public object SymbolesProjet {
     ): List<LocaleEnPortee> {
         val chaine = chaineAncetresA(racine, decalage)
         val resultat = mutableListOf<LocaleEnPortee>()
+        // Vague 4 (retour utilisateurs 25/10/2026 — U2 « super(contexte,
+        // attributs, styleDef) », « field »/« valeur ») : les paramètres
+        // du constructeur PRIMAIRE ne sont lisibles que dans la zone de
+        // CONSTRUCTION de la classe — clause super, initialisateurs de
+        // propriétés, blocs init (expérience kotlinc 2.2.10 : un setter
+        // custom et un corps de méthode les REFUSENT « unresolved » ;
+        // un initialisateur et un init les ACCEPTENT). Le drapeau coupe
+        // la portée dès qu'un CORPS (méthode, setter, constructeur
+        // secondaire, classe imbriquée) sépare la référence du CLASS.
+        var coupe = false
         // De la plus profonde à la racine : les locales proches
         // PRENNENT la préséance (l'appelant dédoublonne par nom).
         for (profondeur in chaine.indices.reversed()) {
@@ -499,6 +509,46 @@ public object SymbolesProjet {
                     fonction.parametres().forEach { parametre ->
                         parametreDeclarationLocal(parametre)?.let { resultat.add(LocaleEnPortee(it, null)) }
                     }
+                    // Corps de méthode : les paramètres du primaire de
+                    // TOUTE classe englobante y sont HORS portée.
+                    coupe = true
+                }
+
+                KtNodeTypes.PROPERTY_ACCESSOR -> {
+                    // Vague 4 : accesseur custom — le PARAMÈTRE du
+                    // setter (`set(valeur) { … }`) est en portée dans
+                    // tout le corps de l'accesseur (expérience kotlinc :
+                    // seuls le paramètre et `field` y sont lisibles).
+                    val liste =
+                        noeud.sousNoeuds.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+                    liste?.sousNoeuds
+                        ?.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
+                        ?.forEach { parametre ->
+                            parametreDeclarationLocal(jo.lspkotlin.parse.kt.KtParameter(parametre))
+                                ?.let { resultat.add(LocaleEnPortee(it, null)) }
+                        }
+                    // `field` — l'identifiant de champ PORTANT est
+                    // SYNTHÉTIQUE (aucun jeton de déclaration) : prêté
+                    // comme locale de portée l'accesseur (miroir Android
+                    // Studio, qui le propose en complétion du setter).
+                    resultat += LocaleEnPortee(
+                        DeclarationProjet(
+                            genre = GenreDeclaration.LOCALE,
+                            nom = "field",
+                            uri = "",
+                            debutNom = noeud.debut,
+                            finNom = noeud.fin,
+                            paquet = null,
+                            recepteur = null,
+                            typeRetour = null,
+                            parametres = emptyList(),
+                            conteneur = null,
+                        ),
+                        null,
+                    )
+                    // Corps d'accesseur : les paramètres du primaire y
+                    // sont HORS portée (expérience kotlinc).
+                    coupe = true
                 }
 
                 KtNodeTypes.FUNCTION_LITERAL -> {
@@ -564,9 +614,38 @@ public object SymbolesProjet {
                     }
                 }
 
+                KtNodeTypes.CLASS, KtNodeTypes.OBJECT_DECLARATION -> {
+                    // Vague 4 : la CLASSE prête les paramètres de son
+                    // constructeur PRIMAIRE tant qu'aucun CORPS (méthode,
+                    // setter, constructeur secondaire, classe imbriquée)
+                    // n'a été croisé plus profond — zone de CONSTRUCTION
+                    // (clause super, initialisateurs, init), miroir
+                    // kotlinc prouvé par expérience. Un objet n'a pas de
+                    // constructeur primaire utile : il ne prête rien.
+                    if (!coupe && noeud.type == KtNodeTypes.CLASS) {
+                        jo.lspkotlin.parse.kt.KtClass(noeud).let { classe ->
+                            parametresPrimairesKt(classe).forEach { parametre ->
+                                parametreDeclarationLocal(parametre)?.let {
+                                    resultat.add(LocaleEnPortee(it, null))
+                                }
+                            }
+                        }
+                    }
+                    // Classe imbriquée intermédiaire : les primaires des
+                    // classes PLUS EXTERNES ne fuient pas dedans.
+                    coupe = true
+                }
+
+                KtNodeTypes.SECONDARY_CONSTRUCTOR -> {
+                    // Corps d'un constructeur secondaire : les paramètres
+                    // du primaire y sont HORS portée (miroir kotlinc).
+                    coupe = true
+                }
+
                 else -> {
-                    // CLASS/OBJECT : les membres sont portés par le
-                    // CLASS_BODY ancêtre — rien ici.
+                    // BLOCK, CLASS_INITIALIZER, littéraux, types : ils ne
+                    // coupent PAS la portée du primaire (expérience
+                    // kotlinc — un initialisateur et un init la gardent).
                 }
             }
         }

@@ -136,7 +136,18 @@ internal object ResolutionReferences {
      *
      * ADR 0219 : un nom de PROPRIÉTÉ SYNTHÉTIQUE Java (getter/setter)
      * prouve sa résolution par son accesseur — `layoutInflater` nu dans
-     * une Activity, `title = …` nu via setTitle. */
+     * une Activity, `title = …` nu via setTitle.
+     *
+     * Vague 4 (retour utilisateurs 25/10/2026 — U2 « FilterResults ») :
+     * un TYPE IMBRIQUÉ du maillon porte le nom aussi — la règle
+     * kotlinc PRUVÉE par expérience : HÉRITER d'une classe met ses
+     * classes imbriquées en portée par NOM SIMPLE dans toute la
+     * sous-classe (`FilterResults` nu dans un `object : Filter()`,
+     * bytecode `android.widget.Filter$FilterResults`) ; l'IMPORT du
+     * conteneur seul ne suffit PAS (expérience kotlinc 2.2.10 :
+     * unresolved), l'héritage FQN sans import suffit (expérience H3).
+     * La fermeture transitive y compris : RecyclerView.ViewHolder
+     * vit dans le corps d'un adaptant qui hérite de ListAdapter… */
     private fun membreBinaire(
         resolution: ResolutionKotlin,
         fqcn: String,
@@ -144,7 +155,8 @@ internal object ResolutionReferences {
     ): Boolean =
         resolution.methodesNommees(fqcn, nom).isNotEmpty() ||
             resolution.champsNommes(fqcn, nom).isNotEmpty() ||
-            resolution.accesseurSynthetique(fqcn, nom) != null
+            resolution.accesseurSynthetique(fqcn, nom) != null ||
+            resolution.membresDe("$fqcn\$$nom") != null
 
     /** Le membre vit-il sur les DÉCLARÉS du frère projet [fqcn] ? */
     private fun membreProjet(
@@ -204,6 +216,16 @@ internal object ResolutionReferences {
      * [SONDES_HERITAGE_MAXI], garde anti-cycle par FQCN, source JAVA du
      * scan jamais traversée (le moteur Kotlin ne prouve pas l'héritage
      * d'une source Java — miroir des bornes de [SuperKotlin]).</p>
+     *
+     * <p>Vague 4 (retour utilisateurs 25/10/2026 — U2 « submitList »
+     * dans un `object : Filter()`) : les this IMPLICITES sont EMPILÉS
+     * en portée lexicale — un objet ANONYME englobant ouvre la marche
+     * par SA clause ÉCRITE (le this le plus proche d'abord), PUIS les
+     * classes nommées englobantes prêtent leurs clauses chacune (les
+     * noms nus de l'objet anonyme voient les membres des this
+     * externes, miroir kotlinc). Un TYPE IMBRIQUÉ d'un maillon porte
+     * le nom aussi (règle prouvée par expérience kotlinc : hériter
+     * met les imbriqués en portée par nom simple).</p>
      */
     @Suppress("ReturnCount", "LongParameterList", "LoopWithTooManyJumpStatements")
     internal fun estMembreHerite(
@@ -224,30 +246,25 @@ internal object ResolutionReferences {
                 it.type == KtNodeTypes.CLASS || it.type == KtNodeTypes.OBJECT_DECLARATION
             }
         if (englobantes.isEmpty()) return false
-        val noms = englobantes.mapNotNull { noeud ->
-            // ADR 0222 : un companion ANONYME porte son nom effectif
-            // « Companion » — le repli générique nomJeton() y lirait
-            // le PREMIER MEMBRE (« creer »), brisant le FQCN de départ.
-            if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
-                val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
-                objet.nomObjet()?.texte?.toString()
-                    ?: if (objet.estCompanion()) "Companion" else null
-            } else {
-                (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton()?.texte?.toString()
-            }
-        }
-        if (noms.isEmpty() || noms.size != englobantes.size) return false
+        val noms = nomsLexicaux(englobantes)
+        // Un objet anonyme SANS classe nommée au-dessus (this unique,
+        // niveau fonction) : le FQCN de départ est symbolique — les
+        // `vus` ne servent QUE d'anti-cycle, le point de départ réel
+        // est la clause ÉCRITE de l'objet (marche 2 a).
         val fqcnDepart =
-            (contexteNom.paquet?.let { "$it." }.orEmpty()) + noms.joinToString(".")
+            if (noms.isEmpty()) {
+                "anonyme@${englobantes.last().debut}"
+            } else {
+                (contexteNom.paquet?.let { "$it." }.orEmpty()) + noms.joinToString(".")
+            }
         val vus = mutableSetOf(fqcnDepart)
 
         // 2. BFS borné sur la fermeture mixte classpath + projet : le
-        //    niveau de départ lit les clauses ÉCRITES du nœud le plus
-        //    INTERNE (arbre vif du document), les suivants les clauses
-        //    des frères projet (port de session).
-        val contexteDepart = OccurrencesKotlin.ContexteFichier(contexteNom, declarationsProjet)
+        //    niveau de départ lit les clauses ÉCRITES de la PILE des
+        //    this implicites (marches 2 a/2 b), les suivants les
+        //    clauses des frères projet (port de session).
         var clausesNiveau: List<Pair<String, OccurrencesKotlin.ContexteFichier>>? =
-            TypesKotlin.superTypesDe(englobantes.last()).map { it to contexteDepart }
+            clausesDesThis(englobantes, contexteNom, declarationsProjet)
         var profondeur = 0
         var sondes = SONDES_HERITAGE_MAXI
         while (clausesNiveau != null && clausesNiveau.isNotEmpty() && profondeur < PROFONDEUR_HERITAGE_MAXI) {
@@ -262,5 +279,68 @@ internal object ResolutionReferences {
             profondeur++
         }
         return false
+    }
+
+    /**
+     * Noms LEXICAUX des classes/objets englobants nommés (vague 4 : un
+     * objet ANONYME est un this SÉPARÉ — sauté du chemin lexical ; ADR
+     * 0222 : un companion anonyme porte « Companion »).
+     */
+    private fun nomsLexicaux(englobantes: List<NoeudSyntaxique>): List<String> {
+        val noms = mutableListOf<String>()
+        for (noeud in englobantes) {
+            if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+                val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+                val nom =
+                    objet.nomObjet()?.texte?.toString()
+                        ?: if (objet.estCompanion()) "Companion" else null
+                if (nom != null) noms.add(nom)
+            } else {
+                (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton()?.texte?.toString()
+                    ?.let { noms.add(it) }
+            }
+        }
+        return noms
+    }
+
+    /**
+     * Clauses de supertypes ÉCRITES de la PILE des this implicites
+     * (vague 4 — miroir kotlinc, récepteurs empilés) : l'objet ANONYME
+     * le plus interne D'ABORD (son this est le plus proche), PUIS les
+     * classes/objets nommés du plus interne au plus externe — un nom nu
+     * voit les membres et types IMBRIQUÉS de chaque this.
+     */
+    private fun clausesDesThis(
+        englobantes: List<NoeudSyntaxique>,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        declarationsProjet: List<DeclarationProjet>,
+    ): List<Pair<String, OccurrencesKotlin.ContexteFichier>> {
+        val contexte = OccurrencesKotlin.ContexteFichier(contexteNom, declarationsProjet)
+        val clauses = mutableListOf<Pair<String, OccurrencesKotlin.ContexteFichier>>()
+        // 2 a. L'objet anonyme le plus INTERNE (this le plus proche).
+        englobantes.lastOrNull()
+            ?.takeIf { it.type == KtNodeTypes.OBJECT_DECLARATION }
+            ?.takeIf {
+                jo.lspkotlin.parse.kt.KtObjectDeclaration(it).let { objet ->
+                    objet.nomObjet() == null && !objet.estCompanion()
+                }
+            }
+            ?.let { anonyme -> TypesKotlin.superTypesDe(anonyme) }
+            ?.forEach { clauses.add(it to contexte) }
+        // 2 b. Les classes/objets NOMMÉS, du plus interne au plus externe.
+        for (indice in englobantes.indices.reversed()) {
+            val noeud = englobantes[indice]
+            val nomme =
+                if (noeud.type == KtNodeTypes.OBJECT_DECLARATION) {
+                    val objet = jo.lspkotlin.parse.kt.KtObjectDeclaration(noeud)
+                    objet.nomObjet() != null || objet.estCompanion()
+                } else {
+                    (KtElement.depuis(noeud) as? KtDeclaration)?.nomJeton() != null
+                }
+            if (nomme) {
+                TypesKotlin.superTypesDe(noeud).forEach { clauses.add(it to contexte) }
+            }
+        }
+        return clauses
     }
 }

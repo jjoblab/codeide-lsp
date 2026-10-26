@@ -352,40 +352,23 @@ class ExperienceU2ViewsE2ETest {
             sonderCompletions(Triple(serveurJava, serveurKotlin, serveurXml), contenus, sources, projet)
 
         // ── Asserts souples : tout le constat en UNE failure ──────────
-        // Limitations CONNUES (25/10/2026 — backlog monde Views/XML) :
-        // noms QUALIFIÉS complets sans import (androidx...), membres
-        // hérités du classpath (submitList, setOnClickListener, getString
-        // via chaînes), args de super(...), field/valeur des setters,
-        // FilterResults/values, ItemDecoration/State, ViewHolder.
-        // ÉTEINTS le 25/10/2026 : membres Java projet (getTitre, getArtiste,
-        // getAnnee, getEtat, getEtiquette, getId, catalogueDemo, normaliser
-        // — SourcesJava), R SANS IMPORT même-paquet + segments R.string
-        // (fqcnDuNomEcrit sonde la vue du même paquet), inflate des
-        // bindings (statiques synthétiques) — PLUS dans cette liste :
-        // tout nouveau faux positif fait échouer la CI.
-        val limitationsConnues =
-            setOf(
-                "« androidx »",
-                "« LinearLayoutManager »",
-                "« addItemDecoration »",
-                "« setOnClickListener »",
-                "« getString »",
-                "« FilterResults »",
-                "« values »",
-                "« submitList »",
-                "« ViewHolder »",
-                "« ItemDecoration »",
-                "« State »",
-                "« contexte »",
-                "« attributs »",
-                "« styleDef »",
-                "« field »",
-                "« valeur »",
-                "« style »",
-                "« strokeCap »",
-                "« Cap »",
-                "« color »",
-            )
+        // CONTRAT VAGUE 4 (26/10/2026) : la liste des limitations
+        // connues est VIDE — le monde Views/XML de Marc est PROPRE.
+        // Éteints au fil des vagues : membres Java projet, R sans
+        // import, inflate (v2) ; membres HÉRITÉS du classpath par this
+        // implicite y compris la PILE des this d'un objet anonyme
+        // (submitList), types IMBRIQUÉS des supertypes par nom simple
+        // (FilterResults, values — bug de frontière `?.` du
+        // sélecteur), noms QUALIFIÉS complets sans import en expression
+        // (androidx…LinearLayoutManager), paramètres du constructeur
+        // PRIMAIRE en zone de construction (super args contexte/
+        // attributs/styleDef), field/valeur des setters custom,
+        // propriétés synthétiques Java dans apply (style/color/
+        // strokeCap/Cap), chaînes de binding vers context (getString,
+        // par unicité du nom simple dans la vue), ViewHolder/
+        // ItemDecoration/State/addItemDecoration/setOnClickListener.
+        // TOUT NOUVEAU faux positif fait échouer la CI.
+        val limitationsConnues = setOf<String>()
         val fauxPositifs =
             diagnosticsParFichier
                 .filterKeys { it.name !in fichiersAvecErreurs }
@@ -504,6 +487,12 @@ class ExperienceU2ViewsE2ETest {
             listOf(
                 Triple("view/JaugeUsure.kt", "class JaugeUsure", 6),
                 Triple("view/JaugeUsure.kt", "onDraw", 0),
+                // Vague 4 — sondes des familles résiduelles : le type du
+                // paramètre FilterResults (imbriqué hérité) et la chaîne
+                // de binding vers context (getString au maillon 7).
+                Triple("adapter/VinyleAdapter.kt", "results: FilterResults?", 9),
+                Triple("adapter/VinyleAdapter.kt", "results?.values", 3),
+                Triple("adapter/VinyleAdapter.kt", "texteAnnee.context", 12),
             )
         for ((chemin, motif, decalage) in sondesKotlin) {
             val fichier = contenus.keys.first { it.relativeTo(sources).path == chemin }
