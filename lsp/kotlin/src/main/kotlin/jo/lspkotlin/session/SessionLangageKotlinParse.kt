@@ -316,6 +316,10 @@ internal class SessionLangageKotlinParse(
                 // diagnostic (jamais d'import proposé pour un appel NU
                 // déjà résolu par la fermeture des supertypes).
                 portFichier = portFichierDeclaration(declarations),
+                // Étape B (H1) : même garde d'univers que le diagnostic
+                // — sur un scan TRONQUÉ, l'absence n'est pas prouvable,
+                // le quick-fix d'import se tient coi.
+                universProjetComplet = scanProjet.estUniversConnu(),
             )
         }
 

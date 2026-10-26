@@ -59,7 +59,12 @@ internal object ResolutionReferences {
      * @param portFichier lecture des fichiers FRÈRES déclarants (voie
      *        2-ter — `null` = fermeture limitée aux clauses ÉCRITES du
      *        document courant, comportement antérieur ; la session
-     *        fournit le port de [SuperKotlin], miroir du GO TO Super).
+     *        fournit le port de [SuperKotlin], miroir du GO TO Super.
+     * @param universProjetComplet l'univers des sources projet est-il
+     *        COMPLET (étape B, H1) ? Un scan TRONQUÉ rend les voies
+     *        4/5 inaptes à prouver l'ABSENCE — la cascade rend VRAI
+     *        après les voies FICHIER (miroir de la garde
+     *        `scanProjetComplet` de `selectionProjet`, vague 3).
      */
     internal fun estResolu(
         racine: NoeudSyntaxique,
@@ -70,6 +75,7 @@ internal object ResolutionReferences {
         declarationsProjet: List<DeclarationProjet>,
         index: IndexAppelablesKotlin?,
         portFichier: SuperKotlin.PortFichier? = null,
+        universProjetComplet: Boolean = true,
     ): Boolean {
         // 1. Locales/paramètres en portée.
         if (SymbolesProjet.localesEnPortee(racine, decalage).any { it.declaration.nom == nom }) return true
@@ -110,6 +116,14 @@ internal object ResolutionReferences {
         }
         // 3. Déclarations de premier niveau du FICHIER.
         if (KtFile(racine).declarations().any { it.nom() == nom }) return true
+        // Garde H1 (mission fiabilisation, étape B) : univers des
+        // sources projet TRONQUÉ — les voies 4/5 ne peuvent prouver NI
+        // résolution NI absence : un nom qui échoue aux voies LOCALES
+        // et FICHIER peut vivre derrière la borne du scan. La preuve
+        // d'absence est COUPÉE (D3) — miroir de la garde
+        // `scanProjetComplet` de `selectionProjet` (vague 3), au
+        // niveau de la CASCADE de noms.
+        if (!universProjetComplet) return true
         // 4. Déclarations du PROJET (tous genres — objets, alias, entrées).
         if (declarationsProjet.any { it.nom == nom }) return true
         // 5. Classes : nom écrit résolvable ou classe homonyme du projet.
@@ -124,6 +138,13 @@ internal object ResolutionReferences {
         //    que celui du survol d'appelable en portée — les extensions
         //    homonymes restent sondées (corps de `with` : un nom nu y
         //    résout via l'extension importée du récepteur implicite).
+        // Étape B (§7.2) — INTRINSÈQUES du compilateur : les
+        // constructeurs de tableaux et `enumValues`/`enumValueOf` sont
+        // @InlineOnly SANS miroir bytecode (vérifié sur le stdlib) —
+        // l'index ne peut JAMAIS les connaître ; réputation miroir
+        // d'IMPORTS_DEFAUT (voie 5), top-level du paquet racine
+        // `kotlin` importé par défaut sur JVM.
+        if (resolution.estAppeableIntrinseque(nom)) return true
         val appelablesPortee = index?.topParNom(nom).orEmpty()
         if (appelablesPortee.any { appelable -> resolution.appelableEnPortee(appelable, contexteNom) }) return true
         return false

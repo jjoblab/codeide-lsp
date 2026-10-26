@@ -127,6 +127,14 @@ public const val DRAPEAU_STATIQUE_KOTLIN: Int = 0x0008
 public const val DRAPEAU_PUBLIC_KOTLIN: Int = 0x0001
 
 /**
+ * Drapeau JVM `enum` des CLASSES (ACC_ENUM 0x4000 — [MembresTypeKotlin.drapeauxClasse]).
+ * Mission fiabilisation, étape B : la génération Kotlin 1.9+ `EnumEntries`
+ * prête sa propriété `entries` via un getter STATIQUE `getEntries()` sur la
+ * classe d'enum — la sonde l'accepte sur les SEULES classes marquées.
+ */
+public const val DRAPEAU_ENUM_KOTLIN: Int = 0x4000
+
+/**
  * Une entrée de classpath indexable par le moteur Kotlin — miroir neutre
  * des entrées W6 de l'hôte (kind JAR/AAR, chemin FUSE, empreinte opaque
  * du contenu : la STABILITÉ fait foi, le moteur n'en dérive RIEN

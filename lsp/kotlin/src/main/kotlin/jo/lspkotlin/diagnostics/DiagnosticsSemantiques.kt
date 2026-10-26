@@ -72,11 +72,13 @@ internal object DiagnosticsSemantiques {
      *        implicite d'un script est le CONTEXTE HÔTE : DSL Gradle,
      *        arguments du shell… que le moteur ne modélise pas).
      * @property scanProjetComplet l'univers des sources projet est-il
-     *        COMPLET (retour utilisateurs 25/10/2026, vague 3) ? La
+     *        COMPLET (retour utilisateurs 25/10/2026, vague 3 ; étape B
+     *        H1 : le drapeau couvre aussi la TRONCATION du scan) ? La
      *        preuve d'absence sur un type PROJET sans héritage écrit
-     *        n'est fondée QUE si le scan des racines a abouti — une
-     *        extension vivant dans un fichier NON ENCORE scanné
-     *        rendrait une absence « prouvée » fausse (D3).
+     *        n'est fondée QUE si le scan des racines a abouti SANS
+     *        borne atteinte — une extension vivant dans un fichier NON
+     *        ENCORE scanné ou DERRIÈRE [BORN_FICHIERS] rendrait une
+     *        absence « prouvée » fausse (D3).
      */
     internal data class Contexte(
         val texte: CharSequence,
@@ -147,6 +149,15 @@ internal object DiagnosticsSemantiques {
             // LSP_KOTLIN §4.3) ; miroir kotlinc/Android Studio : jamais
             // « Référence non résolue » sur un nom d'argument (D3).
             if (estNomArgument(racine, reference)) return@parcourir
+            // H2 (mission fiabilisation, étape B — rapport §7.4) :
+            // CONVENTIONS GÉNÉRÉES. Un nom qui suit une convention de
+            // GÉNÉRATION de code (`Hilt_` KSP/Hilt, `_Impl` Room/Dagger,
+            // `BindingImpl` DataBinding) peut vivre UNIQUEMENT dans
+            // `build/generated` — racines que le TOOLING fournit après
+            // un build (`EnsemblesSources.generes`, « vides sans build
+            // préalable »). Sans build, l'absence n'est PAS prouvable
+            // (D3) : silence, miroir kotlinc sur un projet non compilé.
+            if (estNomGenere(nom)) return@parcourir
             // ADR 0223 : SÉLECTION PAR TYPES COMPLETS — le SÉLECTEUR
             // d'une expression qualifiée (et le CALLEE d'un appel
             // qualifié) dont le RÉCEPTEUR TYPE se prouve par le TYPE
@@ -818,6 +829,22 @@ internal object DiagnosticsSemantiques {
         )
 
     /**
+     * Le nom suit-il une CONVENTION DE GÉNÉRATION de code (H2, étape B —
+     * rapport §7.4) ? `Hilt_` (KSP/Hilt, parent d'un
+     * `@AndroidEntryPoint`), `_Impl` (Room DAO, Dagger), `BindingImpl`
+     * (DataBinding) : ces types ne vivent que dans `build/generated`,
+     * racines fournies par le tooling APRÈS un build. La garde est en
+     * PRÉFIXE/SUFFIXE — jamais en nom complet : une convention est un
+     * contrat de nommage, pas un identifiant figé. À ÉTENDRE au fil
+     * des générateurs constatés (SafeArgs `Directions`/`Args`, usines
+     * Dagger) — chaque ajout ne fait que TAIRE (D3).
+     */
+    private fun estNomGenere(nom: String): Boolean =
+        nom.startsWith("Hilt_") ||
+            nom.endsWith("_Impl") ||
+            nom.endsWith("BindingImpl")
+
+    /**
      * Issue de la SÉLECTION D'APPELÉ PAR TYPES COMPLETS (ADR 0223) —
      * volet PROJET (vague 3, retour utilisateurs 25/10/2026) : le
      * récepteur n'est PAS dans la vue classpath mais le scan du
@@ -965,7 +992,11 @@ internal object DiagnosticsSemantiques {
         enfant: NoeudSyntaxique,
     ): Boolean = parent.debut <= enfant.debut && enfant.fin <= parent.fin
 
-    /** La référence résout-elle par QUELCONQUE voie du modèle K3/K4 ? */
+    /** La référence résout-elle par QUELCONQUE voie du modèle K3/K4 ?
+     *
+     * Étape B (H1) : la garde d'univers — les voies 4/5 (projet) ne
+     * prouvent l'absence QUE sur un scan COMPLET, la cascade rend VRAI
+     * sinon (miroir `selectionProjet`, vague 3). */
     private fun estResolu(
         racine: NoeudSyntaxique,
         reference: NoeudSyntaxique,
@@ -982,6 +1013,7 @@ internal object DiagnosticsSemantiques {
             contexte.declarationsProjet,
             index,
             contexte.portFichier,
+            universProjetComplet = contexte.scanProjetComplet,
         )
 
     // ── kt.typeMismatch ────────────────────────────────────────────────

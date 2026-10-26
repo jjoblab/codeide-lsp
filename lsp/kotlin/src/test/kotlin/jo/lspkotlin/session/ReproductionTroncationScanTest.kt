@@ -14,27 +14,22 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * REPRODUCTION H1 (mission fiabilisation, étape A.2 — hypothèse
- * « troncation à [BORN_FICHIERS] = 2000 » du prompt, constaté dans le
- * code puis vérifié ici) : la MARCHE du scan est bornée ; au-delà de
- * la borne, les fichiers sont silencieusement IGNORÉS — ils ne sont
- * même pas comptés dans les statistiques du passage (`total` borné,
- * indistinguable d'un petit projet sain) — et le drapeau `pret` est
- * posé quand même (ADR 0212 : « un résultat VIDE ou PARTIEL est un
- * état abouti »). Conséquence : [ScanProjet.estUniversConnu] répond
- * VRAI sur un univers TRONQUÉ, et la preuve d'absence sur les types
- * du PROJET n'est PAS fondée.
+ * H1 — TRONCATION DU SCAN (mission fiabilisation, étape A.2 → CORRECTIF
+ * étape B, rapport faux positifs 2026-10-26 §7.1) : la MARCHE du scan
+ * est bornée à [ScanProjet.BORN_FICHIERS] ; au-delà de la borne, les
+ * fichiers sont IGNORÉS du parse. L'étape B corrige les DEUX lacunes
+ * mesurées en A.2 :
  *
- * Le FAUX POSITIF est reproduit en session complète : une référence à
- * un type déclaré DERRIÈRE la borne produit un `kt.unresolved` — les
- * voies 4/5 de la résolution (déclarations du PROJET) ne sont gardées
- * par la complétude du scan QUE côté [DiagnosticsSemantiques]
- * `selectionProjet` (vague 3), PAS dans la cascade `estResolu`.
- *
- * ⚠️ Les tests « faux positif » documentent le comportement ACTUEL :
- * le correctif de l'étape B (refléter la troncation dans
- * `estUniversConnu`) INVERSERA leurs assertions — ils sont les tests
- * de reproduction du futur correctif.
+ *  - la MARCHE COMPTE au-delà de la borne
+ *    ([ScanProjet.statsDernierPassage] rend le total RÉEL des fichiers
+ *    éligibles — la troncation est OBSERVABLE côté bilan ADR 0213) ;
+ *  - le drapeau `pret` reste posé sur un passage tronqué (ADR 0212 :
+ *    fraîcheur du snapshot) MAIS [ScanProjet.estUniversConnu] rend
+ *    FAUX et la CASCADE de noms ([ResolutionReferences.estResolu])
+ *    coupe la preuve d'absence des voies 4/5 (miroir de la garde
+ *    `scanProjetComplet` de `selectionProjet`, vague 3) : une
+ *    référence à un type déclaré derrière la borne est MUETTE — plus
+ *    de faux `kt.unresolved`.
  *
  * La borne est injectée par la couture de test (3 fichiers) : le
  * parcours est DÉTERMINISTE (tri par nom), la cible « D.kt » sort
@@ -94,7 +89,7 @@ class ReproductionTroncationScanTest {
     }
 
     @Test
-    fun `marche bornee - le fichier au-dela de la borne est invisible et estUniversConnu reste vrai`() {
+    fun `marche bornee - le fichier au-dela de la borne est compte et estUniversConnu rend faux`() {
         val scan = ScanProjet(ParseurKotlin(), bornFichiers = 3)
         scan.definirRacines(listOf(semerProjet()))
         scan.attendrePassageCourant()
@@ -108,21 +103,23 @@ class ReproductionTroncationScanTest {
             "Cible" !in noms,
         )
         val stats = scan.statsDernierPassage()
-        // LACUNE n° 1 : la MARCHE elle-même est bornée — le 4e fichier
-        // n'est même pas compté, `total` = 3 : la troncation est
-        // INDÉTECTABLE dans les statistiques.
+        // Étape B, lacune n° 1 CORRIGÉE : la MARCHE compte AU-DELÀ de
+        // la borne — `total` = 4 (le total RÉEL des fichiers
+        // éligibles), la troncation est OBSERVABLE (faits 3 < total 4),
+        // plus de petit projet sain déguisé.
         assertEquals("faits", 3, stats.faits)
-        assertEquals("total BORNÉ à la marche — la troncation est invisible", 3, stats.total)
-        // LACUNE n° 2 (H1 CONFIRMÉE) : `pret` posé sur un passage
-        // TRONQUÉ — l'univers est déclaré CONNU.
+        assertEquals("total RÉEL (la marche compte au-delà de la borne)", 4, stats.total)
+        // Étape B, lacune n° 2 CORRIGÉE (H1) : `pret` reste posé
+        // (fraîcheur ADR 0212) mais l'univers TRONQUÉ n'est pas CONNU
+        // — la preuve d'absence projet est coupée.
         assertTrue(
-            "estUniversConnu() répond VRAI sur un univers TRONQUÉ : la preuve d'absence projet n'est pas fondée",
-            scan.estUniversConnu(),
+            "estUniversConnu() rend FAUX sur un univers TRONQUÉ : la preuve d'absence projet est coupée",
+            !scan.estUniversConnu(),
         )
     }
 
     @Test
-    fun `faux positif - la reference au type du fichier non scanne est signalee`() {
+    fun `correction - la reference au type du fichier non scanne est muette (absence non prouvable)`() {
         val session = sessionTronquee(semerProjet(), bornFichiers = 3)
         val source = "package com.ex.app\n\nval essai: Cible? = null\n"
         val uri = "file:///troncation-cible.kt"
@@ -132,14 +129,13 @@ class ReproductionTroncationScanTest {
                 .filter { it.code == CodesDiagnosticsKotlin.REFERENCE_NON_RESOLUE }
                 .map { it.message }
         session.close()
-        // ⚠️ COMPORTEMENT ACTUEL DOCUMENTÉ (H1 confirmée) : « Cible »
-        // est signalé non résolu alors que le type est DÉCLARÉ dans le
-        // projet (D.kt, derrière la borne). Le correctif étape B
-        // (estUniversConnu reflète la troncation) INVERSERA cette
-        // assertion.
+        // ÉTAPE B (H1 CORRIGÉE) : « Cible » est déclaré dans D.kt,
+        // DERRIÈRE la borne — l'univers est TRONQUÉ, les voies 4/5 ne
+        // peuvent prouver NI résolution NI absence : la référence est
+        // MUETTE (D3 — silence, jamais de faux positif).
         assertTrue(
-            "FAUX POSITIF attendu : « Cible » déclaré dans D.kt (derrière la borne) est signalé : $recus",
-            recus.any { it.contains("« Cible »") },
+            "Univers tronqué : « Cible » (derrière la borne) doit être MUET — absence non prouvable : $recus",
+            recus.none { it.contains("« Cible »") },
         )
     }
 
@@ -155,8 +151,8 @@ class ReproductionTroncationScanTest {
                 .map { it.message }
         session.close()
         // CONTRÔLE : la CIBLE scannée (borne 4) — aucune erreur. Prouve
-        // que le faux positif ci-dessus vient de la TRONCATION, pas du
-        // harnais.
+        // que le silence du test de correction ci-dessus vient de la
+        // GARDE d'univers, pas d'un mutisme du harnais.
         assertTrue(
             "la CIBLE scannée : « Cible » doit être muet : $recus",
             recus.none { it.contains("« Cible »") },

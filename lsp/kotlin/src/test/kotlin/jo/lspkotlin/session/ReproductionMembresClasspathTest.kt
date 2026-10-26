@@ -36,12 +36,11 @@ import java.io.File
  *  - `Couleur.values()` / `Couleur.valueOf(…)` (méthodes statiques
  *    nommées exactement) : MUETTES attendues ;
  *  - `Couleur.entries` (propriété synthétique portée par le getter
- *    STATIQUE `getEntries()`) : [ResolutionKotlin.getterSynthetique]
- *    exige un accesseur NON STATIQUE (KDoc l.322-325) → le getter est
- *    REJETÉ → l'absence est prouvée (ADR 0223) → FAUX `kt.unresolved`
- *    DOCUMENTÉ — c'est la H5 confirmée côté moteur ; le correctif
- *    étape B (accepter le getter statique quand le récepteur est la
- *    CLASSE elle-même, miroir ADR 0222) INVERSERA l'assertion.
+ *    STATIQUE `getEntries()`) : CORRIGÉ en étape B (rapport §7.3) —
+ *    [ResolutionKotlin.getterSynthetique] accepte le getter STATIQUE
+ *    quand le porteur est une CLASSE D'ENUM (drapeau ACC_ENUM, miroir
+ *    ADR 0222) : `MonEnum.entries` (Kotlin 1.9+) RÉSOUT, plus de faux
+ *    `kt.unresolved`.
  *
  * Le vrai négatif de contrôle (`Couleur.absenteDuBytecode`) reste
  * signalé — preuve que le harnais ne valide pas un « tout muet ».
@@ -165,7 +164,7 @@ class ReproductionMembresClasspathTest {
     }
 
     @Test
-    fun `enum classpath - entries (getter STATIQUE) est signale, faux positif documente`() {
+    fun `enum classpath - entries (getter STATIQUE) est muet (miroir ADR 0222)`() {
         val session = session()
         val source =
             """
@@ -180,16 +179,14 @@ class ReproductionMembresClasspathTest {
         session.ouvrirDocument(uri, source)
         val recus = nonResolues(session, uri)
         session.close()
-        // ⚠️ COMPORTEMENT ACTUEL DOCUMENTÉ (H5 confirmée côté moteur) :
-        // `entries` vit dans le bytecode comme getter STATIQUE
-        // getEntries() ; getterSynthetique n'accepte que les accesseurs
-        // NON STATIQUES → la propriété est introuvable → ADR 0223 prouve
-        // l'absence → FAUX `kt.unresolved` sur toute écriture
-        // `MonEnum.entries` (Kotlin 1.9+). Le correctif étape B
-        // INVERSERa cette assertion.
+        // ÉTAPE B (H5 CORRIGÉE) : `entries` vit dans le bytecode comme
+        // getter STATIQUE getEntries() — [ResolutionKotlin.getterSynthetique]
+        // accepte le getter statique quand le porteur est une CLASSE
+        // D'ENUM (miroir ADR 0222) : `Couleur.entries` RÉSOUT, plus de
+        // faux `kt.unresolved` (Kotlin 1.9+).
         assertTrue(
-            "FAUX POSITIF attendu : « entries » (getter statique rejeté) est signalé : $recus",
-            recus.any { it.contains("« entries »") },
+            "« entries » (getter statique d'enum accepté) doit être MUET : $recus",
+            recus.none { it.contains("« entries »") },
         )
     }
 

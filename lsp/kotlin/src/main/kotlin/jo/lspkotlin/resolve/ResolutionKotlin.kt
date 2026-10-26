@@ -1,5 +1,6 @@
 package jo.lspkotlin.resolve
 
+import jo.lspkotlin.api.DRAPEAU_ENUM_KOTLIN
 import jo.lspkotlin.api.MembreJvmKotlin
 import jo.lspkotlin.api.MembresTypeKotlin
 import jo.lspkotlin.api.VueClasspathKotlin
@@ -319,10 +320,30 @@ internal class ResolutionKotlin(
     // un faux `kt.unresolved`.
 
     /**
+     * Le nom est-il un APPELABLE INTRINSÈQUE du compilateur (étape B,
+     * §7.2 du rapport faux positifs) ? Les constructeurs de tableaux
+     * (`arrayOf`, `intArrayOf`…) et `enumValues`/`enumValueOf` sont
+     * @InlineOnly SANS miroir bytecode dans le stdlib — l'index des
+     * appelables ne peut JAMAIS les connaître. Ils sont tous top-level
+     * du paquet racine `kotlin` (importé par défaut sur JVM) : la
+     * réputation est EXACTE, miroir des [IMPORTS_DEFAUT] consultés par
+     * [fqcnDuNomEcrit] (voie 5).
+     */
+    internal fun estAppeableIntrinseque(nom: String): Boolean = nom in APPELABLES_INTRINSEQUES
+
+    /**
      * GETTER synthétique du nom de propriété [nom] sur la chaîne de
      * [fqcn] — méthode `getFoo()`/`isFoo()` publique ou protégée, NON
      * statique, SANS paramètre et au retour NON void, premier porteur
      * de la chaîne (surcharges par nom seule — K3).
+     *
+     * Étape B (H5, mission fiabilisation — miroir ADR 0222) : un
+     * getter STATIQUE est accepté quand le porteur est une CLASSE
+     * D'ENUM — Kotlin 1.9+ y génère `getEntries()` (la propriété
+     * `MonEnum.entries`, vérifié sur kotlin.io.FileWalkDirection du
+     * stdlib) ; les getters statiques des classes NON enum restent
+     * REJETÉS (un getter Java statique n'est JAMAIS une propriété
+     * Kotlin, miroir kotlinc).
      *
      * @return la méthode portante et son propriétaire, `null` sinon.
      */
@@ -336,7 +357,7 @@ internal class ResolutionKotlin(
                 val methode =
                     membres.methodes.firstOrNull { m ->
                         nomCorrespond(m.nom, candidat) && estAccesseurValide(m, unParametre = false)
-                    }
+                    } ?: getterStatiqueEnum(membres, candidat)
                 if (methode != null) return MemeJvmNomme(methode, proprietaire = courant)
             }
         }
@@ -403,6 +424,40 @@ internal class ResolutionKotlin(
     /** Première lettre en MAJUSCULE (`layoutInflater` → `LayoutInflater`). */
     private fun String.majusculePremier(): String =
         if (isEmpty() || this[0].isUpperCase()) this else replaceFirstChar { it.uppercaseChar() }
+
+    /**
+     * Getter STATIQUE `getFoo()`/`isFoo()` d'une classe D'ENUM — étape
+     * B (H5, miroir ADR 0222) : la SEULE génération Kotlin qui prête
+     * une propriété par getter statique est `EnumEntries` (1.9+,
+     * `getEntries()` sur toute classe d'enum — l'extension `E.entries`
+     * est INTRINSÈQUE, son miroir JVM vit SUR la classe). Les classes
+     * NON enum ne rendent RIEN (un getter Java statique n'est jamais
+     * une propriété Kotlin — miroir kotlinc).
+     */
+    private fun getterStatiqueEnum(
+        membres: MembresTypeKotlin,
+        candidat: String,
+    ): MembreJvmKotlin? {
+        if (membres.drapeauxClasse and DRAPEAU_ENUM_KOTLIN == 0) return null
+        return membres.methodes.firstOrNull { m ->
+            nomCorrespond(m.nom, candidat) && estAccesseurStatiqueEnum(m)
+        }
+    }
+
+    /** Accesseur STATIQUE d'enum offrable : public/protégé, STATIQUE,
+     *  zéro paramètre, retour NON void, ni `getClass` ni nom `'<'`/`'$'`. */
+    private fun estAccesseurStatiqueEnum(methode: MembreJvmKotlin): Boolean {
+        if (methode.drapeaux and DRAPEAU_ACCES_PUBLIC == 0 &&
+            methode.drapeaux and DRAPEAU_ACCES_PROTEGE == 0
+        ) {
+            return false
+        }
+        if (methode.drapeaux and DRAPEAU_ACCES_STATIQUE == 0) return false
+        if (methode.nom == "getClass") return false // kotlinc n'en fait JAMAIS une propriété
+        if (methode.nom.startsWith("<") || methode.nom.contains('$')) return false
+        val traduit = traduireDescripteur(methode.descripteur)
+        return traduit.parametres.isEmpty() && traduit.retour != "void"
+    }
 
     /**
      * Un membre JVM est-il un ACCESSEUR offrable : public ou protégé
@@ -617,6 +672,44 @@ internal class ResolutionKotlin(
                 "kotlin.text",
                 "kotlin.jvm",
                 "java.lang",
+            )
+
+        /**
+         * APPELABLES INTRINSÈQUES du compilateur — miroir d'IMPORTS_DEFAUT
+         * (voie 5) pour les FONCTIONS (mission fiabilisation, étape B,
+         * §7.2 du rapport faux positifs) : les constructeurs de tableaux
+         * (`arrayOf`, `intArrayOf`…) et `enumValues`/`enumValueOf` sont
+         * des @InlineOnly SANS AUCUN miroir bytecode dans le stdlib
+         * (vérifié sur kotlin-stdlib 2.2.10 : `kotlin.ArrayIntrinsicsKt`
+         * ne porte QUE `emptyArray`, `kotlin.enums` n'a MÊME PAS de
+         * classe EnumsKt) — l'index des appelables ne peut JAMAIS les
+         * connaître, le décodeur non plus (rien à décoder). Ces noms
+         * sont TOUS top-level du paquet racine `kotlin` (importé par
+         * défaut sur JVM) : la réputation est EXACTE — aucune
+         * condition de portée à vérifier.
+         */
+        internal val APPELABLES_INTRINSEQUES: Set<String> =
+            setOf(
+                // Constructeurs de tableaux (signés).
+                "arrayOf",
+                "arrayOfNulls",
+                "intArrayOf",
+                "longArrayOf",
+                "shortArrayOf",
+                "byteArrayOf",
+                "charArrayOf",
+                "booleanArrayOf",
+                "floatArrayOf",
+                "doubleArrayOf",
+                // Constructeurs de tableaux (non signés).
+                "ubyteArrayOf",
+                "ushortArrayOf",
+                "uintArrayOf",
+                "ulongArrayOf",
+                // Réification des enums (kotlin.enums — même famille
+                // d'intrinsèques sans bytecode).
+                "enumValues",
+                "enumValueOf",
             )
 
         /** Importants par défaut du Kotlin (JVM) — noms usuels.

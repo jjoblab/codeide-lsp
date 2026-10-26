@@ -33,12 +33,20 @@ import java.util.concurrent.FutureTask
  * invalidation : sans lui, chaque requête ré-amorcerait un WARM.
  *
  * ADR 0212/0213 — le scanner MARCHE D'ABORD puis PARSE : le listage
- * complet précède le traitement, la progression devient un VRAI X/N
- * (total connu) et l'observation par fichier ([ObservationScan])
- * alimente l'écran d'indexation ; retour `false` de l'observateur =
- * ANNULATION coopérative (ADR 0214) : le passage s'arrête ENTRE deux
- * fichiers, publie son PARTIEL et se marque `pret` (l'acquis est
- * exploitable, la reprise ADR 0214 le complète).
+ * précède le traitement, la progression devient un VRAI X/N (total
+ * connu) et l'observation par fichier ([ObservationScan]) alimente
+ * l'écran d'indexation ; retour `false` de l'observateur = ANNULATION
+ * coopérative (ADR 0214) : le passage s'arrête ENTRE deux fichiers,
+ * publie son PARTIEL et se marque `pret` (l'acquis est exploitable,
+ * la reprise ADR 0214 le complète).
+ *
+ * ÉTAPE B (mission fiabilisation, H1 — rapport faux positifs
+ * 2026-10-26 §7.1) : la MARCHE est honnête — seule la COLLECTE des
+ * fichiers à traiter est bornée ([BORN_FICHIERS]), le COMPTE des
+ * fichiers éligibles ne l'est PAS ([StatsPassage.total] rend le total
+ * RÉEL) ; un passage TRONQUÉ porte [tronque] et [estUniversConnu]
+ * rend FAUX (un univers tronqué n'est pas un univers CONNU — la
+ * preuve d'absence projet est coupée, miroir de la garde vague 3).
  *
  * PARTAGÉ par le moteur (toutes les sessions d'un projet) : les
  * connexions LSP successives ne re-scannent pas ; le scan est
@@ -91,9 +99,50 @@ internal class ScanProjet(
     @Volatile
     private var pret = false
 
+    /**
+     * Le dernier passage PUBLIÉ était-il TRONQUÉ (des fichiers
+     * éligibles vivent derrière [BORN_FICHIERS]) ? Étape B (H1) : un
+     * univers tronqué n'est PAS un univers CONNU — [estUniversConnu]
+     * coupe la preuve d'absence. Publié sous le MÊME verrou que
+     * `scannees`/`pret` (cohérence de la paire). @Volatile : KP6.
+     */
+    @Volatile
+    private var tronque = false
+
     /** Statistiques du dernier passage (progression, re-parses). */
     @Volatile
     private var statsPassage = StatsPassage(0, 0, 0)
+
+    /**
+     * Marche récursive des racines (dossiers cachés/build exclus) —
+     * la COLLECTE des fichiers à TRAITER est bornée, le COMPTE des
+     * fichiers éligibles ne l'est PAS (étape B, H1 : statistiques
+     * honnêtes, troncation observable).
+     */
+    private class Marche(private val borne: Int) {
+        /** Fichiers à TRAITER (parse, cache — collecte bornée). */
+        internal val fichiers = mutableListOf<File>()
+
+        /** Total de fichiers éligibles VUS (compte NON borné — honnête). */
+        internal var vus = 0
+            private set
+
+        /** Des fichiers éligibles vivent-ils derrière la borne ? */
+        internal val tronque: Boolean
+            get() = vus > fichiers.size
+
+        /** Compte UN fichier éligible ; le collecte si la borne le permet. */
+        internal fun ajouter(fichier: File) {
+            vus++
+            if (fichiers.size < borne) fichiers.add(fichier)
+        }
+    }
+
+    /** Résultat d'un passage : déclarations + TRONCATION de la marche. */
+    private class ResultatScan(
+        internal val declarations: List<DeclarationProjet>,
+        internal val tronque: Boolean,
+    )
 
     /**
      * Observateur du passage (ADR 0213) — posé par le moteur avant
@@ -108,7 +157,7 @@ internal class ScanProjet(
 
     /** Tâche WARM en vol (s'y joindre — [declarations] l'attend, jamais
      *  de re-scan concurrent du même travail). */
-    private var enVol: FutureTask<List<DeclarationProjet>>? = null
+    private var enVol: FutureTask<ResultatScan>? = null
 
     /**
      * Cache par FICHIER : chemin → (mtime, déclarations). Un fichier
@@ -138,7 +187,12 @@ internal class ScanProjet(
         ): Boolean
     }
 
-    /** Statistiques d'un passage de scan (bilan ADR 0213). */
+    /** Statistiques d'un passage de scan (bilan ADR 0213).
+     *
+     * [total] est le total RÉEL des fichiers éligibles VUS (étape B,
+     * H1 — la marche compte AU-DELÀ de la borne) : `faits < total`
+     * signale une troncation ou une annulation, jamais un petit projet
+     * sain déguisé. */
     internal class StatsPassage(
         internal val faits: Int,
         internal val total: Int,
@@ -157,6 +211,7 @@ internal class ScanProjet(
             racines = nouvelles
             scannees = emptyList()
             pret = false
+            tronque = false
         }
         amorcerScan()
     }
@@ -175,6 +230,7 @@ internal class ScanProjet(
         synchronized(verrouScan) {
             scannees = emptyList()
             pret = false
+            tronque = false
         }
         amorcerScan()
     }
@@ -198,9 +254,9 @@ internal class ScanProjet(
 
     /**
      * URIs des sources KOTLIN des racines (`file://` FUSE, même marche
-     * bornée que le scan — S2 occurrences : le balayage des fichiers
-     * fermés pour references/rename, avec le MÊME plafond
-     * [BORN_FICHIERS]). Les `.kts` sont exclus (même convention que le
+     * que le scan — S2 occurrences : le balayage des fichiers fermés
+     * pour references/rename, avec le MÊME plafond de collecte que la
+     * marche du scan). Les `.kts` sont exclus (même convention que le
      * scan), les `.java` aussi (le moteur Kotlin ne collecte pas
      * d'occurrences dans les sources Java — sous-rapport D3 documenté).
      *
@@ -209,21 +265,21 @@ internal class ScanProjet(
      *
      * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
      * — le continue de l'extension et le return du plafond sont les
-     * DEUX bornes du parcours (miroir de [parcourir]).
+     * DEUX bornes du parcours de lecture.
      */
     @Suppress("LoopWithTooManyJumpStatements")
     internal fun fichiersSources(exclure: Set<String> = emptySet()): List<String> {
         val resultat = mutableListOf<String>()
+        val marche = Marche(bornFichiers)
         for (racine in racines) {
-            val fichiers = mutableListOf<File>()
-            parcourir(racine, fichiers)
-            for (fichier in fichiers) {
-                if (fichier.extension != "kt") continue
-                val uri = fichier.toURI().toString()
-                if (uri in exclure) continue
-                resultat.add(uri)
-                if (resultat.size >= BORN_FICHIERS) return resultat
-            }
+            parcourir(racine, marche)
+        }
+        for (fichier in marche.fichiers) {
+            if (fichier.extension != "kt") continue
+            val uri = fichier.toURI().toString()
+            if (uri in exclure) continue
+            resultat.add(uri)
+            if (resultat.size >= BORN_FICHIERS) return resultat
         }
         return resultat
     }
@@ -295,13 +351,16 @@ internal class ScanProjet(
      * L'univers des sources projet est-il COMPLET pour la PREUVE
      * d'ABSENCE (retour utilisateurs 25/10/2026, vague 3) ? Racines
      * VIDES (l'univers est alors exactement les documents OUVERTS —
-     * le moteur n'a jamais promis les fichiers fermés) ou dernier
+     * le moteur n'a jamais promis les fichiers fermés), dernier
      * passage ABOUTI pour les racines courantes (`pret` — un scan
-     * amorcé mais pas publié rend le snapshot PARTIEL : une
-     * extension vivant dans un fichier non encore scanné rendrait
-     * une absence « prouvée » FAUSSE, D3 l'interdit). @Volatile : KP6.
+     * amorcé mais pas publié rend le snapshot PARTIEL : une extension
+     * vivant dans un fichier non encore scanné rendrait une absence
+     * « prouvée » FAUSSE, D3 l'interdit) ET NON TRONQUÉ (`tronque` —
+     * étape B, H1 : un type déclaré derrière [BORN_FICHIERS]
+     * rendrait l'absence des voies 4/5 tout aussi fausse).
+     * @Volatile : KP6.
      */
-    internal fun estUniversConnu(): Boolean = racines.isEmpty() || pret
+    internal fun estUniversConnu(): Boolean = racines.isEmpty() || (pret && !tronque)
 
     /** Statistiques du dernier passage (progression + re-parses — bilan ADR 0213). */
     internal fun statsDernierPassage(): StatsPassage = statsPassage
@@ -328,7 +387,7 @@ internal class ScanProjet(
             if (racines.isEmpty() || enVol != null) return
             val racinesDuScan = racines
             val tache =
-                FutureTask<List<DeclarationProjet>> {
+                FutureTask<ResultatScan> {
                     try {
                         val resultat = scanner(racinesDuScan)
                         publierResultat(racinesDuScan, resultat)
@@ -347,16 +406,20 @@ internal class ScanProjet(
      * depuis le lancement (sinon le résultat est PÉRIMÉ — il n'est PAS
      * publié, la prochaine lecture ré-amorcera). Le drapeau `pret`
      * suit l'aboutissement (ADR 0212 — un résultat VIDE ou PARTIEL
-     * annulé est un état abouti, pas une invalidation).
+     * annulé est un état abouti, pas une invalidation) ; `tronque`
+     * suit la MARCHE (étape B, H1 — il ne coupe PAS `pret` : la
+     * fraîcheur du snapshot tient, c'est la PREUVE D'ABSENCE que
+     * [estUniversConnu] coupe).
      */
     private fun publierResultat(
         racinesDuScan: List<File>,
-        resultat: List<DeclarationProjet>,
+        resultat: ResultatScan,
     ) {
         synchronized(verrouScan) {
             if (racines == racinesDuScan) {
-                scannees = resultat
+                scannees = resultat.declarations
                 pret = true
+                tronque = resultat.tronque
             }
         }
     }
@@ -377,18 +440,20 @@ internal class ScanProjet(
      * branches du parcours multi-langue.
      */
     @Suppress("SwallowedException", "LoopWithTooManyJumpStatements")
-    private fun scanner(racinesDuScan: List<File>): List<DeclarationProjet> {
-        // 1. MARCHE d'abord — total connu (ADR 0212/0213).
-        val fichiers = mutableListOf<File>()
+    private fun scanner(racinesDuScan: List<File>): ResultatScan {
+        // 1. MARCHE d'abord — total CONNU et HONNÊTE (ADR 0212/0213 ;
+        //    étape B, H1 : le COMPTE va au-delà de la borne, seule la
+        //    COLLECTE est bornée).
+        val marche = Marche(bornFichiers)
         for (racine in racinesDuScan) {
-            parcourir(racine, fichiers)
+            parcourir(racine, marche)
         }
-        val vivants = fichiers.map { it.path }.toMutableSet()
+        val vivants = marche.fichiers.map { it.path }.toMutableSet()
         // 2. PARSE ensuite — incrémental mtime, observation par fichier.
         val resultat = mutableListOf<DeclarationProjet>()
         var reanalyses = 0
         var traites = 0
-        for ((index, fichier) in fichiers.withIndex()) {
+        for ((index, fichier) in marche.fichiers.withIndex()) {
             val chemin = fichier.path
             val mtime = fichier.lastModified()
             val enCache = cacheFichiers[chemin]
@@ -405,7 +470,7 @@ internal class ScanProjet(
             }
             traites = index + 1
             val obs = observateur
-            if (obs != null && !obs.surFichier(traites, fichiers.size, fichier.name)) {
+            if (obs != null && !obs.surFichier(traites, marche.fichiers.size, fichier.name)) {
                 // Annulation coopérative (ADR 0214) : l'acquis est
                 // publié, le passage se marquera PARTIEL côté moteur.
                 break
@@ -418,10 +483,10 @@ internal class ScanProjet(
         statsPassage =
             StatsPassage(
                 faits = traites,
-                total = fichiers.size,
+                total = marche.vus,
                 reanalyses = reanalyses,
             )
-        return resultat
+        return ResultatScan(resultat, marche.tronque)
     }
 
     /**
@@ -449,37 +514,36 @@ internal class ScanProjet(
         }
 
     /**
-     * Marche récursive bornée (dossiers cachés/build exclus).
-     *
-     * Exemption detekt ciblée (règle 16) : ReturnCount/LoopWithTooManyJump-
-     * Statements — les bornes (fichiers au max, dossier illisible,
-     * exclusion) sont des ISSUES du parcours borné.
+     * Marche récursive (dossiers cachés/build exclus) — dossiers en
+     * profondeur, fichiers éligibles dans l'ORDRE du tri par nom
+     * (déterminisme : la même cible sort toujours devant/derrière la
+     * borne). La COLLECTE s'arrête à la borne, le COMPTE CONTINUE
+     * (étape B, H1 — [Marche.ajouter] décide) ; un dossier illisible
+     * est ABSENT (D3, l'exception est le signal).
      */
-    @Suppress("ReturnCount", "LoopWithTooManyJumpStatements")
     private fun parcourir(
         dossier: File,
-        fichiers: MutableList<File>,
+        marche: Marche,
     ) {
-        if (fichiers.size >= bornFichiers) return
         val enfants = dossier.listFiles() ?: return
         for (enfant in enfants.sortedBy { it.name }) {
-            if (fichiers.size >= bornFichiers) return
             when {
                 enfant.isDirectory ->
                     if (enfant.name !in EXCLUSIONS && !enfant.name.startsWith(".")) {
-                        parcourir(enfant, fichiers)
+                        parcourir(enfant, marche)
                     }
 
                 enfant.isFile &&
                     (enfant.extension == "kt" && !enfant.name.endsWith(".kts") ||
                         enfant.extension == "java") ->
-                    fichiers.add(enfant)
+                    marche.ajouter(enfant)
             }
         }
     }
 
     private companion object {
-        /** Borne de fichiers scannés (troncation honnête au-delà). */
+        /** Borne de fichiers TRAITÉS (collecte bornée, compte honnête
+         *  au-delà — étape B, H1 : [ScanProjet.tronque]). */
         private const val BORN_FICHIERS: Int = 2000
 
         /** Dossiers exclus (sorties, caches — le scan est le SOURCE). */

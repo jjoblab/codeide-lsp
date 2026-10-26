@@ -42,6 +42,11 @@ internal object CandidatsImport {
      * @param declarationsProjet déclarations du projet.
      * @param index appelables de premier niveau (voie de résolution).
      * @param vue vue de classpath (source des candidats), `null` : vide.
+     * @param portFichier port des fichiers frères (voie 2-ter, ADR 0216).
+     * @param universProjetComplet l'univers des sources projet est-il
+     *        COMPLET (étape B, H1) ? Un scan TRONQUÉ coupe la preuve
+     *        d'absence : aucun candidat d'import n'est proposé (le nom
+     *        peut vivre derrière la borne — miroir du diagnostic).
      * @return les FQCN par nom exact, ordre du classpath ; vide sinon.
      */
     internal fun fqcns(
@@ -53,6 +58,7 @@ internal object CandidatsImport {
         index: IndexAppelablesKotlin?,
         vue: VueClasspathKotlin?,
         portFichier: SuperKotlin.PortFichier? = null,
+        universProjetComplet: Boolean = true,
     ): List<String> {
         val vueEffective = vue ?: return emptyList()
         val nom = nomReferencePosition(racine, decalage) ?: return emptyList()
@@ -60,9 +66,12 @@ internal object CandidatsImport {
         // MÊME prédicat que le diagnostic — membres HÉRITÉS compris (ADR
         // 0216) : sinon le quick-fix proposerait un import pour un appel
         // NU à un membre du supertype (setContentView…), déjà résolu.
+        // Garde d'univers (étape B, H1) comprise : sur un scan TRONQUÉ,
+        // l'absence n'est pas prouvable — le quick-fix se tait aussi.
         if (
             ResolutionReferences.estResolu(
                 racine, decalage, nom, contexteNom, resolution, declarationsProjet, index, portFichier,
+                universProjetComplet = universProjetComplet,
             )
         ) {
             return emptyList()

@@ -23,9 +23,13 @@ import java.io.File
  * échoue et l'écriture `arrayOf(…)` / `intArrayOf(…)` produit un FAUX
  * `kt.unresolved` en session réelle avec le VRAI jar stdlib.
  *
- * ⚠️ COMPORTEMENT ACTUEL DOCUMENTÉ : le correctif de l'étape B (voire
- * une entrée « builtins réputées » du moteur, miroir
- * [ResolutionKotlin.IMPORTS_DEFAUT] côté noms) INVERSERa l'assertion.
+ * CORRECTIF ÉTAPE B (rapport faux positifs §7.2) : les intrinsèques
+ * sont RÉPUTÉES côté moteur ([ResolutionKotlin.APPELABLES_INTRINSEQUES],
+ * miroir d'IMPORTS_DEFAUT côté noms) — la voie 6 les résout SANS
+ * index : plus de faux `kt.unresolved` sur `arrayOf(…)` / `intArrayOf(…)`.
+ * La réputation couvre AUSSI la même famille vérifiée sans bytecode :
+ * les autres constructeurs `*ArrayOf` (signés et non signés) et
+ * `enumValues`/`enumValueOf`.
  *
  * CONTRÔLES : `listOf`, `emptyArray` et `println` (lus par le
  * décodeur) restent muets — le faux positif vient bien de l'index,
@@ -80,24 +84,35 @@ class ReproductionAppelablesBuiltinTest {
             .map { it.message }
 
     @Test
-    fun `builtins arrayOf et intArrayOf - faux positifs documentes`() {
+    fun `builtins arrayOf et intArrayOf - intrinseques réputées, muets`() {
         val session = session()
         val source =
             """
+            enum class Couleur { ROUGE }
+
             fun demo() {
                 val x = arrayOf(1, 2)
                 val y = intArrayOf(1, 2)
+                val u = uintArrayOf(1u, 2u)
+                val e = enumValues<Couleur>()
+                val f = enumValueOf<Couleur>("ROUGE")
             }
             """.trimIndent()
         val uri = "file:///builtin-tableaux.kt"
         session.ouvrirDocument(uri, source)
         val recus = nonResolues(session, uri)
         session.close()
-        // ⚠️ COMPORTEMENT ACTUEL DOCUMENTÉ : les builtins de tableaux ne
-        // vivent pas dans l'index des appelables → faux `kt.unresolved`.
+        // ÉTAPE B (§7.2) : intrinsèques RÉPUTÉES — la voie 6 résout
+        // sans index (aucun miroir bytecode dans le stdlib). La famille
+        // ÉTENDUE est verrouillée aussi : non signés (uintArrayOf) et
+        // réification d'enum (enumValues/enumValueOf, kotlin.enums).
         assertTrue(
-            "FAUX POSITIFS attendus : « arrayOf » et « intArrayOf » (absents de l'index) sont signalés : $recus",
-            recus.any { it.contains("« arrayOf »") } && recus.any { it.contains("« intArrayOf »") },
+            "intrinsèques réputées muettes (arrayOf, intArrayOf, uintArrayOf, enumValues, enumValueOf) : $recus",
+            recus.none {
+                it.contains("« arrayOf »") || it.contains("« intArrayOf »") ||
+                    it.contains("« uintArrayOf »") || it.contains("« enumValues »") ||
+                    it.contains("« enumValueOf »")
+            },
         )
     }
 

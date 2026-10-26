@@ -15,8 +15,12 @@ import java.io.File
  * POJO Java sont invisibles au moteur Kotlin »).
  *
  * Extraction VOLONTAIREMENT à bornes (D3) :
- *  - types et MEMBRES de PREMIER niveau seuls (les imbriquées Java et
- *    les membres HÉRITÉS d'une superclasse Java sous-rapportent) ;
+ *  - types de PREMIER niveau + leurs membres, ET (étape B, H3 —
+ *    rapport faux positifs §7.5) TYPES IMBRIQUÉS en extraction
+ *    RÉCURSIVE BORNÉE ([BORN_IMBRIQUEES]) : chaque imbriquée est
+ *    émise comme DÉCLARATION (genre exact, conteneur = FQCN du
+ *    parent) et son corps est reparcouru — les membres HÉRITÉS
+ *    d'une superclasse Java restent sous-rapportés ;
  *  - membres = champs et méthodes au niveau 1 du corps du type : le
  *    texte des blocs imbriqués (corps de méthodes, classes
  *    anonymes) est ignoré par ANCRAGE de la signature au début de
@@ -71,6 +75,12 @@ internal object SourcesJava {
                 "(class|interface|enum|record|@interface)\\s+([A-Za-z_][A-Za-z0-9_]*)",
         )
 
+    /** Motif d'un TYPE IMBRIQUÉ en TÊTE de segment (étape B, H3) —
+     *  ANCRÉ : après consommation des modificateurs, le mot-clé de
+     *  type ouvre le segment (`public static class Bac { … }`). */
+    private val MOTIF_TYPE_SEGMENT =
+        Regex("^(class|interface|enum|record|@interface)\\s+([A-Za-z_][A-Za-z0-9_]*)")
+
     /** Modificateurs de membres Java (espacés en tête de segment). */
     private val MOTIF_MODIFICATEURS =
         Regex(
@@ -102,6 +112,10 @@ internal object SourcesJava {
 
     /** Borne de membres extraits par corps (fichier dégénéré — D3). */
     private const val BORN_MEMBRES = 500
+
+    /** Borne de profondeur d'extraction des TYPES IMBRIQUÉS (étape B,
+     *  H3 — niveau 2 à 5 émis, les corps au-delà sous-rapportent, D3). */
+    private const val BORN_IMBRIQUEES = 4
 
     /** Portée d'extraction d'un fichier : URI + paquet du porteur. */
     private class Portee(
@@ -140,10 +154,12 @@ internal object SourcesJava {
             val plage = correspondance.groups[2]?.range ?: continue
             // PREMIER NIVEAU SEUL (D3) : une classe imbriquée ou locale
             // portée comme top-niveau donnerait un FQCN FAUX — jamais.
+            // Les imbriquées vivent dans le PARCOURS DES CORPS
+            // ([membresDuType], étape B) avec leur conteneur pour FQCN.
             if (profondeurA(neutralise, plage.first) != 0) continue
             val type = declaration(correspondance, plage, portee, neutralise)
             resultat += type
-            resultat += membresDuType(neutralise, type, portee)
+            resultat += membresDuType(neutralise, type, portee, profondeur = 1)
         }
         return resultat
     }
@@ -234,37 +250,103 @@ internal object SourcesJava {
      * Membres de niveau 1 du corps du type [type] — champs et méthodes
      * (constructeurs exclus : sans type de retour écrit, ils ne
      * portent AUCUN membre résolvable ; leur arité reste non
-     * contrôlée, D3). Un membre se termine au `;` de profondeur 0
-     * (champ, méthode abstraite) ou à la FERMANTE qui ramène la
-     * profondeur à 0 (corps de méthode, classe anonyme d'un
-     * initialisateur) — le segment porte la signature ANCRÉE en tête.
+     * contrôlée, D3) — PLUS les TYPES IMBRIQUÉS du corps (étape B,
+     * H3 : extraction RÉCURSIVE BORNÉE — l'imbriquée de niveau 2 était
+     * émise comme PROPRIÉTÉ membre depuis la vague 2, les niveaux 3+
+     * étaient INVISIBLES → faux `kt.unresolved` en position de TYPE ;
+     * chaque imbriquée est désormais une DÉCLARATION à genre exact,
+     * conteneur = FQCN du parent, corps reparcouru). Un membre se
+     * termine au `;` de profondeur 0 (champ, méthode abstraite) ou à
+     * la FERMANTE qui ramène la profondeur à 0 (corps de méthode,
+     * classe anonyme d'un initialisateur, corps d'un type imbriqué) —
+     * le segment porte la signature ANCRÉE en tête.
      */
     private fun membresDuType(
         neutralise: String,
         type: DeclarationProjet,
         portee: Portee,
+        profondeur: Int,
     ): List<DeclarationProjet> {
         val ouverture = ouvertureCorps(neutralise, type.finNom) ?: return emptyList()
         val fermeture = fermanteCorrespondante(neutralise, ouverture) ?: return emptyList()
-        val fqcn = (type.paquet?.let { "$it." } ?: "") + type.nom
+        val fqcn = (type.conteneur ?: type.paquet)?.let { "$it." }.orEmpty() + type.nom
         val membres = mutableListOf<DeclarationProjet>()
         var debutSegment = ouverture + 1
-        var profondeur = 0
+        var profondeurAccolades = 0
         for (indice in ouverture + 1 until fermeture) {
             when (neutralise[indice]) {
-                '{' -> profondeur++
-                '}' -> profondeur--
+                '{' -> profondeurAccolades++
+                '}' -> profondeurAccolades--
                 ';' -> {}
                 else -> continue
             }
             // Fin de membre : séparateur de NIVEAU 1 uniquement (« ; »
             // hors bloc, ou fermante d'un bloc de niveau 1).
-            if (profondeur != 0) continue
-            membre(neutralise, debutSegment, indice + 1, fqcn, portee)?.let { membres += it }
+            if (profondeurAccolades != 0) continue
+            // Étape B, H3 — TYPE IMBRIQUÉ d'abord (déclaration à genre
+            // exact + récursion bornée dans son corps), membre
+            // ORDINAIRE sinon (vague 2 — l'ancien repli PROPRIÉTÉ des
+            // segments de type est REMPLACÉ par la déclaration).
+            val imbrique = typeImbrique(neutralise, debutSegment, indice + 1, fqcn, portee)
+            if (imbrique != null) {
+                membres += imbrique
+                if (profondeur < BORN_IMBRIQUEES) {
+                    membres += membresDuType(neutralise, imbrique, portee, profondeur + 1)
+                }
+            } else {
+                membre(neutralise, debutSegment, indice + 1, fqcn, portee)?.let { membres += it }
+            }
             debutSegment = indice + 1
             if (membres.size >= BORN_MEMBRES) return membres
         }
         return membres
+    }
+
+    /**
+     * Le segment [debut, fin[ déclare-t-il un TYPE IMBRIQUÉ (étape B,
+     * H3) ? Annotations espacées, modificateurs consommés, le
+     * mot-clé de type ANCRÉ en tête (`public static class Bac { … }`).
+     * La déclaration rendue porte le conteneur = FQCN du parent et
+     * AUCUNE preuve d'absence ([DeclarationProjet.estSansHeritageEcrit]
+     * = false — la vague 3 borne cette preuve au PREMIER niveau, D3
+     * conservateur : l'héritage ÉCRIT de l'imbriquée est parsé, mais
+     * sa fermeture de membres reste hors du périmètre de preuve).
+     */
+    private fun typeImbrique(
+        neutralise: String,
+        debut: Int,
+        fin: Int,
+        conteneurFqcn: String,
+        portee: Portee,
+    ): DeclarationProjet? {
+        if (fin <= debut) return null
+        val segment = espacerAnnotations(neutralise, debut, fin)
+        val sansTete = MOTIF_MODIFICATEURS.find(segment) ?: return null
+        val tete =
+            MOTIF_TYPE_SEGMENT.find(segment.substring(sansTete.value.length))
+                ?: return null
+        val nom = tete.groupValues[2]
+        if (nom.isEmpty() || '$' in nom) return null
+        val debutNom = debut + sansTete.value.length + tete.groups[2]!!.range.first
+        val motCle = tete.groupValues[1]
+        return DeclarationProjet(
+            genre = if (motCle == "interface" || motCle == "@interface") {
+                GenreDeclaration.INTERFACE
+            } else {
+                GenreDeclaration.CLASSE
+            },
+            nom = nom,
+            uri = portee.uri,
+            debutNom = debutNom,
+            finNom = debutNom + nom.length,
+            paquet = portee.paquet,
+            recepteur = null,
+            typeRetour = null,
+            parametres = emptyList(),
+            conteneur = conteneurFqcn,
+            estJava = true,
+            estSansHeritageEcrit = false,
+        )
     }
 
     /**

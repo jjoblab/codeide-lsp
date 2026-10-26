@@ -28,16 +28,17 @@ import java.io.File
  *    approximatif (PROPRIETE plutôt que type imbriqué) ne dessert pas
  *    le diagnostic, il borne la complétion/navigation (écart consigné
  *    dans le rapport) ;
- *  - NIVEAU 3 (`Aquarium.Bac.Couloir` en position de TYPE) :
- *    « Couloir » est SIGNALÉ — les membres DE l'imbriquée ne sont pas
- *    extraits (seul le niveau 1 du type premier l'est) → FAUX
- *    `kt.unresolved` DOCUMENTÉ (le correctif étape B INVERSERa
- *    l'assertion) ;
+ *  - NIVEAU 3 (`Aquarium.Bac.Couloir` en position de TYPE) : CORRIGÉ
+ *    en étape B (rapport §7.5) — [SourcesJava] extrait les types
+ *    IMBRIQUÉS en RÉCURSIF BORNÉ (chaque imbriquée = DÉCLARATION à
+ *    genre exact, conteneur = FQCN du parent, membres compris) :
+ *    « Couloir » est MUET ;
  *  - NIVEAU 3 en position d'EXPRESSION (callee) : MUET — la garde
  *    sélecteur (récepteur `Aquarium.Bac` non typable → INCONNU, ADR
  *    0223) couvre ce cas ;
- *  - MEMBRE de l'imbriquée (`b.capacite`) : MUET — sous-rapport D3
- *    (non extrait, jamais prouvable absent).
+ *  - MEMBRE de l'imbriquée (`b.capacite`) : MUET — résolu par le
+ *    membre extrait du corps de l'imbriquée (et sous-rapport D3
+ *    au-delà de la borne de récursion, jamais prouvable absent).
  *
  * Contrôles de non-régression : membres de niveau 1 (vague 2) et
  * entrées d'enum Java (vague 3).
@@ -168,7 +169,7 @@ class ReproductionJavaImbriqueTest {
     }
 
     @Test
-    fun `imbriquee de niveau 3 en type - le dernier segment est signale (faux positif documente)`() {
+    fun `imbriquee de niveau 3 en type - extraction recursive, dernier segment muet`() {
         val session = session(listOf(semerSourcesJava()))
         val source =
             """
@@ -180,15 +181,15 @@ class ReproductionJavaImbriqueTest {
         session.ouvrirDocument(uri, source)
         val recus = nonResolues(session, uri)
         session.close()
-        // ⚠️ COMPORTEMENT ACTUEL DOCUMENTÉ (H3 confirmée au NIVEAU 3) :
-        // « Couloir » est déclarée dans Bac (imbriquée de niveau 3) mais
-        // seuls les membres de NIVEAU 1 du type premier sont extraits →
-        // dernier segment du type qualifié introuvable → faux
-        // `kt.unresolved`. Le correctif étape B INVERSERa cette
-        // assertion.
+        // ÉTAPE B (H3 CORRIGÉE) : « Couloir » est déclarée dans Bac
+        // (imbriquée de niveau 3) — l'extraction RÉCURSIVE BORNÉE de
+        // [SourcesJava] émet chaque imbriquée comme DÉCLARATION (genre
+        // exact, conteneur = FQCN du parent) : la voie 4 résout le
+        // dernier segment du type qualifié → MUET, plus de faux
+        // `kt.unresolved`.
         assertTrue(
-            "FAUX POSITIF attendu : l'imbriquée de niveau 3 « Couloir » est signalée : $recus",
-            recus.any { it.contains("« Couloir »") },
+            "l'imbriquée de niveau 3 « Couloir » (extraction récursive) doit être MUETTE : $recus",
+            recus.none { it.contains("« Couloir »") },
         )
         assertTrue(
             "les segments AMONT (« Aquarium », « Bac ») restent muets (un seul segment faillible, E4) : $recus",

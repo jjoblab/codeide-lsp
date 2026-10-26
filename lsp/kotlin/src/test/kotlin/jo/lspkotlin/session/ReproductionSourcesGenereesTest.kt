@@ -29,12 +29,13 @@ import java.io.File
  * 4/5 de la résolution échouent et la référence produit un FAUX
  * `kt.unresolved`.
  *
- * ⚠️ Ce test documente le comportement ACTUEL (H2 confirmée attendue) :
- * le correctif de l'étape B (racines générées de `build/generated` en
- * lecture seule, ou silence sur les conventions de nommage générées)
- * INVERSERa l'assertion du premier cas — il est le test de
- * reproduction du futur correctif. Le CONTRÔLE prouve que le même
- * fichier dans une racine NON exclue résout sans erreur.
+ * CORRECTIF ÉTAPE B (rapport §7.4) : SILENCE sur les conventions de
+ * nommage générées (`Hilt_`, `_Impl`, `BindingImpl` —
+ * [DiagnosticsSemantiques.estNomGenere]) — l'option « racines
+ * build/generated en lecture » est ÉCARTÉE : le scan est le SOURCE
+ * (ADR 0212) et les racines générées viennent du TOOLING
+ * (`EnsemblesSources.generes`) après un build. Le CONTRÔLE prouve
+ * que le même fichier dans une racine NON exclue résout sans erreur.
  *
  * Les classes synthétiques D5 (R, BuildConfig, ViewBinding,
  * DataBinding) ne couvrent PAS les conventions KSP/Hilt/Room — c'est
@@ -110,7 +111,7 @@ class ReproductionSourcesGenereesTest {
             .map { it.message }
 
     @Test
-    fun `source generee dans build - le parent Hilt est signale (faux positif documente)`() {
+    fun `source generee dans build - le parent Hilt est muet (convention generee)`() {
         val session = session(listOf(semerProjet()))
         val source =
             """
@@ -122,13 +123,15 @@ class ReproductionSourcesGenereesTest {
         session.ouvrirDocument(uri, source)
         val recus = nonResolues(session, uri)
         session.close()
-        // ⚠️ COMPORTEMENT ACTUEL DOCUMENTÉ (H2 confirmée attendue) :
-        // « Hilt_MainActivity » est déclaré dans build/generated (KSP)
-        // mais le scan EXCLUT build/ → faux `kt.unresolved`. Le
-        // correctif étape B INVERSERa cette assertion.
+        // ÉTAPE B (H2 CORRIGÉE) : « Hilt_MainActivity » est déclaré
+        // dans build/generated (KSP) — le scan EXCLUT build/ (ADR 0212,
+        // le scan est le SOURCE) et les racines générées viennent du
+        // TOOLING après un build. Le préfixe `Hilt_` est une CONVENTION
+        // GÉNÉRÉE : l'absence n'est PAS prouvable sans build → MUET
+        // (D3 — [DiagnosticsSemantiques.estNomGenere]).
         assertTrue(
-            "FAUX POSITIF attendu : le parent généré « Hilt_MainActivity » (build/generated) est signalé : $recus",
-            recus.any { it.contains("« Hilt_MainActivity »") },
+            "le parent généré « Hilt_MainActivity » (convention Hilt_) doit être MUET : $recus",
+            recus.none { it.contains("« Hilt_MainActivity »") },
         )
     }
 
