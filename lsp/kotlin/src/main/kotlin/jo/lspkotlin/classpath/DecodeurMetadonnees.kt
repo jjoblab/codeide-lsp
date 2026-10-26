@@ -10,6 +10,7 @@ import kotlin.metadata.KmFunction
 import kotlin.metadata.KmPackage
 import kotlin.metadata.KmProperty
 import kotlin.metadata.KmType
+import kotlin.metadata.KmTypeAlias
 import kotlin.metadata.KmTypeParameter
 import kotlin.metadata.Visibility
 import kotlin.metadata.jvm.KotlinClassMetadata
@@ -27,8 +28,10 @@ import java.util.zip.ZipInputStream
  * Entrée : jar OU AAR (les jars internes classes.jar et ceux de libs
  * sont parcourus en mémoire — ZipInputStream, aucune extraction sur
  * disque, ADR 0111 §10 pour l'esprit). Sortie : les APPELABLES de
- * premier niveau (fonctions/propriétés, extensions comprises) — les
- * membres de classes restent dans la vue JVM de l'hôte (D4).
+ * premier niveau (fonctions/propriétés, extensions comprises) ET les
+ * TYPEALIAS publics (rejeu §4 du rapport faux positifs, étape B —
+ * genre [GenreAppelable.ALIAS], cible rendue en type de retour) —
+ * les membres de classes restent dans la vue JVM de l'hôte (D4).
  *
  * Porte Kotlin : l'entrée zip doit porter un fichier .kotlin_module sous META-INF
  * — un jar Java saute ENTIER (zéro classe décodée, coût constant).
@@ -132,7 +135,11 @@ internal object DecodeurMetadonnees {
         val paquet = infos.fqcn.substringBeforeLast('.')
         val conteneur = infos.fqcn
         return kmPackage.functions.mapNotNull { appelableDe(it, paquet, conteneur) } +
-            kmPackage.properties.mapNotNull { appelableDe(it, paquet, conteneur) }
+            kmPackage.properties.mapNotNull { appelableDe(it, paquet, conteneur) } +
+            // Rejeu §4 (étape B) : les TYPEALIAS publics — AUCUN miroir
+            // bytecode, la facade `*Kt` est leur SEULE existence. Le
+            // genre ALIAS les sépare des appelables côté index.
+            kmPackage.typeAliases.mapNotNull { appelableDe(it, paquet, conteneur) }
     }
 
     /** Fonction → appelable (extensions : récepteur FQCN, null sinon). */
@@ -169,6 +176,29 @@ internal object DecodeurMetadonnees {
             paquet = paquet,
             recepteur = recepteurFqcn(propriete.receiverParameterType),
             typeRetour = rendreType(propriete.returnType, propriete.typeParameters),
+            parametres = emptyList(),
+            conteneur = conteneur,
+        )
+    }
+
+    /**
+     * Typealias → entrée de genre ALIAS (rejeu §4, étape B) — le type
+     * CIBLE est rendu en type de retour (`ZoneOffset` → `FixedOffsetTimeZone`) :
+     * le SURVOL peut l'afficher, la résolution de membres ne le suit
+     * PAS (sous-rapport accepté — jamais un faux positif).
+     */
+    private fun appelableDe(
+        alias: KmTypeAlias,
+        paquet: String,
+        conteneur: String,
+    ): AppelableKotlin? {
+        if (!estIndexable(alias.visibility)) return null
+        return AppelableKotlin(
+            genre = GenreAppelable.ALIAS,
+            nom = alias.name,
+            paquet = paquet,
+            recepteur = null,
+            typeRetour = rendreType(alias.underlyingType, alias.typeParameters),
             parametres = emptyList(),
             conteneur = conteneur,
         )

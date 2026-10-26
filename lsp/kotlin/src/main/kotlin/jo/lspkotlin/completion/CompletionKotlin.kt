@@ -723,6 +723,11 @@ Exemption detekt ciblée (règle 16) : ReturnCount — issues distinctes. */
 
             GenreAppelable.PROPRIETE ->
                 "val ${prefixeRecepteur(appelable)}${appelable.nom}${suffixeRetour(appelable)}"
+
+            // Rejeu §4 (étape B) : les TYPEALIAS vivent dans la carte
+            // DÉDIÉE de l'index, la complétion d'APPELABLES n'en reçoit
+            // JAMAIS — la branche n'est là que pour l'exhaustivité.
+            GenreAppelable.ALIAS -> "typealias ${appelable.nom}${suffixeRetour(appelable)}"
         }
 
     /** Préfixe récepteur rendu (« String. ») d'un appelable. */

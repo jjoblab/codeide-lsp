@@ -147,6 +147,15 @@ internal object ResolutionReferences {
         if (resolution.estAppeableIntrinseque(nom)) return true
         val appelablesPortee = index?.topParNom(nom).orEmpty()
         if (appelablesPortee.any { appelable -> resolution.appelableEnPortee(appelable, contexteNom) }) return true
+        // Rejeu §4 (mission fiabilisation, étape B) : TYPEALIAS publics
+        // du classpath EN PORTÉE du fichier — le MÊME prédicat ADR 0203
+        // (paquet courant, import exact, joker, paquet par défaut).
+        // Sans cette sonde, un alias SANS fonction usine expect/actual
+        // (kotlinx-datetime `ZoneOffset`) restait rouge derrière un
+        // import joker — les usines (`fun Month(int)`) ne sauvent que
+        // leurs propres expect classes.
+        val aliasPortee = index?.aliasTopParNom(nom).orEmpty()
+        if (aliasPortee.any { alias -> resolution.appelableEnPortee(alias, contexteNom) }) return true
         return false
     }
 

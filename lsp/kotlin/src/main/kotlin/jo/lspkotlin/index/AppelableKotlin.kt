@@ -42,6 +42,18 @@ public enum class GenreAppelable {
 
     /** `val`/`var` de premier niveau (extension comprise). */
     PROPRIETE,
+
+    /**
+     * `typealias` PUBLIC de premier niveau (rejeu §4 du rapport faux
+     * positifs, étape B) : un alias de bibliothèque n'a AUCUN miroir
+     * bytecode — il n'existe que dans les métadonnées de la facade
+     * `*Kt` du jar. Le décodeur l'émet avec le type CIBLE rendu en
+     * type de retour ; l'index le SÉPARE des appelables (la complétion
+     * et le survol d'appelables n'en sont pas pollués) et le prête à
+     * la résolution de NOMS (voie 6 en portée, garde E4 sur le FQCN
+     * complet qualifié).
+     */
+    ALIAS,
 }
 
 /**

@@ -31,6 +31,19 @@ class IndexAppelablesKotlinTest {
     private fun entreeStdlib(empreinte: String): EntreeClasspathKotlin =
         EntreeClasspathKotlin(KindEntreeKotlin.JAR, jarStdlib().path, empreinte)
 
+    /** Le jar kotlinx-datetime du classpath de test — corpus du rejeu §4. */
+    private fun entreeDatetime(empreinte: String): EntreeClasspathKotlin =
+        EntreeClasspathKotlin(
+            KindEntreeKotlin.JAR,
+            File(
+                kotlinx.datetime.DateTimePeriod::class.java.protectionDomain
+                    .codeSource
+                    .location
+                    .toURI(),
+            ).path,
+            empreinte,
+        )
+
     @Test
     fun `segment persiste - le jar supprime est encore servi par le cache`() {
         val stockage = dossierTemporaire.newFolder("index")
@@ -72,6 +85,42 @@ class IndexAppelablesKotlinTest {
         )
         assertTrue(index.extensionsSur("kotlin.String").isEmpty())
         assertTrue(index.topParNom("trim").isEmpty())
+    }
+
+    /**
+     * Rejeu §4 (mission fiabilisation, étape B) : les TYPEALIAS publics
+     * du corpus réel kotlinx-datetime vivent dans une carte DÉDIÉE —
+     * les appelables et la complétion de noms n'en sont PAS pollués,
+     * la résolution (voie 6) et les gardes E4/E4-ter les sondent par
+     * nom et par FQCN complet.
+     */
+    @Test
+    fun `typealias - carte dediee, appelables et completion non pollues`() {
+        val index = IndexAppelablesKotlin()
+        index.definir(listOf(entreeDatetime("test:alias-1")), null)
+        val zone = index.aliasTopParNom("ZoneOffset")
+        assertTrue(
+            "l'alias ZoneOffset est indexé en genre ALIAS (corpus kotlinx-datetime)",
+            zone.isNotEmpty() && zone.all { it.genre == GenreAppelable.ALIAS },
+        )
+        assertEquals("kotlinx.datetime", zone.first().paquet)
+        // La carte des APPELABLES reste pure : complétion, survol et
+        // signatures d'appel ne voient JAMAIS les alias.
+        assertTrue(
+            "topParNom ne rend pas les alias",
+            index.topParNom("ZoneOffset").none { it.genre == GenreAppelable.ALIAS },
+        )
+        assertTrue(
+            "la complétion de noms top ne propose pas les alias",
+            index.nomsTopParPrefixe("Zone", 10).none { it == "ZoneOffset" },
+        )
+        // Gardes E4/E4-ter : le FQCN complet d'un alias est CONNU.
+        assertTrue(index.estTypeAliasConnu("kotlinx.datetime.ZoneOffset"))
+        assertTrue(index.estTypeAliasConnu("kotlinx.datetime.Month"))
+        assertTrue(index.estTypeAliasConnu("kotlinx.datetime.DayOfWeek"))
+        // ... l'inconnu et le nom SANS paquet ne le sont pas (D3).
+        assertFalse(index.estTypeAliasConnu("kotlinx.datetime.Inexistant"))
+        assertFalse(index.estTypeAliasConnu("ZoneOffset"))
     }
 
     @Test

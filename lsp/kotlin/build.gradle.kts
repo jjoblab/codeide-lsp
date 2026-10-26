@@ -86,6 +86,14 @@ dependencies {
     // Android est absent des environnements de test JVM). Localisé au
     // runtime par son ancre android.util.Log, jamais résolu en code.
     testImplementation("com.google.android:android:4.1.1.4")
+
+    // Mission fiabilisation, étape B — rejeu du non-concluant §4 du rapport
+    // faux positifs (`typealias` de bibliothèques) : corpus kotlinx RÉELS
+    // porteurs de typealiases publics (kotlinx-datetime : `Instant` =
+    // java.time.Instant ; kotlinx-serialization cité par le rapport).
+    // Localisés au runtime par leurs ancres, jamais résolus en code.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-datetime-jvm:0.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0")
 }
 
 tasks.withType<Test>().configureEach {

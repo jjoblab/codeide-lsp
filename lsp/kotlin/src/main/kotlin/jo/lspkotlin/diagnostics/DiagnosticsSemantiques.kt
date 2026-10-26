@@ -387,6 +387,12 @@ internal object DiagnosticsSemantiques {
                 if (contexte.resolution.membresDe("$fqcnBase.$segment") != null) return true
             }
         }
+        // Rejeu §4 (mission fiabilisation, étape B) : TYPEALIAS public
+        // du classpath — le FQCN complet ne vit JAMAIS dans la vue
+        // (aucun miroir bytecode), l'index des alias en porte la
+        // preuve (genre ALIAS) : accès qualifié LÉGAL sans import,
+        // TOUS les segments sont muets (miroir de la classe réelle).
+        if (contexte.indexAppelables?.estTypeAliasConnu(nomComplet) == true) return true
         // Type complet introuvable : seul le DERNIER segment reste
         // diagnostiquable — les segments PAQUET sont TOUJOURS muets.
         val dernierIdentifiant =
@@ -516,6 +522,11 @@ internal object DiagnosticsSemantiques {
         // 4. Le FQCN complet vit-il dans la vue ? TOUS les segments
         //    sont muets (accès qualifié légal sans import).
         if (contexte.resolution.membresDe(nomComplet) != null) return true
+        // Rejeu §4 (étape B) : TYPEALIAS public du classpath — le FQCN
+        // complet ne vit pas dans la vue (aucun miroir bytecode),
+        // l'index des alias en porte la preuve : segments muets, miroir
+        // de la classe réelle.
+        if (contexte.indexAppelables?.estTypeAliasConnu(nomComplet) == true) return true
         // 5. Introuvable : le PREMIER segment (récepteur racine — une
         //    référence inconnue, miroir kotlinc « unresolved: a » sur
         //    `ArticleRepoInconnu.tenter()`) et le DERNIER (callee — il

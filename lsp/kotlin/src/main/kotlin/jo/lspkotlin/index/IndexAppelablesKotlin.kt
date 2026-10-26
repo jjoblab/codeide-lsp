@@ -63,7 +63,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal class IndexAppelablesKotlin {
     /** Snapshot courant (vide avant la première définition). */
     @Volatile
-    private var snapshot: Snapshot = Snapshot(emptyMap(), emptyList(), emptyMap(), emptyList())
+    private var snapshot: Snapshot = Snapshot(emptyMap(), emptyList(), emptyMap(), emptyMap(), emptyList())
 
     /**
      * Empreintes (ORDONNÉES) qui ont construit le snapshot courant —
@@ -154,9 +154,11 @@ internal class IndexAppelablesKotlin {
      * Exemption detekt ciblée (règle 16) : LoopWithTooManyJumpStatements
      * — le break de l'ANNULATION (ADR 0214 : les suivantes pendent) et
      * le continue de l'ÉCART (l'entrée n'entre pas dans le snapshot)
-     * sont les DEUX bornes du passage.
+     * sont les DEUX bornes du passage ; CyclomaticComplexMethod — le
+     * passage porte les issues ADR 0214 ET la séparation TYPEALIAS/
+     * appelables (rejeu §4, étape B) : chaque branche est un contrat.
      */
-    @Suppress("LoopWithTooManyJumpStatements")
+    @Suppress("LoopWithTooManyJumpStatements", "CyclomaticComplexMethod")
     internal fun definir(
         entrees: List<EntreeClasspathKotlin>,
         dossierIndex: File?,
@@ -167,6 +169,7 @@ internal class IndexAppelablesKotlin {
         var annule = false
         val parNom = HashMap<String, MutableList<AppelableKotlin>>()
         val extensions = HashMap<String, MutableList<AppelableKotlin>>()
+        val aliasParNom = HashMap<String, MutableList<AppelableKotlin>>()
         val empreintesChargees = mutableListOf<String>()
         for (entree in entrees) {
             if (annule) {
@@ -187,6 +190,13 @@ internal class IndexAppelablesKotlin {
             }
             val appelables = lecture.appelables ?: continue
             for (appelable in appelables) {
+                // Rejeu §4 (étape B) : les TYPEALIAS vivent dans une
+                // carte DÉDIÉE — parNom/extensions (complétion, survol,
+                // signatures d'appel) restent des APPELABLES purs.
+                if (appelable.genre == GenreAppelable.ALIAS) {
+                    aliasParNom.getOrPut(appelable.nom) { mutableListOf() }.add(appelable)
+                    continue
+                }
                 parNom.getOrPut(appelable.nom) { mutableListOf() }.add(appelable)
                 appelable.recepteur?.let { recepteur ->
                     extensions.getOrPut(recepteur) { mutableListOf() }.add(appelable)
@@ -199,6 +209,7 @@ internal class IndexAppelablesKotlin {
                 parNom = parNom,
                 nomsTries = parNom.keys.sorted(),
                 extensions = extensions,
+                aliasParNom = aliasParNom,
                 empreintes = empreintesChargees,
             )
         empreintesSnapshot = empreintesChargees
@@ -252,11 +263,32 @@ internal class IndexAppelablesKotlin {
     internal fun extensionsSur(recepteur: String): List<AppelableKotlin> =
         snapshot.extensions[recepteur] ?: emptyList()
 
+    /**
+     * TYPEALIAS publics de premier niveau portant EXACTEMENT ce nom
+     * (rejeu §4, étape B) — carte DÉDIÉE, distincte des appelables :
+     * la voie 6 les sonde avec le MÊME prédicat de portée (ADR 0203).
+     */
+    internal fun aliasTopParNom(nom: String): List<AppelableKotlin> =
+        snapshot.aliasParNom[nom] ?: emptyList()
+
+    /**
+     * Le FQCN complet désigne-t-il un TYPEALIAS public du classpath ?
+     * (garde E4/E4-ter — un type/une expression qualifié(e) COMPLET(e)
+     * d'un alias est un accès LÉGAL sans import, tous les segments
+     * sont muets, miroir de la classe réelle dans la vue).
+     */
+    internal fun estTypeAliasConnu(fqcn: String): Boolean {
+        val nom = fqcn.substringAfterLast('.')
+        if (nom.isEmpty() || nom == fqcn) return false
+        return aliasTopParNom(nom).any { "${it.paquet}.${it.nom}" == fqcn }
+    }
+
     /** Snapshot immuable publié par [definir]. */
     private class Snapshot(
         val parNom: Map<String, List<AppelableKotlin>>,
         val nomsTries: List<String>,
         val extensions: Map<String, List<AppelableKotlin>>,
+        val aliasParNom: Map<String, List<AppelableKotlin>>,
         val empreintes: List<String>,
     )
 
@@ -485,8 +517,14 @@ internal class IndexAppelablesKotlin {
         /** Magie des segments (0x4B434944 = « KCID »). */
         internal const val MAGIE: Int = 0x4B434944
 
-        /** Version du format (incrémenter à tout changement de lecture). */
-        internal const val VERSION: Int = 1
+        /** Version du format (incrémenter à tout changement de lecture).
+         *
+         * v2 (rejeu §4, étape B) : les segments v1 ne portent PAS les
+         * TYPEALIAS — le rejet force le re-décodage (auto-guérison
+         * ADR 0111 §4, miroir FormatSegment v2 / ADR 0219) : un projet
+         * aux segments v1 ne resterait pas sourd aux alias.
+         */
+        internal const val VERSION: Int = 2
 
         /** Sous-répertoire dédié de l'index partagé. */
         internal const val DOSSIER: String = "kotlin-appelables"
