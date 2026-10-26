@@ -1,5 +1,61 @@
 # Changelog — codeide-lsp
 
+## 1.14.0 (2026-10-26)
+
+- **Programme utilisateurs — vague 4** (`cac026a`,
+  `docs/RETOURS-UTILISATEURS-2026-10-25.md` §2) : les items 1 à 4 du
+  backlog — le monde Views/XML de l'utilisateur Marc atteint **ZÉRO
+  faux positif** (contrat E2E VIDE : tout nouveau FP casse la CI),
+  Léa passe de 6 à 2 FP restants, Nina de 4 à 2.
+  - **PILE des this IMPLICITES** (membres hérités du classpath, le
+    n° 1 du quotidien) : l'objet ANONYME le plus interne ouvre la
+    marche par SA clause écrite, PUIS les classes nommées
+    englobantes prêtent chacune la leur — `submitList` nu dans un
+    `object : Filter()` sous un adaptant voit Filter PUIS ListAdapter
+    (miroir kotlinc, récepteurs empilés) : submitList, getItem,
+    addItemDecoration, setOnClickListener, getString ÉTEINTS ;
+  - **Types IMBRIQUÉS des supertypes par nom simple** : `fqcn$Nom`
+    trouvé sur la fermeture transitive = résolution — règle kotlinc
+    PROUVÉE par expérience (hériter met les imbriqués en portée ;
+    l'IMPORT du conteneur seul ne suffit PAS) : FilterResults nu en
+    signature d'override, ViewHolder, ItemDecoration, State ;
+  - **Frontière `?.` des sélecteurs** (bug TRANSVERSAL du moteur) :
+    le jeton `?.` [89..91] captait le décalage 91 — le DÉBUT du
+    sélecteur suivant : la référence n'entrait JAMAIS dans la chaîne
+    d'ancêtres (`estSelecteurQualifie` rendait `false`, faux positif
+    sur CHAQUE sélecteur d'accès sûr — `results?.values` ; le jeton
+    `.` d'UN caractère ne déclenchait pas le bug, `?.` de DEUX si).
+    La priorité d'enfant : contenant STRICT [debut, fin) > frontière
+    fermée (curseur collé à la fin d'un mot — comportement historique
+    préservé) > enfant vide (ADR 0218) ;
+  - **Paramètres du constructeur PRIMAIRE en zone de CONSTRUCTION**
+    (expérience kotlinc : initialisateurs et `init` les acceptent,
+    corps de méthode et setters custom les refusent) :
+    contexte/attributs/styleDef de `super(...)` ÉTEINTS, le VRAI
+    POSITIF d'un paramètre hors zone RATTRAPÉ ; le setter custom
+    prête son paramètre et `field` ;
+  - **FQN complets sans import EN EXPRESSION** (miroir E4 des types)
+    et **imbriqués qualifiés en POSITION DE TYPE** :
+    `androidx…LinearLayoutManager(this)` et `ViewModelProvider.Factory`
+    résolvent (fqcn complet dans la vue → tous les segments muets) ;
+    introuvable → premier et derniers segments faillibles, le milieu
+    muet — jamais trois rougeurs sur une seule faute ;
+  - **Appels GÉNÉRIQUES liés par leur lambda** : `fun <T>
+    remember(calculation: () -> T): T` top-level sans récepteur se
+    lie par la DERNIÈRE expression de son littéral (locale ET
+    récepteur-appel) — showSnackbar ÉTEINT ; le DÉCODEUR de
+    métadonnées rend désormais le retour PARAMÈTRE DE TYPE (« T »,
+    `KmClassifier.TypeParameter` était muet) ;
+  - **Récepteur implicite de `apply`/`run`** (miroir `with`) et
+    **unicité du nom simple dans la vue** (le type écrit `TextView`
+    du champ ViewBinding vit dans le contexte du fichier DÉCLARANT,
+    hors du modèle du scan) : style/color/strokeCap dans `apply { }`,
+    chaînes de binding vers `context.getString(...)` — currency,
+    textSize, setPadding ÉTEINTS.
+  - 12 tests K5 nouveaux (`ReproductionHeritageVague4Test`) dont un
+    VRAI POSITIF rattrapé ; contrats E2E durcis (U2 : liste de
+    limitations VIDE).
+
 ## 1.13.0 (2026-10-26)
 
 - **Programme utilisateurs du 25/10/2026 — trois vagues de correctifs**

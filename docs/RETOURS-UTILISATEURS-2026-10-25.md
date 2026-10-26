@@ -5,17 +5,20 @@
 > chaîne LSP de production, corpus normalisation v2) a testé les LSP
 > embarqués. Voici ce que CodeIDE doit savoir, faire et surveiller.
 > Correctifs correspondants : codeide-lsp `d89544d` (vague 1),
-> `33688a8` (vague 2 — membres Java projet, R sans import) puis vague 3
+> `33688a8` (vague 2 — membres Java projet, R sans import), vague 3
 > (callee suit son récepteur typé, modificateur `data` ENFIN lu,
-> preuve d'absence projet) — CI verte attendue sur main.
+> preuve d'absence projet) puis vague 4 (`cac026a` — membres hérités
+> par la PILE des this, imbriqués de supertypes, frontière `?.` des
+> sélecteurs, FQN sans import, remember générique) — CI verte
+> attendue sur main.
 
 ## 1. Ce qui a été fait
 
 | Utilisateur | Monde | Projet | Verdict initial | Après correctifs |
 |---|---|---|---|---|
-| Léa | Compose (Material3, ViewModel, coroutines) | MesCourses, 13 fichiers | 4/10 — 45 FP | **6 FP restants** (showSnackbar×2, Factory, weight, align, currency — limites connues listées), collect et copy ÉTEINTS |
-| Marc | Views/XML + Java (ViewBinding, RecyclerView) | AtelierVinyle, 11 fichiers | 5/10 — 47 FP | Java **impeccable**, complétion XML 134 items, **membres Java projet + R sans import ÉTEINTS** (vague 2), erreurs volontaires Java/Kotlin attrapées — 29 FP restants (membres hérités classpath, FQN sans import, super args, field/setter) |
-| Nina | KMP (:shared + :app, expect/actual) | PartageBudget, 9 fichiers | 5/10 — 15 FP | cross-module **VICTOIRE** (entrée MODULE), expect/actual **PARFAIT**, **4 FP restants** (total, entries, textSize, setPadding), copy et collect ÉTEINTS, consulterInconnu (vrai positif) SIGNALÉ |
+| Léa | Compose (Material3, ViewModel, coroutines) | MesCourses, 13 fichiers | 4/10 — 45 FP | **2 FP restants** (weight, align — extensions de SCOPE Compose, limites connues), showSnackbar (remember générique), Factory (imbriqué qualifié position type) et currency (apply) ÉTEINTS — vague 4 |
+| Marc | Views/XML + Java (ViewBinding, RecyclerView) | AtelierVinyle, 11 fichiers | 5/10 — 47 FP | Java **impeccable**, complétion XML 134 items, **0 FP restant** — le contrat du test est VIDE (tout nouveau faux positif casse la CI) : membres hérités (submitList), FilterResults/values, FQN sans import (androidx…), super args, field/setter, style/Cap dans apply, chaîne de binding vers getString — vagues 2+4 |
+| Nina | KMP (:shared + :app, expect/actual) | PartageBudget, 9 fichiers | 5/10 — 15 FP | cross-module **VICTOIRE** (entrée MODULE), expect/actual **PARFAIT**, **2 FP restants** (destructuring lambda, Map.entries), textSize et setPadding (héritage/chaîne) ÉTEINTS — vague 4, consulterInconnu (vrai positif) SIGNALÉ |
 | Olivier | scripts .gradle.kts | usine-build, 5 scripts | 4/10 — 8 FP | complétion JavaVersion 37 items ✓, DSL blocs = backlog |
 
 ## 2. Correctifs livrés dans codeide-lsp
@@ -65,6 +68,54 @@ backlog) :
    implicite), annotation (Annotation implicite), extension
    homonyme ou scan non abouti : silence D3.
 
+**Vague 4 (cac026a)** — sept familles (items 1, 2, 3 et 4 du
+backlog — le monde Views de Marc est PROPRE, liste de limitations
+VIDE) :
+
+1. **PILE des this IMPLICITES** (membres hérités du classpath,
+   récepteur implicite) : l'objet ANONYME le plus interne ouvre la
+   marche par SA clause écrite, PUIS les classes nommées
+   englobantes prêtent chacune la leur — `submitList` nu dans un
+   `object : Filter()` sous un adaptant voit Filter PUIS ListAdapter
+   (miroir kotlinc, récepteurs empilés) ; submitList/getItem/
+   addItemDecoration/setOnClickListener/getString ÉTEINTS ;
+2. **Types IMBRIQUÉS des maillons** : `fqcn$Nom` trouvé sur la
+   fermeture transitive = résolution — règle kotlinc PROUVÉE par
+   expérience (hériter met les imbriqués en portée par nom simple ;
+   l'IMPORT du conteneur seul ne suffit PAS) — FilterResults nu en
+   signature d'override, ViewHolder/ItemDecoration/State ;
+3. **Frontière `?.` des sélecteurs** (bug transversal du moteur) :
+   le jeton `?.` [89..91] captait le décalage 91 — le DÉBUT du
+   sélecteur suivant : la référence n'entrait JAMAIS dans la chaîne
+   d'ancêtres (faux positif sur CHAQUE sélecteur d'accès sûr —
+   `results?.values` ; le jeton `.` d'UN caractère ne déclenchait
+   pas le bug). Priorité : contenant STRICT [debut, fin) > frontière
+   fermée (curseur collé à la fin d'un mot, comportement historique
+   préservé) > enfant vide (ADR 0218) ;
+4. **Paramètres du constructeur PRIMAIRE** en zone de CONSTRUCTION
+   (clause super, initialisateurs, init — expérience kotlinc : les
+   corps de méthode et les setters custom les REFUSENT) —
+   contexte/attributs/styleDef de `super(...)` ÉTEINTS, le vrai
+   positif d'un paramètre hors zone RATTRAPÉ ; le setter custom
+   prête son paramètre et `field` ;
+5. **FQN complets sans import EN EXPRESSION** et **imbriqués
+   qualifiés en POSITION DE TYPE** : le nom complet résout dans la
+   vue → tous les segments muets (`androidx…LinearLayoutManager(this)`,
+   `ViewModelProvider.Factory`) ; introuvable → premier et dernier
+   segments faillibles (miroir kotlinc « unresolved: a »), le milieu
+   muet — jamais trois rougeurs sur une seule faute ;
+6. **Appels GÉNÉRIQUES liés par leur lambda** : `fun <T>
+   remember(calculation: () -> T): T` top-level sans récepteur se
+   lie par la DERNIÈRE expression de son littéral — showSnackbar
+   ÉTEINT (le décodeur de métadonnées rend désormais le retour
+   PARAMÈTRE DE TYPE « T », il était muet) ;
+7. **Récepteur implicite de apply/run + unicité du nom simple dans
+   la vue** : les propriétés synthétiques Java du corps d'un
+   `apply { }` (style/color/strokeCap sur Paint) et les types écrits
+   des fichiers DÉCLARANTS (le `TextView` du champ ViewBinding —
+   chaîne de binding vers context/getString) — currency/textSize/
+   setPadding ÉTEINTS.
+
 ## 3. Ce que CODEIDE doit faire
 
 1. **Toujours envoyer la notification `initialized`** après la réponse
@@ -82,22 +133,15 @@ backlog) :
    d'indexation (phases SyncHandler) et ne jamais rester muet sur une
    sync PARTIELLE.
 
-## 4. Backlog partagé (priorisé, après vague 3)
+## 4. Backlog partagé (priorisé, après vague 4)
 
-1. Membres **hérités du classpath** (submitList/getString/
-   FilterResults.values) et récepteur IMPLICITE `this` dans les
-   sous-classes (la vague 3 ne taît que la forme QUALIFIÉE) ;
-2. Erasure après `remember { }` (showSnackbar : le type EFFACÉ Object
-   masque SnackbarHostState) et imbriqués en POSITION DE TYPE
-   (ViewModelProvider.Factory) ;
-3. Extensions de **scope** Compose (weight/align), args de
-   super(...), field/setter, propriétés Java dans apply ;
-4. Noms **QUALIFIÉS complets sans import** (`androidx.recycler...` en
-   expression) ;
-5. Jar illisible → **PARTIEL + avertissement** (au lieu du blocage) ;
-6. Validation d'**attributs XML** des layouts (complétion existe,
+1. Extensions de **scope** Compose (weight dans Row, align dans
+   Box — le récepteur implicite du lambda de scope) ;
+2. Destructuring de lambda `(_, total)` et `Map.entries` (KMP) ;
+3. Jar illisible → **PARTIEL + avertissement** (au lieu du blocage) ;
+4. Validation d'**attributs XML** des layouts (complétion existe,
    diagnostic non) ;
-7. ADR 0221 lettre violée : NUS dans les lambdas `tasks.register` ;
+5. ADR 0221 lettre violée : NUS dans les lambdas `tasks.register` ;
    complétion DSL des blocs (libs. inclus).
 
 ## 5. Références
