@@ -67,6 +67,12 @@ import java.util.concurrent.FutureTask
 @Suppress("TooManyFunctions")
 internal class ScanProjet(
     private val parseur: ParseurKotlin,
+    /**
+     * Borne de la marche (couture de test — mission fiabilisation,
+     * étape A.2 : reproduire la troncation à [BORN_FICHIERS] sans
+     * semer 2000 fichiers ; la production garde le défaut).
+     */
+    private val bornFichiers: Int = BORN_FICHIERS,
 ) {
     /** Racines courantes (identité d'invalidation). @Volatile : KP6. */
     @Volatile
@@ -454,10 +460,10 @@ internal class ScanProjet(
         dossier: File,
         fichiers: MutableList<File>,
     ) {
-        if (fichiers.size >= BORN_FICHIERS) return
+        if (fichiers.size >= bornFichiers) return
         val enfants = dossier.listFiles() ?: return
         for (enfant in enfants.sortedBy { it.name }) {
-            if (fichiers.size >= BORN_FICHIERS) return
+            if (fichiers.size >= bornFichiers) return
             when {
                 enfant.isDirectory ->
                     if (enfant.name !in EXCLUSIONS && !enfant.name.startsWith(".")) {
