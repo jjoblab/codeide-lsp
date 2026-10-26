@@ -9,16 +9,17 @@
 > (callee suit son récepteur typé, modificateur `data` ENFIN lu,
 > preuve d'absence projet) puis vague 4 (`cac026a` — membres hérités
 > par la PILE des this, imbriqués de supertypes, frontière `?.` des
-> sélecteurs, FQN sans import, remember générique) — CI verte
-> attendue sur main.
+> sélecteurs, FQN sans import, remember générique) et vague 5
+> (`RecepteursPortee` — extensions de SCOPE Compose, destructuring
+> de lambda, builtins Map) — CI verte attendue sur main.
 
 ## 1. Ce qui a été fait
 
 | Utilisateur | Monde | Projet | Verdict initial | Après correctifs |
 |---|---|---|---|---|
-| Léa | Compose (Material3, ViewModel, coroutines) | MesCourses, 13 fichiers | 4/10 — 45 FP | **2 FP restants** (weight, align — extensions de SCOPE Compose, limites connues), showSnackbar (remember générique), Factory (imbriqué qualifié position type) et currency (apply) ÉTEINTS — vague 4 |
-| Marc | Views/XML + Java (ViewBinding, RecyclerView) | AtelierVinyle, 11 fichiers | 5/10 — 47 FP | Java **impeccable**, complétion XML 134 items, **0 FP restant** — le contrat du test est VIDE (tout nouveau faux positif casse la CI) : membres hérités (submitList), FilterResults/values, FQN sans import (androidx…), super args, field/setter, style/Cap dans apply, chaîne de binding vers getString — vagues 2+4 |
-| Nina | KMP (:shared + :app, expect/actual) | PartageBudget, 9 fichiers | 5/10 — 15 FP | cross-module **VICTOIRE** (entrée MODULE), expect/actual **PARFAIT**, **2 FP restants** (destructuring lambda, Map.entries), textSize et setPadding (héritage/chaîne) ÉTEINTS — vague 4, consulterInconnu (vrai positif) SIGNALÉ |
+| Léa | Compose (Material3, ViewModel, coroutines) | MesCourses, 13 fichiers | 4/10 — 45 FP | **0 FP restant** — le contrat du test est VIDE (tout nouveau faux positif casse la CI) : weight dans Row, align dans Box (récepteurs de PORTÉE, vague 5), showSnackbar (remember générique), Factory (imbriqué qualifié position type), currency (apply) — vagues 4+5 |
+| Marc | Views/XML + Java (ViewBinding, RecyclerView) | AtelierVinyle, 11 fichiers | 5/10 — 47 FP | Java **impeccable**, complétion XML 134 items, **0 FP restant** (contrat VIDE depuis la vague 4) : membres hérités (submitList), FilterResults/values, FQN sans import (androidx…), super args, field/setter, style/Cap dans apply, chaîne de binding vers getString — vagues 2+4 |
+| Nina | KMP (:shared + :app, expect/actual) | PartageBudget, 9 fichiers | 5/10 — 15 FP | cross-module **VICTOIRE** (entrée MODULE), expect/actual **PARFAIT**, **0 FP restant** — le contrat du test est VIDE (vague 5) : destructuring `(_, total)` et `Map.entries` ÉTEINTS, textSize et setPadding (vagues 4), consulterInconnu (vrai positif) SIGNALÉ |
 | Olivier | scripts .gradle.kts | usine-build, 5 scripts | 4/10 — 8 FP | complétion JavaVersion 37 items ✓, DSL blocs = backlog |
 
 ## 2. Correctifs livrés dans codeide-lsp
@@ -116,6 +117,53 @@ VIDE) :
    chaîne de binding vers context/getString) — currency/textSize/
    setPadding ÉTEINTS.
 
+**Vague 5** — trois familles (items 1 et 2 du backlog — le monde
+Compose de Léa et le monde KMP de Nina atteignent ZÉRO faux positif,
+les contrats E2E de leurs tests sont VIDES) :
+
+1. **RÉCEPTEURS DE PORTÉE des lambdas de scope** (U1 « weight »/
+   « align » — `Row { Modifier.weight(1f) }`, `Box { Modifier.
+   align(…) }`) : le paramètre `content: RowScope.() -> Unit` de la
+   fonction consommatrice prête `RowScope` comme this IMPLICITE à
+   TOUT le corps du littéral — les MEMBRES NUS (`compter()`) et les
+   MEMBRE-EXTENSIONS (`Modifier.weight(1f)` — weight vit DANS
+   RowScope, le récepteur d'extension est le premier paramètre JVM)
+   y résolvent, miroir kotlinc. Les candidates se lisent des DEUX
+   côtés : PROJET (type écrit `A.() -> B`, texte exact du paramètre
+   portant le littéral) et CLASSPATH (l'index rend
+   `Function1<RowScope, Unit>` — le PREMIER argument de type ; le
+   nom court `RowScope` n'est JAMAIS importé dans le code réel, il
+   se résout par l'UNICITÉ du nom simple dans la vue, voie vague 4).
+   La PILE des littéraux emboîtés prête ses récepteurs du plus
+   profond au plus externe (`Row { Column { … } }` — ColumnScope
+   puis RowScope). Un membre introuvable dans le scope n'y prouve
+   RIEN : la preuve d'absence reste celle du récepteur (vrai positif
+   `grincher` gardé). BORNE D3 documentée : les métadonnées 2.x ne
+   distinguent PAS `A.() -> B` de `(a: A) -> B` (expérience vague 5 :
+   les deux sérialisent `Function1<A, B>` octet pour octet,
+   l'annotation `kotlin.ExtensionFunctionType` n'est pas rendue par
+   l'API kotlin-metadata 2.2.10) — le premier argument d'un type
+   fonctionnel peut être un simple premier PARAMÈTRE, un nom nu
+   membre de ce type dans le corps est alors TENU POUR résolu
+   (sous-rapportage, jamais de rouge mensonger) ;
+2. **DESTRUCTURING de paramètre de lambda** (U3
+   `sortedByDescending { (_, total) -> total }`) : un paramètre
+   portant une parenthèse directe (le type écrit vit dans un NŒUD
+   enfant TYPE_REFERENCE, jamais en jeton direct) prête CHAQUE
+   composant nommé (`_` exclu) comme locale de portée — miroir
+   kotlinc `{ (a, b) -> a + b }` lie les deux noms. Un nom inconnu
+   dans le corps reste SIGNALÉ (vrai positif `totalInconnu` gardé) ;
+3. **PROPRIÉTÉS BUILTINS de Map** (U3 `totaux.entries`) :
+   `kotlin.collections.Map` n'a AUCUN `.class` (déclaration expect
+   dans `collections.kotlin_builtins`, actual JVM `java.util.Map`) —
+   ses propriétés mappent vers des méthodes Java RENOMMÉES :
+   `entries` → `entrySet()`, `keys` → `keySet()` (miroir kotlinc,
+   même famille que les alias ADR 0218 ; `values`/`size`/`isEmpty`
+   suivaient déjà les méthodes homonymes). Les alias Mutable*
+   complètent la chaîne des collections (`buildList { add(…) }` —
+   `MutableList<E>.() -> Unit` rendu par l'index, maillon
+   java.util.List).
+
 ## 3. Ce que CODEIDE doit faire
 
 1. **Toujours envoyer la notification `initialized`** après la réponse
@@ -133,16 +181,20 @@ VIDE) :
    d'indexation (phases SyncHandler) et ne jamais rester muet sur une
    sync PARTIELLE.
 
-## 4. Backlog partagé (priorisé, après vague 4)
+## 4. Backlog partagé (priorisé, après vague 5 — items 1 et 2 ÉTEINTS)
 
-1. Extensions de **scope** Compose (weight dans Row, align dans
-   Box — le récepteur implicite du lambda de scope) ;
-2. Destructuring de lambda `(_, total)` et `Map.entries` (KMP) ;
-3. Jar illisible → **PARTIEL + avertissement** (au lieu du blocage) ;
-4. Validation d'**attributs XML** des layouts (complétion existe,
+1. Jar illisible → **PARTIEL + avertissement** (au lieu du blocage —
+   robustesse, découverte U2) ;
+2. Validation d'**attributs XML** des layouts (complétion existe,
    diagnostic non) ;
-5. ADR 0221 lettre violée : NUS dans les lambdas `tasks.register` ;
-   complétion DSL des blocs (libs. inclus).
+3. ADR 0221 lettre violée : NUS dans les lambdas `tasks.register` ;
+   complétion DSL des blocs (libs. inclus) — le monde d'Olivier ;
+4. Complétion des membres du récepteur de PORTÉE (`Modifier.` dans
+   `Row { }` devrait proposer weight/align — le diagnostic est
+   éteint, la complétion reste à brancher sur RecepteursPortee) ;
+5. Typage des composants DESTRUCTURÉS (`(_, total)` → le type de
+   `component2()` de l'attendu — survol/complétion, diagnostic déjà
+   éteint).
 
 ## 5. Références
 

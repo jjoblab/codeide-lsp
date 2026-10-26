@@ -1,5 +1,51 @@
 # Changelog — codeide-lsp
 
+## 1.15.0 (2026-10-26)
+
+- **Programme utilisateurs — vague 5** (retour utilisateurs
+  25/10/2026, `docs/RETOURS-UTILISATEURS-2026-10-25.md` §2) : items 1
+  et 2 du backlog — les quatre mondes du programme sont à ZÉRO faux
+  positif déclaré : le monde Compose de Léa ET le monde KMP de Nina
+  rejoignent celui de Marc (leurs contrats E2E sont VIDES : tout
+  nouveau FP casse la CI).
+  - **RÉCEPTEURS DE PORTÉE des lambdas de scope** (U1 « weight »/
+    « align » — le n° 1 du backlog) : `Row { Modifier.weight(1f) }`
+    — le paramètre `content: RowScope.() -> Unit` de la fonction
+    consommatrice prête `RowScope` comme this IMPLICITE à tout le
+    corps du littéral. Membres NUS et MEMBRE-EXTENSIONS (`weight`
+    vit DANS RowScope, récepteur d'extension = premier paramètre
+    JVM) résolvent, miroir kotlinc. Candidates des DEUX côtés :
+    PROJET (type écrit `A.() -> B`, texte exact) et CLASSPATH
+    (l'index rend `Function1<RowScope, Unit>` — premier argument de
+    type, nom court résolu par l'UNICITÉ du nom simple dans la vue :
+    RowScope ne s'importe jamais). PILE des littéraux emboîtés
+    (ColumnScope puis RowScope). Un membre introuvable n'y prouve
+    rien — le vrai positif `grincher` est gardé. BORNE D3 documentée
+    : kotlin-metadata 2.2.10 ne distingue PAS `A.() -> B` de
+    `(a: A) -> B` (sérialisation `Function1<A, B>` IDENTIQUE, expérience
+    vague 5 — l'annotation `kotlin.ExtensionFunctionType` n'est pas
+    rendue par l'API) : le premier argument peut être un premier
+    paramètre ordinaire, un nom nu membre de ce type est alors tenu
+    pour résolu — sous-rapportage borné, jamais de rouge mensonger ;
+  - **DESTRUCTURING de paramètre de lambda** (U3 « total ») :
+    `sortedByDescending { (_, total) -> total }` — un paramètre à
+    parenthèse directe (le type écrit vit dans le NŒUD enfant
+    TYPE_REFERENCE) prête chaque composant nommé (`_` exclu) comme
+    locale de portée, miroir kotlinc — le vrai positif d'un nom
+    inconnu dans le corps est gardé ;
+  - **PROPRIÉTÉS BUILTINS de Map** (U3 « entries ») :
+    kotlin.collections.Map n'a aucun `.class` (expect dans
+    `collections.kotlin_builtins`, actual JVM java.util.Map) —
+    `entries` → `entrySet()`, `keys` → `keySet()` (garde
+    ALIAS-AWARE : la chaîne de supertypes SAUTE le nom aliasé) ;
+    alias `Mutable*` complétés dans la chaîne ADR 0218
+    (`buildList { add(…) }` — `MutableList<E>.() -> Unit` rendu par
+    l'index, maillon java.util.List).
+  - 8 tests K5 nouveaux (`ReproductionVague5Test` — scope
+    projet/classpath, pile, non-fuite, destructuring ×2, builtins
+    Map, dont 2 vrais positifs) ; contrats E2E durcis (U1 et U3 :
+    listes de limitations VIDES).
+
 ## 1.14.0 (2026-10-26)
 
 - **Programme utilisateurs — vague 4** (`cac026a`,
