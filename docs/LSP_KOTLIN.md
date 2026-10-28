@@ -114,7 +114,13 @@ scan paresseux persistant par jar (empreinte de contenu, segments ADR 0111),
   `&&`/`||`, garde à sortie précoce (K4).
 - **Complétion** : membre après `.`/`?.` (membres ∪ extensions par chaîne de
   supertypes), nom/porte, type, infix ; `expect`ed-type (Boolean/enum) ;
-  mots-clés par position grammaticale.
+  mots-clés par position grammaticale. **Complétion contextuelle vague 1**
+  (ADR 0228, 1.18.0) : ARGUMENTS NOMMÉS de l'appel englobant (noms des
+  surcharges prouvées, déjà fournis exclus, fusionnés au régime de nom),
+  CONSTANTES d'enum des branches d'un `when` à sujet enum (projet ∪
+  classpath, contexte exclusif), ATTRIBUTS d'annotation non fournis
+  (`@Anno(lev|` → `level = `, contexte exclusif) — le séparateur voyage
+  avec le candidat (`texteInsertion` → `insertText` LSP).
 - **Diagnostics initiaux** : `kt.unresolved`, `kt.typeMismatch` (cas simples),
   `kt.argumentCount`, `kt.unsafeNullable`, `kt.missingReturn`,
   `kt.unreachable`, `kt.valReassign`, `kt.unusedImport`,

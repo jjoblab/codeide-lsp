@@ -110,11 +110,34 @@ internal object CompletionKotlin {
         val borne = decalage.coerceIn(0, texte.length)
         val (debutPrefixe, prefixe) = prefixeA(borne, texte)
         val regime = regimeA(debutPrefixe, borne, texte, racine)
-        return when (regime) {
-            Regime.MEMBRE -> propositionsMembre(racine, debutPrefixe, prefixe, contexte)
-            Regime.IMPORT -> propositionsImport(racine, decalage, prefixe, contexte)
-            Regime.NOM -> propositionsNom(racine, debutPrefixe, prefixe, contexte)
-        }.let { dedupliquerOrdonner(it) }
+        val propositions =
+            when (regime) {
+                Regime.MEMBRE -> propositionsMembre(racine, debutPrefixe, prefixe, contexte)
+                Regime.IMPORT -> propositionsImport(racine, decalage, prefixe, contexte)
+                Regime.NOM ->
+                    // Vague 1 (contextuelle) : les positions EXCLUSIVES
+                    // (attributs d'annotation, constantes d'enum d'un
+                    // `when`) rendent TOUT ou rien d'autre ; les
+                    // arguments NOMMÉS de l'appel englobant se FUSIONNENT
+                    // aux noms (un argument accepte toute expression).
+                    ContextesCompletionKotlin.contexteDedie(
+                        racine,
+                        texte,
+                        debutPrefixe,
+                        prefixe,
+                        borne,
+                        contexte,
+                    ) ?: propositionsNom(racine, debutPrefixe, prefixe, contexte) +
+                        ContextesCompletionKotlin.argumentsNomes(
+                            racine,
+                            texte,
+                            debutPrefixe,
+                            prefixe,
+                            borne,
+                            contexte,
+                        )
+            }
+        return dedupliquerOrdonner(propositions)
     }
 
     /** Régimes de complétion. */
@@ -766,8 +789,9 @@ Exemption detekt ciblée (règle 16) : ReturnCount — issues distinctes. */
         return "fun $nom($rendu): $retour"
     }
 
-    /** Clé de tri totale (pertinence décroissante, longueur, nom). */
-    private fun texteTri(
+    /** Clé de tri totale (pertinence décroissante, longueur, nom) — partagée
+     * avec [ContextesCompletionKotlin] (vague 1 : mêmes paliers, même tie-break). */
+    internal fun texteTri(
         pertinence: Int,
         libelle: String,
     ): String =

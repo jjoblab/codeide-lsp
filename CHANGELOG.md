@@ -1,5 +1,41 @@
 # Changelog — codeide-lsp
 
+## 1.18.0 (2026-10-29)
+
+- **Complétion contextuelle Kotlin, vague 1 (chantier P1-B de la
+  feuille de route du rapport d'analyse du 28/10, ADR 0228)** : les
+  trois contextes que le moteur Java sert depuis la 1.16.0, portés au
+  Kotlin — la complétion sait maintenant OÙ elle est dans les positions
+  à forte valeur de frappe :
+  - **arguments nommés** : `foo(na|` offre `nom = ` — les noms de
+    paramètres des surcharges PROUVÉES de l'appel englobant (même
+    graphe que l'aide à la signature), déjà fournis en forme nommée
+    exclus, FUSIONNÉS au régime de nom (la locale `nom` reste offerte
+    à côté de `nom =` ; un argument accepte toute expression). Le
+    curseur collé à la fin de l'identifiant en frappe compte ; une
+    liste refermée garde le curseur hors contexte ;
+  - **constantes d'enum** : `when (c) { RO| ->` offre les entrées de
+    l'énumération du sujet (projet ∪ classpath : champs statiques
+    typés par l'enum elle-même, miroir du moteur Java), contexte
+    EXCLUSIF de la position de condition — le corps d'une branche,
+    une garde, le sujet lui-même et un sujet non enum retombent
+    honnêtement sur le régime de nom ;
+  - **attributs d'annotation** : `@Anno(lev|` offre `level = ` — les
+    méthodes publiques abstraites du type d'annotation (résolu par
+    les imports du fichier), non déjà fournies, le séparateur VOYAGE
+    avec le candidat (contexte exclusif, miroir du `@Anno(` Java) ;
+  - **transport** : nouveau champ optionnel
+    `PropositionCompletionKotlin.texteInsertion` (« nom = » affiché,
+    `nom = ` inséré), traduit en `insertText` LSP par l'hôte — miroir
+    du `CompletionItem` du moteur Java ; défaut `null` = le client
+    insère le libellé (contrat historique inchangé, tolérance de
+    version des packs).
+- Tests : +14 moteur (`SessionLangageKotlinCompletionContextuelleTest`)
+  + 2 hôte (`KotlinLanguageServerTest`), 432 au total sur `:lsp:kotlin`
+  (0 échec), 248 sur `:lsp:host` (0 échec) ; baseline de parité
+  re-synchronisée (fichiers=302 — le corpus EST le dépôt, re-sync
+  délibéré).
+
 ## 1.17.0 (2026-10-29)
 
 - **Diagnostics par déclaration sur texte vivant (chantier P1-A de la

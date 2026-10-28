@@ -44,7 +44,7 @@
 
 | Capacité | Java | Kotlin | XML | Preuves |
 |---|---|---|---|---|
-| Complétion (`completion`) | ✅ | ✅ | ✅ | CompletionKotlin + tests flux client XML/Java |
+| Complétion (`completion`) | ✅ | ✅ (contextuelle vague 1 : arguments nommés, enum de `when`, attributs d'annotation — ADR 0228) | ✅ | CompletionKotlin + ContextesCompletionKotlin + tests flux client XML/Java |
 | Survol (`hover`) | ✅ | ✅ | ✅ | InterrogationsSymboles (tests moteur), XmlLanguageServerTest |
 | Aide à la signature (`signatureHelp`) | ✅ | ✅ | ❌ | SessionLangageKotlinSignatureTest |
 | Actions de code (`codeAction`) | ✅ | ✅ (imports) | ✅ | KotlinLanguageServerTest (quick-fixes), XmlLanguageServerTest |

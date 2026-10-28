@@ -28,6 +28,13 @@ package jo.lspkotlin.api
  *           portée (`android.widget.TextView`) — l'hôte dérive
  *           l'auto-import (additionalTextEdits LSP) ; `null` pour les
  *           symboles déjà en portée.
+ * @property texteInsertion texte à INSÉRER à l'acceptation quand il
+ *           diffère du libellé affiché (vague 1 de la complétion
+ *           contextuelle : « nom = » affiché, `nom = ` inséré — le
+ *           séparateur voyage avec le candidat, l'utilisateur n'a plus
+ *           qu'à taper la valeur). `null` = le client insère le
+ *           libellé (contrat historique, miroir du `insertText` du
+ *           moteur Java).
  */
 public data class PropositionCompletionKotlin(
     public val libelle: String,
@@ -35,6 +42,7 @@ public data class PropositionCompletionKotlin(
     public val detail: String?,
     public val texteTri: String,
     public val fqnImport: String? = null,
+    public val texteInsertion: String? = null,
 )
 
 /** Genre d'une proposition de complétion (→ CompletionItemKind LSP). */

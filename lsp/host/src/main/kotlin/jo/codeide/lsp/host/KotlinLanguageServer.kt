@@ -1147,8 +1147,13 @@ internal class KotlinLanguageServer(
             val item = CompletionItem(proposition.libelle)
             item.kind = genreLspDe(proposition.genre)
             proposition.detail?.let { item.detail = it }
-            // insertText ABSENT : le client insère le libellé (les
-            // fonctions y portent déjà leurs parenthèses).
+            // insertText ABSENT par défaut : le client insère le libellé
+            // (les fonctions y portent déjà leurs parenthèses). Vague 1
+            // de la complétion contextuelle : le candidat peut porter
+            // SON texte d'insertion (« nom = » affiché, `nom = ` inséré
+            // — miroir du moteur Java, le séparateur voyage avec le
+            // candidat).
+            proposition.texteInsertion?.let { insertion -> item.insertText = insertion }
             item.sortText = proposition.texteTri
             // Auto-import : le candidat porte un FQN hors de portée —
             // additionalTextEdits appliqué À L'ACCEPTATION (contrat LSP),

@@ -90,17 +90,13 @@ internal object SignaturesAppels {
         decalage: Int,
         contexte: Contexte,
     ): AideSignatureKotlin? {
-        val chaine = chaineAncetresA(racine, decalage)
-        val appel =
-            chaine.lastOrNull {
-                it.type == KtNodeTypes.CALL_EXPRESSION && it.debut <= decalage && decalage < it.fin
-            } ?: return null
+        val appel = appelEnglobant(racine, decalage) ?: return null
         val nom = nomAppele(appel) ?: return null
         val arguments = argumentsOrdinaires(appel)
         val nombreArguments = arguments.size + if (aLambdaFinal(appel)) 1 else 0
         val candidates =
-            if (estQualifie(chaine, appel)) {
-                candidatesQualifie(chaine, appel, nom, racine, contexte)
+            if (estQualifie(chaineAncetresA(racine, decalage), appel)) {
+                candidatesQualifie(chaineAncetresA(racine, decalage), appel, nom, racine, contexte)
             } else {
                 candidatesSimples(appel, nom, racine, contexte)
             }
@@ -112,6 +108,56 @@ internal object SignaturesAppels {
             signatureActive = signatureActive,
             parametreActif = parametreSousCurseur(arguments, decalage),
         )
+    }
+
+    /**
+     * L'appel le plus PROFOND dont la plage couvre [decalage] — sonde
+     * partagée de l'aide à la signature et de la complétion
+     * contextuelle (arguments nommés, vague 1) : la grammaire vendorée
+     * tolère l'appel NON REFERMÉ (`foo(na` produit un CALL_EXPRESSION
+     * dont la liste d'arguments couvre le curseur).
+     */
+    internal fun appelEnglobant(
+        racine: NoeudSyntaxique,
+        decalage: Int,
+    ): NoeudSyntaxique? =
+        chaineAncetresA(racine, decalage).lastOrNull {
+            it.type == KtNodeTypes.CALL_EXPRESSION && it.debut <= decalage && decalage < it.fin
+        }
+
+    /**
+     * Noms de paramètres de TOUTES les candidates de [appel], dans
+     * l'ordre de précédence (arguments nommés de la complétion
+     * contextuelle, vague 1) : chaque surcharge PROUVÉE contribue ses
+     * noms — une candidate sans noms (méthode JVM du classpath, les
+     * descripteurs ne portent pas les noms) ne contribue RIEN, jamais
+     * un nom inventé (D3). L'étiquette accompagne chaque lot (le
+     * libellé complet de la surcharge — détail du candidat rendu).
+     *
+     * @return une paire (étiquette, noms) par candidate nommée ; VIDE
+     *         sans candidate ou sans aucun nom connu.
+     */
+    internal fun nomsParametresToutes(
+        racine: NoeudSyntaxique,
+        appel: NoeudSyntaxique,
+        contexte: Contexte,
+    ): List<Pair<String, List<String>>> {
+        val nom = nomAppele(appel) ?: return emptyList()
+        val chaine = chaineAncetresA(racine, appel.debut)
+        val candidates =
+            if (estQualifie(chaine, appel)) {
+                candidatesQualifie(chaine, appel, nom, racine, contexte)
+            } else {
+                candidatesSimples(appel, nom, racine, contexte)
+            }
+        return candidates
+            .filter { candidate -> candidate.noms.any { nomNu -> nomNu.isNotEmpty() } }
+            .map { candidate ->
+                Pair(
+                    candidate.signature.etiquette,
+                    candidate.noms.filter { nomNu -> nomNu.isNotEmpty() },
+                )
+            }
     }
 
     // ── Candidates : appel simple ──────────────────────────────────────

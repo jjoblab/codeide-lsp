@@ -44,6 +44,7 @@ import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.LanguageClient
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -799,6 +800,71 @@ class KotlinLanguageServerTest {
         assertEquals("import android.widget.TextView\n", edition.newText)
         assertEquals(0, edition.range.start.line)
         assertEquals(0, edition.range.start.character)
+        session.close()
+    }
+
+    @Test
+    fun `complétion contextuelle - le texte d'insertion voyage quand il diffère du libellé`() {
+        val session =
+            SessionScriptee(
+                propositions =
+                    listOf(
+                        PropositionCompletionKotlin(
+                            libelle = "nom =",
+                            genre = GenreCompletionKotlin.VARIABLE,
+                            detail = "creer(nom: String)",
+                            texteTri = "05000003nom =",
+                            fqnImport = null,
+                            texteInsertion = "nom = ",
+                        ),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "fun demo() { creer(n")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 20)))
+                .join()
+        val item = reponse.right.items.single()
+        assertEquals("nom =", item.label)
+        assertEquals("nom = ", item.insertText)
+        assertEquals(CompletionItemKind.Variable, item.kind)
+        session.close()
+    }
+
+    @Test
+    fun `complétion contextuelle - sans texte d'insertion, le libellé reste le contrat`() {
+        val session =
+            SessionScriptee(
+                propositions =
+                    listOf(
+                        PropositionCompletionKotlin(
+                            libelle = "creer()",
+                            genre = GenreCompletionKotlin.FONCTION,
+                            detail = null,
+                            texteTri = "05000007creer()",
+                            fqnImport = null,
+                        ),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "val v = cre")),
+        )
+        val reponse =
+            serveur.textDocumentService
+                .completion(CompletionParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 12)))
+                .join()
+        assertNull(
+            reponse.right.items
+                .single()
+                .insertText,
+            "insertText absent : le client insère le libellé",
+        )
         session.close()
     }
 
