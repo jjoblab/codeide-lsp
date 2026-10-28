@@ -12,6 +12,45 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.17.0
+
+### 1. État
+
+- `main` de codeide-lsp : chantier **P1-A « diagnostics par déclaration »**
+  (ADR 0227, premier chantier P1 de la feuille de route du rapport
+  d'analyse du 28/10/2026).
+- **Ce que ça change** : sur un document en cours d'édition (marqueurs
+  d'erreur de parse), les diagnostics sémantiques ne sont plus éteints
+  EN BLOC — seules les déclarations dont le sous-arbre parse proprement
+  sont diagnostiquées, avec des gardes d'absence dédiées à
+  `kt.unresolved` (nom déclaré dans le document jamais signalé, zone
+  package/import brisée muette, en-tête de classe brisé muet en
+  absence) et l'écarter des témoins d'arité des surcharges en cours de
+  frappe.
+
+### 2. Ce que CodeIDE doit faire
+
+- **Rien** : la garde vit dans le moteur, les diagnostics traversent le
+  canal push existant (`textDocument/publishDiagnostics`) sans changement
+  de protocole. L'éditeur observera simplement DES DIAGNOSTICS DE PLUS
+  pendant la frappe (le comportement attendu : soulignés qui restent
+  vivants au lieu de clignoter).
+- Optionnel (mise en avant) : le rendu des soulignés pendant la frappe
+  peut être revu côté éditeur si un lissage/débounce visuel était
+  appliqué pour compenser l'ancien clignotement.
+
+### 3. Scénarios de vérification (démo)
+
+1. Ouvrir un fichier Kotlin propre (des soulignés habituels), puis
+   taper une nouvelle déclaration INCOMPLÈTE au bas du fichier
+   (`fun nouveau(`) : les soulignés EXISTANTS restent (l'ancien
+   comportement les faisait disparaître jusqu'à complétion de la
+   syntaxe).
+2. Casser une seule méthode dans une classe : les autres membres
+   restent diagnostiqués.
+3. Un nom référencé dont la DÉCLARATION est en cours de frappe n'est
+   jamais souligné non résolu (garde d'absence).
+
 ## 1.16.0
 
 ### 1. État
