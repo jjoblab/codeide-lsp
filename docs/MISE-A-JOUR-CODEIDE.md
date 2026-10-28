@@ -12,6 +12,54 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.19.0
+
+### 1. État
+
+- `main` de codeide-lsp : chantier **P1-C « implémenter les membres
+  manquants »** (ADR 0229, troisième chantier P1 de la feuille de route
+  du rapport d'analyse du 28/10/2026) — premier correctif Kotlin
+  AU-DELÀ des imports.
+- **Ce que ça change** : sur une classe/objet Kotlin (n'importe où
+  dans son en-tête ou son corps), le menu quick-fix propose
+  « Implémenter le membre manquant » / « Implémenter les N membres
+  manquants » : les stubs des membres abstraits de la clôture de ses
+  supertypes, non déjà implémentés — sources PROJET avec noms réels et
+  paramètres de type substitués (`Depot<String>` rend
+  `fun lire(id: String)`), sources CLASSPATH en vue JVM (getters/
+  setters appariés en `val`/`var`), sous garde générique (un membre
+  portant l'attribut `Signature` du bytecode est écarté : son rendu
+  érasé ne compilerait pas).
+
+### 2. Ce que CodeIDE doit faire
+
+- **Rien d'obligatoire** : l'action traverse `textDocument/codeAction`
+  existant (kind QuickFix, SANS diagnostic lié — le moteur n'a pas de
+  diagnostic d'exhaustivité d'héritage, l'action est bornée à la
+  déclaration englobante). L'édition est un `WorkspaceEdit` standard
+  (une seule édition de remplacement, offsets → plages LSP).
+- Optionnel (mise en avant) : le quick-fix est offert à TOUTE position
+  dans la classe — si le client filtre les code actions par « sur un
+  souligné », prévoir une voie d'accès au caret nu (menu bulb/menu
+  contextuel) pour que l'action soit atteignable sans diagnostic.
+
+### 3. Scénarios de vérification (démo)
+
+1. Déclarer `interface Depot { fun lire(id: String): String; val
+   taille: Int }` puis `class Memoire : Depot { }` — curseur dans la
+   classe, menu quick-fix : « Implémenter les 2 membres manquants »
+   insère les deux stubs `= TODO()` indentés dans le corps vide.
+2. Implémenter partiellement (`override fun lire…` présent) : l'action
+   n'offre plus que `taille`, inséré après le dernier membre.
+3. `class Repo : Depot<String>` sur une interface générique
+   `Depot<T>` : le stub rend `fun lire(id: String): String`
+   (substitution) ; `class RepoNu : Depot` (clause nue) ne propose
+   RIEN pour le membre générique (muet, D3).
+4. Une interface du CLASSPATH (par ex. `View.OnClickListener`) : le
+   stub `override fun onClick(p0: View) = TODO()` ; une interface
+   générique (`Comparable`) ne propose rien pour son membre générique
+   (garde `Signature`).
+
 ## 1.18.0
 
 ### 1. État
