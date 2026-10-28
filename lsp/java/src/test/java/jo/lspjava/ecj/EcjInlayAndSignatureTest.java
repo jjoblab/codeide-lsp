@@ -251,4 +251,185 @@ class JdtInlayAndSignatureTest {
         assertEquals(1, EcjSignatureHelp.countActiveParameter(source, 0, caret),
                 "virgule dans la chaîne ignorée — index 1");
     }
+
+    // ─── Niveau 4 : texte vivant cassé (variantes réparées) ───────────
+
+    @Test
+    void signatureHelpSurvivesOpenParen() {
+        // `sb.append(` — l'appel n'est pas refermé : les niveaux 1-3
+        // rendent null (binding jeté en recovery), la variante réparée
+        // referme l'appel et sert les surcharges.
+        String source = """
+                package demo;
+
+                public class Main {
+                    public void run(StringBuilder sb) {
+                        sb.append(
+                    }
+                }
+                """;
+        EcjCompilerEngine engine = newEngine();
+        var helper = new EcjSignatureHelp(engine);
+        int caret = source.indexOf("sb.append(") + "sb.append(".length();
+        var result = helper.signatureHelpAt("/demo/Main.java", source, caret);
+        assertNotNull(result, "l'appel non refermé doit être servi (niveau 4)");
+        assertTrue(result.signatures.size() >= 5,
+                "les surcharges append restent énumérées : "
+                        + result.signatures.size());
+        assertEquals(0, result.activeParameter, "premier argument en cours");
+    }
+
+    @Test
+    void signatureHelpSurvivesTrailingComma() throws Exception {
+        // `h.add(1, ` — virgule de fin : `add(1, )` ne parse pas, la
+        // variante B appose un littéral de secours (`add(1, null)`).
+        Path root = rootWith("demo/Helper.java", """
+                package demo;
+
+                public class Helper {
+                    public int add(int first, int second) {
+                        return first + second;
+                    }
+                }
+                """);
+        Files.writeString(root.resolve("demo/Main.java"), """
+                package demo;
+
+                public class Main {
+                    public void run(demo.Helper h) {
+                        h.add(1,
+                    }
+                }
+                """);
+        String mainPath = root.resolve("demo/Main.java").toString();
+        String content = Files.readString(java.nio.file.Paths.get(mainPath));
+
+        EcjCompilerEngine engine = newEngine(root);
+        var helper = new EcjSignatureHelp(engine);
+        int caret = content.indexOf("h.add(1,") + "h.add(1,".length();
+        var result = helper.signatureHelpAt(mainPath, content, caret);
+        assertNotNull(result, "la virgule de fin doit être servie (variante B)");
+        assertEquals(1, result.activeParameter, "deuxième argument en cours");
+        assertTrue(result.signatures.stream().anyMatch(s ->
+                        s.label.contains("add(")),
+                "le sélecteur add est servi : "
+                        + result.signatures.get(0).label);
+    }
+
+    @Test
+    void signatureHelpSurvivesMidWordArgument() {
+        // `sb.append("a").append(fi` — l'argument courant est un nom en
+        // cours de frappe (non résoluble) : la variante D le substitue.
+        String source = """
+                package demo;
+
+                public class Main {
+                    public void run(StringBuilder sb) {
+                        sb.append("a").append(fi
+                    }
+                }
+                """;
+        EcjCompilerEngine engine = newEngine();
+        var helper = new EcjSignatureHelp(engine);
+        int caret = source.indexOf("append(fi") + "append(".length() + 2;
+        var result = helper.signatureHelpAt("/demo/Main.java", source, caret);
+        assertNotNull(result, "l'argument à moitié tapé doit être servi (variante D)");
+        assertEquals(0, result.activeParameter);
+        assertTrue(result.signatures.stream().anyMatch(s ->
+                        s.label.contains(" append(")),
+                "le sélecteur append est servi");
+    }
+
+    @Test
+    void signatureHelpSurvivesUnterminatedString() {
+        // `sb.append("abc` — la chaîne n'est pas refermée : la variante A
+        // referme le littéral puis l'appel (`append("abc")`).
+        String source = """
+                package demo;
+
+                public class Main {
+                    public void run(StringBuilder sb) {
+                        sb.append("abc
+                    }
+                }
+                """;
+        EcjCompilerEngine engine = newEngine();
+        var helper = new EcjSignatureHelp(engine);
+        int caret = source.indexOf("\"abc") + 4;
+        var result = helper.signatureHelpAt("/demo/Main.java", source, caret);
+        assertNotNull(result, "la chaîne ouverte doit être servie (variante A)");
+        assertEquals(0, result.activeParameter);
+    }
+
+    @Test
+    void signatureHelpSurvivesOpenConstructor() {
+        // `new StringBuilder(` — constructeur non refermé.
+        String source = """
+                package demo;
+
+                public class Main {
+                    public void run() {
+                        StringBuilder sb = new StringBuilder(
+                    }
+                }
+                """;
+        EcjCompilerEngine engine = newEngine();
+        var helper = new EcjSignatureHelp(engine);
+        int caret = source.indexOf("new StringBuilder(")
+                + "new StringBuilder(".length();
+        var result = helper.signatureHelpAt("/demo/Main.java", source, caret);
+        assertNotNull(result, "le constructeur non refermé doit être servi");
+        assertTrue(result.signatures.size() >= 3,
+                "les constructeurs de StringBuilder sont énumérés : "
+                        + result.signatures.size());
+    }
+
+    @Test
+    void signatureHelpSurvivesBooleanParameter() {
+        // `toggle(` — aucune surcharge 0-arg, le paramètre est boolean :
+        // null et 0 ne matchent pas, la variante F (`true`) tranche.
+        String source = """
+                package demo;
+
+                public class Main {
+                    public void toggle(boolean flag) {
+                    }
+
+                    public void run() {
+                        toggle(
+                    }
+                }
+                """;
+        EcjCompilerEngine engine = newEngine();
+        var helper = new EcjSignatureHelp(engine);
+        // L'APPEL dans run() — pas la déclaration (première occurrence).
+        int caret = source.indexOf("toggle(", source.indexOf("run()"))
+                + "toggle(".length();
+        var result = helper.signatureHelpAt("/demo/Main.java", source, caret);
+        assertNotNull(result, "le booléen doit être servi (variante F)");
+        assertEquals(1, result.signatures.size());
+        assertTrue(result.signatures.get(0).label.contains("boolean"),
+                "la signature booléenne est servie : "
+                        + result.signatures.get(0).label);
+    }
+
+    @Test
+    void signatureHelpStillNullOutsideCall() {
+        // Garde : hors d'une liste d'arguments, le niveau 4 ne doit RIEN
+        // inventer (aucune parenthèse d'appel ouverte dans la tête).
+        String source = """
+                package demo;
+
+                public class Main {
+                    public void run() {
+                        int x = 1 +
+                    }
+                }
+                """;
+        EcjCompilerEngine engine = newEngine();
+        var helper = new EcjSignatureHelp(engine);
+        int caret = source.indexOf("1 +") + 3;
+        assertNull(helper.signatureHelpAt("/demo/Main.java", source, caret),
+                "pas d'appel → null, même avec le niveau 4");
+    }
 }

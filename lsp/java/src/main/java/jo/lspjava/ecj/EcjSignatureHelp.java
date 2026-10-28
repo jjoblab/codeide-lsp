@@ -102,7 +102,7 @@ public final class EcjSignatureHelp {
     /**
      * Calcule l'aide de signature au offset.
      *
-     * <p><strong>Chaîne de résolution (v1.6.0, du moins cher au plus
+     * <p><strong>Chaîne de résolution (v1.16.0, du moins cher au plus
      * cher) :</strong></p>
      * <ol>
      *   <li>arbre focalisé du dernier diagnose RAPIDE (P6 étendu) —
@@ -112,7 +112,11 @@ public final class EcjSignatureHelp {
      *   <li>arbre RÉEL du parseCache (diagnose complet de ce contenu) —
      *       probe pure via {@link EcjCompilerEngine#cachedUnit} ;</li>
      *   <li>réduction {@link SourceFocuser} + resolveUnit (chemin
-     *       v1.5).</li>
+     *       v1.5) ;</li>
+     *   <li><b>variantes réparées</b> (v1.16.0) — la frappe en cours
+     *       laisse l'appel non refermé ou l'argument non résoluble : on
+     *       referme avec un argument synthétique
+     *       ({@link #computeFromSplices}).</li>
      * </ol>
      * <p>Un niveau qui ne trouve pas d'appel (ou échoue) retombe sur le
      * suivant : le pire cas reste le coût v1.5, jamais moins bien.</p>
@@ -155,16 +159,213 @@ public final class EcjSignatureHelp {
 
         // ── Niveau 3 : chemin v1.5 — SourceFocuser réduit le coût de la
         // résolution (corps hors-portée effacés, offset traduit).
+        SourceFocuser.Focused focused = null;
         try {
-            SourceFocuser.Focused focused = SourceFocuser.focusAndMap(source, offset);
+            focused = SourceFocuser.focusAndMap(source, offset);
             String workSource = focused.source();
             int workOffset = focused.offset();
 
             CompilationUnitDeclaration cud = engine.resolveUnit(filePath, workSource, false);
+            if (cud != null && cud.scope != null) {
+                Result r = computeAt(cud, workSource, workOffset);
+                if (r != null) return r;
+            }
+        } catch (Throwable t) {
+            // Best-effort — repli sur le niveau 4.
+        }
+
+        // ── Niveau 4 : texte vivant cassé (v1.16.0). La frappe EN COURS
+        // laisse l'appel non refermé (`add(`, `add(1, `), la chaîne
+        // ouverte (`add("abc`) ou l'argument courant non résoluble
+        // (`add(1, par`) — ecj jette alors le MessageSend en recovery
+        // (binding absent/invalid) et les niveaux 1-3 rendent null. On
+        // referme l'appel avec un ARGUMENT SYNTHÉTIQUE et les blocs
+        // ouverts, en essayant plusieurs littéraux de secours (null pour
+        // les références, 0 pour les numériques, true pour les
+        // booléens) : la première variante qui rend un appel résolu
+        // gagne. Le splice n'ajoute JAMAIS rien AVANT le caret → le
+        // paramètre actif compté sur la source splicée est exactement
+        // celui de la frappe réelle.
+        try {
+            if (focused != null) {
+                Result r = computeFromSplices(filePath, focused);
+                if (r != null) return r;
+            }
+        } catch (Throwable t) {
+            // Best-effort — null reste la réponse finale.
+        }
+        return null;
+    }
+
+    /**
+     * Niveau 4 de {@link #signatureHelpAt} : variantes réparées pour le
+     * texte vivant cassé. Transposition du principe des splice-variants
+     * de la complétion ({@code EcjCompletionEngine}) au cas signature :
+     * le caret est DANS une liste d'arguments, on abandonne la queue du
+     * fichier et on synthétise une fermeture équilibrée.
+     *
+     * <p>Variantes (du mieux au plus sacrificiel) :</p>
+     * <ol>
+     *   <li><b>A — texte tel quel</b> : on referme juste les littéraux et
+     *       blocs ouverts. Couvre {@code add(} (fermeture immédiate) et
+     *       les arguments déjà complets ({@code add(1, 2}) ;</li>
+     *   <li><b>B/C — littéral apposé</b> : {@code null} puis {@code 0}
+     *       ajouté à l'argument courant. Couvre l'argument vide
+     *       ({@code add(1, } → {@code add(1, null)}) et la suite
+     *       d'opérateur ({@code add(1, 2 + }) ;</li>
+     *   <li><b>D/E/F — littéral substitué</b> : l'argument courant (non
+     *       résoluble, mot en cours de frappe) est REMPLACÉ par
+     *       {@code null}, {@code 0} ou {@code true}. Couvre
+     *       {@code add(1, par} → {@code add(1, null)}.</li>
+     * </ol>
+     *
+     * <p>Le compte de virgules (paramètre actif) est préservé par
+     * construction : la substitution coupe APRÈS le dernier séparateur
+     * de l'appel interne — aucun séparateur n'est ajouté ni retiré avant
+     * la position du caret.</p>
+     */
+    private Result computeFromSplices(String filePath,
+            SourceFocuser.Focused focused) {
+        String workSource = focused.source();
+        int workOffset = focused.offset();
+        String head = workSource.substring(0, workOffset);
+        HeadScan scan = scanHead(head);
+        // Le caret doit vivre dans une liste d'arguments : au moins une
+        // parenthèse d'appel encore ouverte dans la tête.
+        if (!scan.hasOpenCallParen) return null;
+
+        // Début de l'argument courant : après le DERNIER séparateur
+        // (virgule) ou la DERNIÈRE parenthèse ouverte — l'appel interne
+        // est celui dont la parenthèse est la plus récente.
+        int argStart = Math.max(scan.lastComma, scan.lastParen) + 1;
+        String partial = head.substring(argStart);
+        boolean blankPartial = partial.isBlank();
+        boolean afterComma = scan.lastComma > scan.lastParen;
+
+        // Variante A — le texte tapé reste tel quel (invalid si la
+        // liste finit sur une virgule : `add(1, )` ne parse pas).
+        if (!(blankPartial && afterComma)) {
+            Result r = trySplice(filePath, head + scan.literalClose()
+                    + scan.statementTail(), workOffset);
+            if (r != null) return r;
+        }
+        // Variantes B/C — littéral APPPOSÉ à l'argument courant
+        // (la chaîne ouverte est refermée d'abord).
+        for (String lit : new String[] {"null", "0"}) {
+            Result r = trySplice(filePath, head + scan.literalClose()
+                    + (scan.inLiteral() ? ", " : "") + lit
+                    + scan.statementTail(), workOffset);
+            if (r != null) return r;
+        }
+        // Variantes D/E/F — l'argument courant est REMPLACÉ par un
+        // littéral ; la tête est coupée à argStart, les fermetures se
+        // calculent sur la tête coupée (les crochets de l'argument
+        // abandonné ne doivent pas compter).
+        String cutHead = head.substring(0, argStart);
+        HeadScan cutScan = scanHead(cutHead);
+        int cutOffset = argStart;
+        for (String lit : new String[] {"null", "0", "true"}) {
+            Result r = trySplice(filePath, cutHead + lit
+                    + cutScan.statementTail(), cutOffset + lit.length());
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    /** Résout une variante splicée puis y calcule l'aide de signature. */
+    private Result trySplice(String filePath, String spliced, int workOffset) {
+        try {
+            CompilationUnitDeclaration cud =
+                    engine.resolveUnit(filePath, spliced, false);
             if (cud == null || cud.scope == null) return null;
-            return computeAt(cud, workSource, workOffset);
+            return computeAt(cud, spliced, workOffset);
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /**
+     * Analyse lexicale de la tête (tout ce qui précède le caret) : pile
+     * des crochets ouverts, état de littéral (chaîne/caractère), et
+     * positions du dernier séparateur d'arguments. Aveugle aux
+     * commentaires (une parenthèse dans un commentaire fausse la
+     * variante correspondante — elle échoue proprement, les autres
+     * restent essayées).
+     */
+    private static HeadScan scanHead(String head) {
+        HeadScan s = new HeadScan();
+        boolean escaped = false;
+        for (int i = 0; i < head.length(); i++) {
+            char c = head.charAt(i);
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\') { escaped = true; continue; }
+            if (s.inString) {
+                if (c == '"') s.inString = false;
+                continue;
+            }
+            if (s.inChar) {
+                if (c == '\'') s.inChar = false;
+                continue;
+            }
+            switch (c) {
+                case '"' -> s.inString = true;
+                case '\'' -> s.inChar = true;
+                case ',' -> s.lastComma = i;
+                case '(' -> {
+                    s.lastParen = i;
+                    s.open.push(c);
+                }
+                case '[', '{' -> s.open.push(c);
+                case ')', ']', '}' -> {
+                    if (!s.open.isEmpty()) s.open.pop();
+                }
+                default -> { }
+            }
+        }
+        s.hasOpenCallParen = s.open.contains('(');
+        return s;
+    }
+
+    /**
+     * Résultat de {@link #scanHead} — fermetures synthétiques pour les
+     * variantes du niveau 4.
+     */
+    private static final class HeadScan {
+        boolean inString;
+        boolean inChar;
+        int lastComma = -1;
+        int lastParen = -1;
+        boolean hasOpenCallParen;
+        final java.util.ArrayDeque<Character> open = new java.util.ArrayDeque<>();
+
+        boolean inLiteral() { return inString || inChar; }
+
+        /** Fermeture du littéral en cours ("" si aucun). */
+        String literalClose() {
+            if (inString) return "\"";
+            if (inChar) return "'";
+            return "";
+        }
+
+        /**
+         * Queue de fermeture : referme les crochets ouverts (le plus
+         * interne d'abord) et termine l'instruction par «;» PLACÉ AVANT
+         * LA PREMIÈRE ACCOLADE — {@code add(} devient {@code add();}},
+         * jamais {@code add(;}}.
+         */
+        String statementTail() {
+            StringBuilder sb = new StringBuilder();
+            for (char c : open) {
+                if (c == '{' && sb.indexOf(";") < 0) sb.append(';');
+                switch (c) {
+                    case '(' -> sb.append(')');
+                    case '[' -> sb.append(']');
+                    case '{' -> sb.append('}');
+                    default -> { }
+                }
+            }
+            if (sb.indexOf(";") < 0) sb.append(';');
+            return sb.toString();
         }
     }
 
@@ -232,9 +433,13 @@ public final class EcjSignatureHelp {
             }
             ReferenceBinding refType = receiverType;
 
-            // Énumère les méthodes de même sélecteur sur le graphe.
+            // Énumère les méthodes de même sélecteur sur le graphe — ou
+            // les CONSTRUCTEURS du type quand l'appel en est un (v1.16.0 :
+            // `new StringBuilder(` énumère (), (int), (String),
+            // (CharSequence) au lieu d'une signature isolée).
+            boolean wantCtors = binding.isConstructor();
             Map<String, Signature> byKey = new LinkedHashMap<>();
-            collectOverloads(refType, selector, byKey);
+            collectOverloads(refType, selector, byKey, wantCtors);
 
             if (byKey.isEmpty()) {
                 return single(binding, activeParam);
@@ -371,21 +576,30 @@ public final class EcjSignatureHelp {
         return 0;
     }
 
-    /** Marche le graphe des super-types en collectant les surcharges. */
+    /**
+     * Marche le graphe des super-types en collectant les surcharges —
+     * ou les constructeurs du type ({@code wantCtors}).
+     */
     private void collectOverloads(ReferenceBinding type, String selector,
-                                  Map<String, Signature> byKey) {
+                                  Map<String, Signature> byKey,
+                                  boolean wantCtors) {
         java.util.Set<String> seen = new java.util.HashSet<>();
-        visitOverloads(type, selector, byKey, seen);
+        visitOverloads(type, selector, byKey, seen, wantCtors);
     }
 
     private void visitOverloads(ReferenceBinding type, String selector,
                                 Map<String, Signature> byKey,
-                                java.util.Set<String> seen) {
+                                java.util.Set<String> seen,
+                                boolean wantCtors) {
         if (type == null || !seen.add(keyOf(type))) return;
         try {
             for (MethodBinding m : type.methods()) {
-                if (m == null || m.isSynthetic() || m.isConstructor()) continue;
-                if (!String.valueOf(m.selector).equals(selector)) continue;
+                if (m == null || m.isSynthetic()) continue;
+                if (m.isConstructor() != wantCtors) continue;
+                if (!wantCtors
+                        && !String.valueOf(m.selector).equals(selector)) {
+                    continue;
+                }
                 String key = EcjRenameEngine.methodKey(m);
                 if (key == null || byKey.containsKey(key)) continue;
                 byKey.put(key, toSignature(m, parameterNamesOf(m)));
@@ -393,10 +607,11 @@ public final class EcjSignatureHelp {
         } catch (Throwable ignored) {
             // Best-effort.
         }
+        if (wantCtors) return; // les constructeurs ne s'héritent pas
         try {
-            visitOverloads(type.superclass(), selector, byKey, seen);
+            visitOverloads(type.superclass(), selector, byKey, seen, false);
             for (ReferenceBinding itf : type.superInterfaces()) {
-                visitOverloads(itf, selector, byKey, seen);
+                visitOverloads(itf, selector, byKey, seen, false);
             }
         } catch (Throwable ignored) {
             // Hiérarchie incomplète.
@@ -413,11 +628,16 @@ public final class EcjSignatureHelp {
 
     // ─── Formatage ─────────────────────────────────────────────────────
 
-    /** Signature affichable : {@code retour nom(T1 p1, T2 p2)}. */
+    /**
+     * Signature affichable : {@code retour nom(T1 p1, T2 p2)} — pour un
+     * constructeur, {@code Nom(T1 p1)} (le type de retour est implicite).
+     */
     private Signature toSignature(MethodBinding m, List<String> names) {
         StringBuilder sb = new StringBuilder();
-        sb.append(EcjCompilerEngine.display(m.returnType)).append(' ')
-                .append(String.valueOf(m.selector)).append('(');
+        if (!m.isConstructor()) {
+            sb.append(EcjCompilerEngine.display(m.returnType)).append(' ');
+        }
+        sb.append(String.valueOf(m.selector)).append('(');
         for (int i = 0; i < m.parameters.length; i++) {
             if (i > 0) sb.append(", ");
             sb.append(EcjCompilerEngine.display(m.parameters[i]));
