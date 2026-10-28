@@ -79,6 +79,28 @@ public enum class GenreCompletionKotlin {
 }
 
 /**
+ * Correctif « implémenter les membres manquants » (chantier P1-C —
+ * ADR 0229) : l'édition CONCRÈTE qui insère les stubs des membres
+ * abstraits non implémentés d'une classe/objet, calculée sur le texte
+ * courant. L'hôte la traduit en `CodeAction` LSP (titre plurielisé,
+ * `WorkspaceEdit`) — le moteur ne connaît ni LSP ni le titre.
+ *
+ * @property debut décalage de début de l'édition (inclus) —
+ *           insertion quand `debut == fin`.
+ * @property fin décalage de fin de l'édition (exclusif).
+ * @property texte le texte de remplacement (stubs indentés, lignes
+ *           complètes avec leurs sauts).
+ * @property nombre le nombre de stubs rendus (le titre de l'action côté
+ *           hôte : « le membre manquant » / « les N membres manquants »).
+ */
+public data class CorrectifMembresManquantsKotlin(
+    public val debut: Int,
+    public val fin: Int,
+    public val texte: String,
+    public val nombre: Int,
+)
+
+/**
  * Contenu de survol (`textDocument/hover`) — texte simple (même forme
  * que le LSP Java : le client rend une chaîne, pas du markdown riche ;
  * la richesse arrive avec le mode profond, jamais par devinette).

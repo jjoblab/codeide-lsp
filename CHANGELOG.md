@@ -1,5 +1,48 @@
 # Changelog — codeide-lsp
 
+## 1.19.0 (2026-10-29)
+
+- **Implémenter les membres manquants (chantier P1-C de la feuille de
+  route du rapport d'analyse du 28/10, ADR 0229)** : premier correctif
+  Kotlin AU-DELÀ des imports — sur la classe/objet englobant le
+  curseur, le quick-fix insère les stubs des membres ABSTRAITS de la
+  clôture des supertypes non déjà implémentés :
+  - **clôture** (miroir du GO TO Super) : chaque supertype ÉCRIT résolu
+    par les imports du fichier déclarant (preuve FQCN) ; un lien PROJET
+    se lit dans son arbre (port de la session) et prouve sa propre
+    clause, un lien CLASSPATH parcourt sa chaîne binaire (vue JVM) ;
+    sources Java du scan jamais traversées, profondeur 12, 64 stubs ;
+  - **fidélité** : PROJET — noms et types réels, paramètres de type
+    SUBSTITUÉS par les arguments écrits de la clause (la substitution
+    se compose le long de la clôture, `Depot<String>` rend
+    `fun lire(id: String)`) ; CLASSPATH — vue JVM érasée, paramètres
+    `p0…`, getters/setters abstraits APPARIÉS en propriétés
+    `override val x` / `override var x` ;
+  - **garde générique** (l'apport décisif) : un membre du classpath
+    portant l'attribut `Signature` du bytecode (variable de type ou
+    type paramétré) est ÉCARTÉ — son rendu érasé ne compilerait pas,
+    un stub faux est pire que pas de stub (D3). Nouvelle sonde maison
+    `LecteurClassBrut.methodesGeneriques` (octet par octet, `null` sur
+    octets illisibles : le lien entier se tait) ;
+  - **édition** : stubs `= TODO()` / `get() = TODO()` indentés comme
+    le corps ; corps vide → le blanc entre accolades est REMPLACÉ,
+    corps peuplé → insertion avant l'accolade fermante (un commentaire
+    force l'insertion, rien n'est détruit), corps ABSENT → créé en fin
+    d'en-tête ;
+  - **bornes honnêtes** : hors classe/objet, interface, classe
+    abstraite, sans supertype écrit, tout implémenté → `null` ;
+    exclusions par nom+arité (fonctions) et nom (propriétés,
+    constructeur primaire compris) ;
+  - **contrat** : `SessionLangageKotlin.membresManquants` (défaut
+    `null`, tolérance de version), l'hôte n'ajoute que le titre
+    (singulier/pluriel) et l'enveloppe `WorkspaceEdit` — QuickFix SANS
+    diagnostic (l'action est bornée à la déclaration englobante).
+- Tests : +10 moteur (`MembresManquantsTest` — octets de classe
+  synthétiques avec attribut `Signature` réel) + 3 hôte
+  (`KotlinLanguageServerTest`), 441 au total sur `:lsp:kotlin`
+  (0 échec), 251 sur `:lsp:host` (0 échec) ; baseline de parité
+  re-synchronisée.
+
 ## 1.18.0 (2026-10-29)
 
 - **Complétion contextuelle Kotlin, vague 1 (chantier P1-B de la

@@ -173,6 +173,40 @@ public interface SessionLangageKotlin : AutoCloseable {
     public fun importsCandidats(uri: String, decalage: Int): List<String> = emptyList()
 
     /**
+     * Correctif « IMPLÉMENTER LES MEMBRES MANQUANTS » de la classe/objet
+     * englobant [decalage] (chantier P1-C, ADR 0229 — quick-fix au-delà
+     * des imports) : les stubs des membres ABSTRAITS de la clôture des
+     * supertypes NON déjà implémentés, indentés comme le corps, rendus
+     * comme UNE édition concrète ([CorrectifMembresManquantsKotlin]).
+     *
+     * Sources des membres, par la clôture des supertypes : PROJET
+     * (l'arbre vif du fichier déclarant via le port — noms et types
+     * RÉELS, paramètres de type substitués par les arguments ÉCRITS de
+     * la clause) et CLASSPATH (membres abstraits de la vue JVM ;
+     * getters/setters appariés en propriétés `val`/`var` ; un membre
+     * portant l'attribut `Signature` du bytecode — variable de type ou
+     * type paramétré — est ÉCARTÉ : son rendu érasé ne compilerait pas,
+     * un stub faux est pire que pas de stub, D3).
+     *
+     * Conservateur (D3) : `null` hors classe/objet, sur une INTERFACE ou
+     * une classe abstraite (rien n'est EXIGÉ), sans supertype écrit, ou
+     * quand TOUT est déjà implémenté ; les sources JAVA du scan ne sont
+     * jamais traversées (même garde que le GO TO Super).
+     *
+     * Tolérance de version : défaut `null` — un pack antérieur à l'ADR
+     * 0229 dégrade honnêtement (pas de quick-fix, jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur (n'importe où dans la
+     *        classe/objet — l'action édite son CORPS).
+     * @return le correctif concret, `null` si rien ne manque.
+     */
+    public fun membresManquants(
+        uri: String,
+        decalage: Int,
+    ): CorrectifMembresManquantsKotlin? = null
+
+    /**
      * Symboles de document (`textDocument/documentSymbol`, S1) —
      * structure hiérarchique de l'arbre Kotlin : classes, fonctions,
      * propriétés, objets, enum entries, typealias. L'outline éditeur

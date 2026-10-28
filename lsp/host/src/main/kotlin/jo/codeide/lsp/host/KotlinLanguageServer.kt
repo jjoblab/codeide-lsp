@@ -1130,8 +1130,69 @@ internal class KotlinLanguageServer(
                     actions.add(action)
                 }
             }
+            // P1-C (ADR 0229) : « implémenter les membres manquants » de
+            // la classe/objet englobant le curseur — correctif SANS
+            // diagnostic (le moteur Kotlin n'a pas de diagnostic
+            // d'exhaustivité d'héritage ; l'action est bornée à la
+            // déclaration englobante, elle ne peut pas se tromper de
+            // cible).
+            actionMembresManquants(uri, document, params.range.start)?.let { actions.add(it) }
             val reponses = actions.map { action -> Either.forRight<Command, CodeAction>(action) }
             return CompletableFuture.completedFuture(reponses)
+        }
+
+        /**
+         * L'action « implémenter les membres manquants » de la
+         * classe/objet englobant le curseur — le moteur rend l'édition
+         * CONCRÈTE (stubs indentés), l'hôte n'ajoute que le TITRE
+         * (singulier/pluriel) et l'enveloppe `WorkspaceEdit`.
+         * `null` quand le moteur se tait (rien ne manque, hors classe,
+         * moteur en échec — jamais une action muette).
+         *
+         * Exemption detekt ciblée (règle 16) : ReturnCount — document
+         * absent, moteur silencieux et action rendue sont les TROIS
+         * issues du contrat honnête (miroir du codeAction des imports).
+         */
+        @Suppress("ReturnCount")
+        private fun actionMembresManquants(
+            uri: String,
+            document: DocumentLsp?,
+            debutPlage: Position,
+        ): CodeAction? {
+            if (document == null) return null
+            val decalage = decalageDe(debutPlage, document.texte)
+            val correctif =
+                try {
+                    session.membresManquants(uri, decalage)
+                } catch (t: Throwable) {
+                    LOGGER.log(Level.WARNING, "membres manquants échoués ($uri)", t)
+                    null
+                }
+            if (correctif == null) return null
+            val titre =
+                if (correctif.nombre == 1) {
+                    "Implémenter le membre manquant"
+                } else {
+                    "Implémenter les ${correctif.nombre} membres manquants"
+                }
+            val action = CodeAction(titre)
+            action.kind = CodeActionKind.QuickFix
+            action.edit =
+                WorkspaceEdit(
+                    linkedMapOf(
+                        uri to
+                            listOf(
+                                TextEdit(
+                                    Range(
+                                        positionDe(correctif.debut, document.texte),
+                                        positionDe(correctif.fin, document.texte),
+                                    ),
+                                    correctif.texte,
+                                ),
+                            ),
+                    ),
+                )
+            return action
         }
 
         /** Extension de script (`.kts`) → mode script du parseur. */

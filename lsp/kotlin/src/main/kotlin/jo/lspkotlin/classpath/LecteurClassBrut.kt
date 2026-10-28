@@ -140,6 +140,63 @@ internal object LecteurClassBrut {
     // ── Pool de constantes ─────────────────────────────────────────────
 
     /**
+     * Méthodes GÉNÉRIQUES d'un fichier de classe (chantier P1-C —
+     * « implémenter les membres manquants ») : l'ensemble des clés
+     * `nom:descripteur` des méthodes portant un attribut `Signature`
+     * (JLS §4.7.9 — présent dès que la déclaration touche une variable
+     * de type OU un type paramétré). C'est la garde d'honnêteté des
+     * stubs rendus depuis la VUE JVM ÉRASÉE : un membre portant
+     * `Signature` (paramètre de type, `List<T>`, `Comparable<X>`…) ne
+     * peut PAS être rendu en Kotlin valide depuis son descripteur seul —
+     * un stub faux est pire que pas de stub (D3), le membre est écarté.
+     *
+     * @param octets octets du `.class`.
+     * @return les clés des méthodes génériques (VOIDE si aucune — un
+     *         ensemble vide est un verdict : TOUT est concret) ;
+     *         `null` si les octets sont illisibles (le consommateur
+     *         sous-rapporte le lien entier).
+     * Exemption detekt ciblée (règle 16) : SwallowedException — `null`
+     * EST le contrat pour une classe illisible ; ReturnCount — les
+     * gardes (magie, pool, noms) sont les issues du contrat ; Nested-
+     * BlockDepth — la table des MÉTHODES imbriquée dans le `try` du
+     * contrat null est la structure même du format de classe (JLS
+     * §4.6), miroir de [lire].
+     */
+    @Suppress("SwallowedException", "ReturnCount", "NestedBlockDepth")
+    internal fun methodesGeneriques(octets: ByteArray): Set<String>? {
+        return try {
+            val flux = DataInputStream(ByteArrayInputStream(octets))
+            if (flux.readInt() != MAGIE_CLASSE) return null
+            flux.skipBytes(TAILLE_U32) // versions minor/major
+            val pool = Pool(flux)
+            if (!pool.initialise) return null
+            flux.skipBytes(2) // access_flags
+            flux.skipBytes(2 + 2) // this_class + super_class
+            repeat(flux.readUnsignedShort()) { flux.skipBytes(2) } // interfaces
+            // Champs : sautés (la sonde ne lit que la table des méthodes).
+            repeat(flux.readUnsignedShort()) {
+                flux.skipBytes(TAILLE_ENTETE_MEMBRE)
+                sauterAttributs(flux)
+            }
+            val generiques = HashSet<String>()
+            repeat(flux.readUnsignedShort()) {
+                flux.skipBytes(2) // access_flags de la méthode
+                val nom = pool.utf8[flux.readUnsignedShort()] ?: return null
+                val descripteur = pool.utf8[flux.readUnsignedShort()] ?: return null
+                repeat(flux.readUnsignedShort()) {
+                    val nomAttribut = pool.utf8[flux.readUnsignedShort()] ?: "?"
+                    val longueur = flux.readInt()
+                    if (nomAttribut == "Signature") generiques.add("$nom:$descripteur")
+                    flux.sauter(longueur)
+                }
+            }
+            generiques
+        } catch (t: Throwable) {
+            null // classe illisible : verdict impossible (D3)
+        }
+    }
+
+    /**
      * Pool de constantes — noms (Utf8), entiers (élément_values des
      * annotations), noms de classes (Class→Utf8). Les autres entrées
      * sont sautées octet-exact (JLS §4.4.5 : Long/Double occupent DEUX

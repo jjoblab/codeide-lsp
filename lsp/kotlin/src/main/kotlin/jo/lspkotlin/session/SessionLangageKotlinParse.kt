@@ -4,6 +4,7 @@ import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ChaineSelectionKotlin
 import jo.lspkotlin.api.CibleNavigationKotlin
 import jo.lspkotlin.api.ClasspathKotlin
+import jo.lspkotlin.api.CorrectifMembresManquantsKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EditionSourceKotlin
@@ -34,6 +35,7 @@ import jo.lspkotlin.resolve.DeclarationProjet
 import jo.lspkotlin.resolve.GenreDeclaration
 import jo.lspkotlin.resolve.IndicesKotlin
 import jo.lspkotlin.resolve.InterrogationsSymboles
+import jo.lspkotlin.resolve.MembresManquantsKotlin
 import jo.lspkotlin.resolve.OccurrencesKotlin
 import jo.lspkotlin.resolve.ResolutionKotlin
 import jo.lspkotlin.resolve.SelectionsKotlin
@@ -325,6 +327,37 @@ internal class SessionLangageKotlinParse(
                 // — sur un scan TRONQUÉ, l'absence n'est pas prouvable,
                 // le quick-fix d'import se tient coi.
                 universProjetComplet = scanProjet.estUniversConnu(),
+            )
+        }
+
+    /**
+     * Correctif « implémenter les membres manquants » (chantier P1-C,
+     * ADR 0229) — la marche vit dans [MembresManquantsKotlin] (clôture
+     * des supertypes, projet via le PORT + classpath via la vue JVM) ;
+     * la session pioche le document courant et fournit le port des
+     * fichiers déclarants (même budget que le GO TO Super, ADR 0210).
+     * Document inconnu/fermé : `null`.
+     */
+    override fun membresManquants(
+        uri: String,
+        decalage: Int,
+    ): CorrectifMembresManquantsKotlin? =
+        enLecture {
+            if (fermee) return null
+            val document = documents[uri] ?: return null
+            val contexteNom = contexteNomDe(document, uri)
+            val declarations = declarationsProjet(document, uri, contexteNom.paquet)
+            MembresManquantsKotlin.correctif(
+                document.arbre.racine,
+                document.texte,
+                decalage,
+                MembresManquantsKotlin.Contexte(
+                    contexteNom = contexteNom,
+                    resolution = resolution,
+                    declarationsProjet = declarations,
+                    port = portFichierDeclaration(declarations),
+                    vue = classpath?.vue,
+                ),
             )
         }
 

@@ -127,7 +127,9 @@ scan paresseux persistant par jar (empreinte de contenu, segments ADR 0111),
   `kt.conflictingImport` — chacun avec sa fixture TDD et son test de
   sous-rapport.
 - **Quick-fixes** : import (un correctif par FQN candidate, position triée) ;
-  les suivants après K4.
+  **implémenter les membres manquants** (P1-C, ADR 0229 — stubs de la
+  clôture des supertypes, projet substitué + classpath sous garde
+  générique, correctif SANS diagnostic) ; les suivants après K4.
 
 ### 4.4 Protocole et complétude des capacités
 

@@ -1060,6 +1060,119 @@ class KotlinLanguageServerTest {
     }
 
     @Test
+    fun `codeAction - implémenter les membres manquants, édition concrète du moteur`() {
+        val session =
+            SessionScriptee(
+                membresManquantsRetourne =
+                    jo.lspkotlin.api.CorrectifMembresManquantsKotlin(
+                        debut = 23,
+                        fin = 24,
+                        texte = "\n  override fun lire(id: String): String = TODO()\n",
+                        nombre = 1,
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        // `class Memoire : Depot {\n}` — l'accolade ouvrante ligne 0
+        // colonne 22, le blanc entre accolades lignes 0→1.
+        val source = "class Memoire : Depot {\n}\n"
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///membres.kt", "kotlin", 1, source)),
+        )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///membres.kt"),
+                Range(Position(0, 8), Position(0, 9)),
+                CodeActionContext(emptyList()),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        val action = actions.single().right
+        assertEquals("Implémenter le membre manquant", action.title)
+        assertEquals(org.eclipse.lsp4j.CodeActionKind.QuickFix, action.kind)
+        assertNull(action.diagnostics, "sans diagnostic lié (le moteur n'en a pas)")
+        val editions = checkNotNull(action.edit?.changes?.get("file:///membres.kt"))
+        val edition = editions.single()
+        assertEquals("\n  override fun lire(id: String): String = TODO()\n", edition.newText)
+        assertEquals(0, edition.range.start.line)
+        assertEquals(23, edition.range.start.character)
+        assertEquals(1, edition.range.end.line)
+        assertEquals(0, edition.range.end.character)
+        session.close()
+    }
+
+    @Test
+    fun `codeAction - implémenter les membres manquants, titre pluriel et moteur silencieux`() {
+        // Pluriel : N membres.
+        val session =
+            SessionScriptee(
+                membresManquantsRetourne =
+                    jo.lspkotlin.api.CorrectifMembresManquantsKotlin(
+                        debut = 14,
+                        fin = 15,
+                        texte = "\n  a\n  b\n",
+                        nombre = 2,
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "class A : B {\n}\n")),
+        )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///a.kt"),
+                Range(Position(0, 6), Position(0, 7)),
+                CodeActionContext(emptyList()),
+            )
+        val pluriel = serveur.textDocumentService.codeAction(params).join()
+        assertEquals("Implémenter les 2 membres manquants", pluriel.single().right.title)
+        session.close()
+        // Moteur silencieux (null — tout est implémenté) : aucune action.
+        val sessionMuette = SessionScriptee()
+        val serveurMuette = KotlinLanguageServer(sessionMuette, "version-test")
+        serveurMuette.connect(EspionClient())
+        serveurMuette.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///b.kt", "kotlin", 1, "class B {\n}\n")),
+        )
+        val paramsMuets =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///b.kt"),
+                Range(Position(0, 6), Position(0, 7)),
+                CodeActionContext(emptyList()),
+            )
+        assertTrue(
+            serveurMuette.textDocumentService
+                .codeAction(paramsMuets)
+                .join()
+                .isEmpty(),
+        )
+        sessionMuette.close()
+    }
+
+    @Test
+    fun `codeAction - moteur en échec sur les membres, liste honnête sans l'action`() {
+        val session = SessionScriptee(leverSurMembresManquants = true)
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///c.kt", "kotlin", 1, "class C : D {\n}\n")),
+        )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///c.kt"),
+                Range(Position(0, 6), Position(0, 7)),
+                CodeActionContext(emptyList()),
+            )
+        assertTrue(
+            serveur.textDocumentService
+                .codeAction(params)
+                .join()
+                .isEmpty(),
+        )
+        session.close()
+    }
+
+    @Test
     fun `capacites K4 - codeAction declare (honnete)`() {
         val espace = espaceAvecEspion()
         val resultat = espace.serveur.initialize(InitializeParams()).join()
@@ -1193,6 +1306,8 @@ class KotlinLanguageServerTest {
         private val surlignagesRetournes: List<jo.lspkotlin.api.PlageSurligneeKotlin> = emptyList(),
         private val plageRenommableRetournee: jo.lspkotlin.api.PlageRenommableKotlin? = null,
         private val renommageRetourne: List<EmplacementKotlin> = emptyList(),
+        private val membresManquantsRetourne: jo.lspkotlin.api.CorrectifMembresManquantsKotlin? = null,
+        private val leverSurMembresManquants: Boolean = false,
     ) : SessionLangageKotlin {
         public var fermee: Boolean = false
             private set
@@ -1252,6 +1367,14 @@ class KotlinLanguageServerTest {
         ): List<String> {
             check(!leverSurImports) { "imports scriptés en échec" }
             return importsCandidats
+        }
+
+        override fun membresManquants(
+            uri: String,
+            decalage: Int,
+        ): jo.lspkotlin.api.CorrectifMembresManquantsKotlin? {
+            check(!leverSurMembresManquants) { "membres manquants scriptés en échec" }
+            return membresManquantsRetourne
         }
 
         override fun survol(
