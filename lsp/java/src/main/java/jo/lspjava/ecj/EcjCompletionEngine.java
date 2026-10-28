@@ -237,7 +237,7 @@ public final class EcjCompletionEngine {
             List<CompletionItem> items;
             try {
                 items = collectCandidates(ctx, prefix, appendParens,
-                        workSource);
+                        workSource, replaceStart);
                 // Templates DU contexte de CE splice (portage
                 // Live/PostfixTemplates du projet tiers de référence v3.20), AVANT le
                 // test de vacuité : `sout` (aucun mot-clé/membre ne
@@ -501,7 +501,7 @@ public final class EcjCompletionEngine {
             if (ctx.kind != Kind.TYPE_REFERENCE) continue;
             try {
                 List<CompletionItem> items = collectCandidates(
-                        ctx, prefix, false, workSource);
+                        ctx, prefix, false, workSource, replaceStart);
                 if (trace != null) trace.append("[SYNTH] → ")
                         .append(items.size()).append(" items\n");
                 if (!items.isEmpty()) {
@@ -564,14 +564,38 @@ public final class EcjCompletionEngine {
      */
     private List<CompletionItem> collectCandidates(Context ctx, String prefix,
                                                    boolean appendParens,
-                                                   String workSource) {
+                                                   String workSource,
+                                                   int replaceStart) {
         EcjPrefixMatcher matcher = new EcjPrefixMatcher(prefix);
         return switch (ctx.kind) {
             case MEMBER_ACCESS -> members(ctx, matcher, appendParens);
             case NAME_REFERENCE -> {
+                // Nom de DÉCLARATION (v1.16.0) : `Button but|` →
+                // suggestions de noms dérivées du type, RIEN d'autre
+                // (intention forte — un nom de variable ne se mélange
+                // pas aux membres/portée).
+                if (ctx.declarationName) {
+                    yield nameSuggestions(ctx, matcher);
+                }
+                // Attributs d'ANNOTATION (v1.16.0) : `@Anno(lev|` → les
+                // attributs non fournis de l'annotation, rien d'autre.
+                if (ctx.annotationAttributes != null) {
+                    yield annotationAttributeItems(ctx, matcher);
+                }
                 List<CompletionItem> inScope =
                         names(ctx, matcher, appendParens);
                 List<CompletionItem> out = new ArrayList<>(inScope);
+                // Stubs d'override en position de membre (v1.16.0) — le
+                // corps de classe est une intention de déclaration.
+                if (ctx.memberPosition) {
+                    addOverrideTemplates(out, workSource, replaceStart,
+                            prefix, ctx);
+                }
+                // Constantes de l'enum du switch (case CONS|) ou de
+                // l'attribut d'annotation enum (v1.16.0).
+                if (ctx.enumValues != null) {
+                    out.addAll(enumConstantItems(ctx.enumValues, matcher));
+                }
                 // Portage « taken » de CandidateCollector : un
                 // type de l'index dont le simple name est DÉJÀ pris par un
                 // candidat in-scope (locale/membre) n'est PAS proposé en
@@ -589,8 +613,19 @@ public final class EcjCompletionEngine {
                 List<CompletionItem> out =
                         new ArrayList<>(typeCompletions(ctx, matcher,
                                 workSource, null));
-                // Idem : mots-clés filtrés par préfixe.
-                out.addAll(keywordCompletions(matcher));
+                // Stubs d'override en position de membre (v1.16.0) —
+                // couvre AUSSI le chemin synthétique (`__m__ x;`) par
+                // lequel le marqueur nu en corps de classe se résout.
+                if (ctx.memberPosition) {
+                    addOverrideTemplates(out, workSource, replaceStart,
+                            prefix, ctx);
+                }
+                // Mots-clés seulement HORS position grammaticale
+                // spécialisée (v1.16.0) — après extends/implements/
+                // throws/catch/new/@anno, un mot-clé n'a pas sa place.
+                if (ctx.typePosition == TypePosition.ANY) {
+                    out.addAll(keywordCompletions(matcher));
+                }
                 yield out;
             }
             case PACKAGE_REFERENCE, IMPORT_REFERENCE ->
@@ -885,6 +920,29 @@ public final class EcjCompletionEngine {
     }
 
     /**
+     * Position syntaxique d'une référence de type (v1.16.0) — portage du
+     * principe des filtres de contexte de type du projet tiers de
+     * référence : la grammaire Java restreint ce qui est légal après
+     * {@code extends}, {@code implements}, {@code throws}, {@code catch},
+     * {@code new} et {@code @} ; proposer autre chose que du légal est du
+     * bruit.
+     */
+    enum TypePosition {
+        /** Position non spécialisée — tout est légal. */
+        ANY,
+        /** {@code class C extends X|} — classes non finales seulement. */
+        CLASS_EXTENDS,
+        /** {@code implements X|} / {@code interface I extends X|} — interfaces. */
+        INTERFACE,
+        /** {@code throws X|} / {@code catch (X| e)} — sous-classes de Throwable. */
+        THROWABLE,
+        /** {@code new X|} — classes concrètes instanciables. */
+        INSTANTIABLE,
+        /** {@code @X|} — types d'annotation seulement. */
+        ANNOTATION_TYPE
+    }
+
+    /**
      * Contexte dérivé du marqueur résolu.
      *
      * <p>Visibilité paquet : les tests du même paquet traquent l'étape
@@ -938,6 +996,38 @@ public final class EcjCompletionEngine {
          * {@code resolveType} de CandidateCollector).
          */
         Scope typeScope;
+        /**
+         * Position SYNTAXIQUE du marqueur quand c'est une référence de
+         * type (v1.16.0) — filtre les candidats selon la grammaire :
+         * {@code extends} d'une classe → classes concrètes non finales,
+         * {@code implements}/{@code extends} d'interface → interfaces,
+         * {@code throws}/{@code catch} → sous-classes de Throwable,
+         * {@code new} → classes concrètes, {@code @anno} → annotations.
+         */
+        TypePosition typePosition = TypePosition.ANY;
+        /**
+         * Position de MEMBRE (corps de classe, hors méthode/initialiseur
+         * d'expression) → stubs d'override en plus des types.
+         */
+        boolean memberPosition;
+        /**
+         * Le marqueur occupe la position de NOM d'une DÉCLARATION de
+         * variable ({@code Button but|}, paramètre compris) → suggestions
+         * de noms dérivées du type déclaré.
+         */
+        boolean declarationName;
+        /** Type déclaré de la variable en cours de déclaration (declarationName). */
+        TypeBinding declaredType;
+        /**
+         * Enum dont servir les constantes : sélecteur du {@code switch}
+         * englobant quand le marqueur est un label de {@code case}, ou
+         * type de la valeur d'un attribut d'annotation.
+         */
+        ReferenceBinding enumValues;
+        /** Type de l'annotation dont le marqueur complète les attributs. */
+        ReferenceBinding annotationAttributes;
+        /** Attributs d'annotation déjà fournis (exclus des suggestions). */
+        java.util.Set<String> annotationTaken;
         /** Variables locales/paramètres en portée avant le marqueur. */
         final List<LocalVar> locals = new ArrayList<>();
 
@@ -1060,12 +1150,24 @@ public final class EcjCompletionEngine {
                  *  LHS) et ReturnStatement (retour de la méthode englobante),
                  *  dépilée au endVisit — la capture prend le SOMMET. */
                 final List<TypeBinding> expectedStack = new ArrayList<>();
+                /**
+                 * Claims de position syntaxique (v1.16.0) — posés par les
+                 * visiteurs des constructions ENGLOBANTES AVANT que le
+                 * marqueur ne soit visité (la traversée est parent-d'abord).
+                 * Jamais remis à zéro : la capture interrompt la traversée
+                 * (MarkerFound), et un claim ne se pose que si le marqueur
+                 * est DIRECTEMENT dans la construction.
+                 */
+                TypePosition pendingTypePosition = TypePosition.ANY;
+                /** Enum du switch englobant (label de case) — cf. claimSwitch. */
+                ReferenceBinding pendingEnumValues;
 
                 @Override
                 public boolean visit(TypeDeclaration td,
                         org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope s) {
                     nodes[0]++;
                     typeStack.add(td.binding);
+                    claimTypeDeclaration(td);
                     return true;
                 }
 
@@ -1074,6 +1176,7 @@ public final class EcjCompletionEngine {
                         org.eclipse.jdt.internal.compiler.lookup.ClassScope s) {
                     nodes[0]++;
                     typeStack.add(td.binding);
+                    claimTypeDeclaration(td);
                     return true;
                 }
 
@@ -1082,6 +1185,7 @@ public final class EcjCompletionEngine {
                         org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
                     nodes[0]++;
                     typeStack.add(td.binding);
+                    claimTypeDeclaration(td);
                     return true;
                 }
 
@@ -1101,6 +1205,211 @@ public final class EcjCompletionEngine {
                 public void endVisit(TypeDeclaration td,
                         org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
                     pop(typeStack);
+                }
+
+                /**
+                 * Claim extends/implements (v1.16.0) : le marqueur dans le
+                 * {@code superclass} d'une classe → CLASS_EXTENDS (ou
+                 * INTERFACE si le déclarant est une interface), dans une
+                 * {@code superInterfaces} → INTERFACE.
+                 */
+                void claimTypeDeclaration(TypeDeclaration td) {
+                    try {
+                        if (td == null) return;
+                        boolean iface = td.binding != null
+                                && td.binding.isInterface();
+                        if (td.superclass != null && markerIn(td.superclass)) {
+                            pendingTypePosition = iface
+                                    ? TypePosition.INTERFACE
+                                    : TypePosition.CLASS_EXTENDS;
+                        } else if (td.superInterfaces != null) {
+                            for (org.eclipse.jdt.internal.compiler.ast
+                                    .TypeReference itf : td.superInterfaces) {
+                                if (itf != null && markerIn(itf)) {
+                                    pendingTypePosition = TypePosition.INTERFACE;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // Claim best-effort — position ANY par défaut.
+                    }
+                }
+
+                /**
+                 * Claim throws (v1.16.0) : le marqueur dans la clause
+                 * {@code throws} de la méthode englobante → THROWABLE.
+                 */
+                void claimThrownExceptions(
+                        org.eclipse.jdt.internal.compiler.ast
+                                .AbstractMethodDeclaration md) {
+                    try {
+                        if (md == null || md.thrownExceptions == null) return;
+                        for (org.eclipse.jdt.internal.compiler.ast
+                                .TypeReference t : md.thrownExceptions) {
+                            if (t != null && markerIn(t)) {
+                                pendingTypePosition = TypePosition.THROWABLE;
+                                break;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // Claim best-effort.
+                    }
+                }
+
+                /**
+                 * Claim switch (v1.16.0) : le marqueur dans une EXPRESSION
+                 * de label d'un {@code case} → l'enum du sélecteur du
+                 * switch (constantes à proposer au moment de la capture
+                 * NAME_REFERENCE).
+                 */
+                void claimSwitch(
+                        org.eclipse.jdt.internal.compiler.ast.Expression selector,
+                        org.eclipse.jdt.internal.compiler.ast.CaseStatement[] cases) {
+                    try {
+                        if (cases == null) return;
+                        boolean inCase = false;
+                        for (org.eclipse.jdt.internal.compiler.ast.CaseStatement cs
+                                : cases) {
+                            if (cs == null || cs.constantExpressions == null) {
+                                continue;
+                            }
+                            for (org.eclipse.jdt.internal.compiler.ast.Expression e
+                                    : cs.constantExpressions) {
+                                if (e != null && e.sourceStart <= markerStart
+                                        && markerStart <= e.sourceEnd + 1) {
+                                    inCase = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!inCase) return;
+                        TypeBinding t = selector == null
+                                ? null : selector.resolvedType;
+                        if (t instanceof ReferenceBinding rb && rb.isEnum()) {
+                            pendingEnumValues = rb;
+                        }
+                    } catch (Throwable ignored) {
+                        // Claim best-effort.
+                    }
+                }
+
+                /**
+                 * Claim annotation (v1.16.0) : marqueur dans le TYPE de
+                 * l'annotation → ANNOTATION_TYPE ; dans le NOM d'une paire
+                 * → capture DIRECTE du contexte attributs (le nom d'une
+                 * MemberValuePair n'est PAS un nœud visitable — aucun
+                 * onSingleName ne viendra) ; dans la VALEUR d'une paire
+                 * d'attribut enum → constantes de cette enum.
+                 */
+                void claimAnnotation(
+                        org.eclipse.jdt.internal.compiler.ast.Annotation ann) {
+                    try {
+                        if (ann == null) return;
+                        if (ann.type != null && markerIn(ann.type)) {
+                            pendingTypePosition = TypePosition.ANNOTATION_TYPE;
+                            return;
+                        }
+                        if (ann instanceof org.eclipse.jdt.internal.compiler.ast
+                                .NormalAnnotation na
+                                && na.memberValuePairs != null) {
+                            for (org.eclipse.jdt.internal.compiler.ast
+                                    .MemberValuePair p : na.memberValuePairs) {
+                                if (p == null) continue;
+                                if (String.valueOf(p.name).equals(MARKER)) {
+                                    captureAnnotationAttributes(ann);
+                                    return;
+                                }
+                                if (p.value != null
+                                        && p.value.sourceStart <= markerStart
+                                        && markerStart <= p.value.sourceEnd + 1
+                                        && p.binding != null
+                                        && p.binding.returnType
+                                                instanceof ReferenceBinding rt
+                                        && rt.isEnum()) {
+                                    pendingEnumValues = rt;
+                                }
+                            }
+                        }
+                        // Annotation mono-valeur `@Check(LE|` : le marqueur
+                        // est la VALEUR de l'attribut implicite « value » —
+                        // si son type est une enum, servir les constantes.
+                        if (ann instanceof org.eclipse.jdt.internal.compiler.ast
+                                .SingleMemberAnnotation sa
+                                && sa.memberValue != null
+                                && sa.memberValue.sourceStart <= markerStart
+                                && markerStart <= sa.memberValue.sourceEnd + 1
+                                && ann.resolvedType instanceof ReferenceBinding rb
+                                && rb.isAnnotationType()) {
+                            for (MethodBinding m : rb.methods()) {
+                                if (m == null || m.parameters.length != 0) continue;
+                                if ("value".equals(String.valueOf(m.selector))
+                                        && m.returnType
+                                                instanceof ReferenceBinding rt
+                                        && rt.isEnum()) {
+                                    pendingEnumValues = rt;
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // Claim best-effort.
+                    }
+                }
+
+                /** Capture le contexte « attributs d'annotation ». */
+                void captureAnnotationAttributes(
+                        org.eclipse.jdt.internal.compiler.ast.Annotation ann) {
+                    if (result[0] != null) return;
+                    if (!(ann.resolvedType instanceof ReferenceBinding rb)
+                            || !rb.isAnnotationType()) {
+                        return;
+                    }
+                    Context ctx = new Context();
+                    ctx.applyKind(Kind.NAME_REFERENCE);
+                    ctx.annotationAttributes = rb;
+                    java.util.Set<String> taken = new HashSet<>();
+                    if (ann instanceof org.eclipse.jdt.internal.compiler.ast
+                            .NormalAnnotation na && na.memberValuePairs != null) {
+                        for (org.eclipse.jdt.internal.compiler.ast
+                                .MemberValuePair p : na.memberValuePairs) {
+                            if (p != null
+                                    && !String.valueOf(p.name).equals(MARKER)) {
+                                taken.add(String.valueOf(p.name));
+                            }
+                        }
+                    }
+                    ctx.annotationTaken = taken;
+                    ctx.enclosingType = last(typeStack);
+                    ctx.type = last(typeStack);
+                    ctx.inStaticContext = lastBoolean(staticStack);
+                    if (trace != null) {
+                        trace.append(";ANNOTATION-ATTRS ")
+                                .append(rb.readableName());
+                    }
+                    captured(ctx);
+                }
+
+                /**
+                 * Capture le contexte « nom de déclaration » (v1.16.0) :
+                 * le marqueur est le NOM d'une variable/paramètre dont le
+                 * TYPE est déjà présent ({@code Button but|}) → suggestions
+                 * de noms dérivées du type, rien d'autre (intention forte).
+                 */
+                void captureDeclarationName(TypeBinding declared, Scope scope) {
+                    if (result[0] != null || declared == null) return;
+                    Context ctx = new Context();
+                    ctx.applyKind(Kind.NAME_REFERENCE);
+                    ctx.declarationName = true;
+                    ctx.declaredType = declared;
+                    ctx.enclosingType = last(typeStack);
+                    ctx.type = last(typeStack);
+                    ctx.inStaticContext = lastBoolean(staticStack);
+                    ctx.typeScope = scope;
+                    if (trace != null) {
+                        trace.append(";DECL-NAME ")
+                                .append(declared.readableName());
+                    }
+                    captured(ctx);
                 }
 
                 @Override
@@ -1113,6 +1422,7 @@ public final class EcjCompletionEngine {
                     methodReturnStack.add(md.binding == null
                             ? null : md.binding.returnType);
                     collectArgs(md.arguments);
+                    claimThrownExceptions(md);
                     onRecoveredDeclaration(
                             String.valueOf(md.selector), md.returnType, s);
                     return true;
@@ -1154,10 +1464,23 @@ public final class EcjCompletionEngine {
                             .append(markerIsName).append(" type=")
                             .append(markerIsType);
                     // Type présent ET résolu → marqueur en position de NOM
-                    // → pas de candidats de type.
+                    // d'une DÉCLARATION DE CHAMP (v1.16.0) : suggestions de
+                    // noms dérivées du type (`private Button but|`). La
+                    // position de nom de MÉTHODE reste sans candidats (le
+                    // « nom » d'une méthode ne se devine pas d'un type de
+                    // retour).
                     if (markerIsName && declaredType != null
                             && !markerIsType) {
-                        if (trace != null) trace.append(" (position NOM — skip)");
+                        if (trace != null) trace.append(" (position NOM)");
+                        TypeBinding resolved = null;
+                        try {
+                            resolved = declaredType.resolvedType;
+                        } catch (Throwable ignored) {
+                            // Type non résolu.
+                        }
+                        if (resolved != null) {
+                            captureDeclarationName(resolved, scope);
+                        }
                         return;
                     }
                     captureType(scope);
@@ -1168,12 +1491,48 @@ public final class EcjCompletionEngine {
                         org.eclipse.jdt.internal.compiler.ast.TypeReference type) {
                     if (type == null) return false;
                     if (type instanceof SingleTypeReference str) {
-                        return String.valueOf(str.token).equals(MARKER);
+                        if (String.valueOf(str.token).equals(MARKER)) return true;
                     }
                     if (type instanceof QualifiedTypeReference qtr) {
                         for (char[] t : qtr.tokens) {
                             if (String.valueOf(t).equals(MARKER)) return true;
                         }
+                    }
+                    // Arguments génériques (v1.16.0) : `new ArrayList<Str|`
+                    // et `extends Comparable<Str|` portent le marqueur dans
+                    // un ARGUMENT de type — le claim de la construction
+                    // englobante doit le voir.
+                    try {
+                        if (type instanceof org.eclipse.jdt.internal.compiler.ast
+                                .ParameterizedSingleTypeReference ps) {
+                            if (containsMarker(ps.typeArguments)) return true;
+                        } else if (type instanceof org.eclipse.jdt.internal
+                                .compiler.ast.ParameterizedQualifiedTypeReference pq) {
+                            if (containsMarkerRows(pq.typeArguments)) return true;
+                        }
+                    } catch (Throwable ignored) {
+                        // Arguments absents (recovery) — best-effort.
+                    }
+                    return false;
+                }
+
+                /** true si une rangée d'arguments de type contient le marqueur. */
+                boolean containsMarkerRows(
+                        org.eclipse.jdt.internal.compiler.ast.TypeReference[][] args) {
+                    if (args == null) return false;
+                    for (org.eclipse.jdt.internal.compiler.ast.TypeReference[] row
+                            : args) {
+                        if (containsMarker(row)) return true;
+                    }
+                    return false;
+                }
+
+                /** true si un argument de type contient le marqueur. */
+                boolean containsMarker(
+                        org.eclipse.jdt.internal.compiler.ast.TypeReference[] args) {
+                    if (args == null) return false;
+                    for (org.eclipse.jdt.internal.compiler.ast.TypeReference t : args) {
+                        if (t != null && markerIn(t)) return true;
                     }
                     return false;
                 }
@@ -1235,11 +1594,35 @@ public final class EcjCompletionEngine {
                         locals.add(new LocalVar(String.valueOf(ld.name),
                                 ld.binding.type, false));
                     }
+                    // Nom de déclaration LOCALE (v1.16.0) : `Button but|`
+                    // dans un corps de méthode — le marqueur est le nom,
+                    // le type est déjà présent → suggestions de noms.
+                    if (ld.type != null && ld.binding != null
+                            && String.valueOf(ld.name).equals(MARKER)
+                            && !markerIn(ld.type)
+                            && ld.binding.type != null) {
+                        captureDeclarationName(ld.binding.type, s);
+                    }
                     // Type attendu = type déclaré de la locale
                     // (portage visit(LocalDeclaration) de ContextAnalyzer) :
                     // `StringBuilder sb = new Str|` attend StringBuilder.
                     if (ld.binding != null) {
                         expectedStack.add(ld.binding.type);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.Argument arg,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    // Nom de déclaration PARAMÈTRE (v1.16.0) :
+                    // `void m(Button but|)` — même traitement qu'une locale.
+                    if (arg.type != null && arg.binding != null
+                            && String.valueOf(arg.name).equals(MARKER)
+                            && !markerIn(arg.type)
+                            && arg.binding.type != null) {
+                        captureDeclarationName(arg.binding.type, s);
                     }
                     return true;
                 }
@@ -1372,6 +1755,105 @@ public final class EcjCompletionEngine {
                         org.eclipse.jdt.internal.compiler.ast.ThrowStatement ts,
                         org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
                     pop(expectedStack);
+                }
+
+                // ── Claims de positions grammaticales (v1.16.0) ──
+                // Chaque visiteur d'une construction ENGLOBANTE pose son
+                // claim AVANT que le marqueur (enfant) ne soit visité.
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.TryStatement ts,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    try {
+                        if (ts.catchArguments != null) {
+                            for (org.eclipse.jdt.internal.compiler.ast.Argument a
+                                    : ts.catchArguments) {
+                                if (a != null && a.type != null
+                                        && markerIn(a.type)) {
+                                    pendingTypePosition = TypePosition.THROWABLE;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // Claim best-effort.
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.SwitchStatement st,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    claimSwitch(st.expression, st.cases);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.SwitchExpression se,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    claimSwitch(se.expression, se.cases);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.AllocationExpression alloc,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    if (alloc.type != null && markerIn(alloc.type)) {
+                        pendingTypePosition = TypePosition.INSTANTIABLE;
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.MarkerAnnotation ann,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    claimAnnotation(ann);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.MarkerAnnotation ann,
+                        org.eclipse.jdt.internal.compiler.lookup.ClassScope s) {
+                    claimAnnotation(ann);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.NormalAnnotation ann,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    claimAnnotation(ann);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.NormalAnnotation ann,
+                        org.eclipse.jdt.internal.compiler.lookup.ClassScope s) {
+                    claimAnnotation(ann);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.SingleMemberAnnotation ann,
+                        org.eclipse.jdt.internal.compiler.lookup.BlockScope s) {
+                    claimAnnotation(ann);
+                    return true;
+                }
+
+                @Override
+                public boolean visit(
+                        org.eclipse.jdt.internal.compiler.ast.SingleMemberAnnotation ann,
+                        org.eclipse.jdt.internal.compiler.lookup.ClassScope s) {
+                    claimAnnotation(ann);
+                    return true;
                 }
 
                 @Override
@@ -1676,6 +2158,16 @@ public final class EcjCompletionEngine {
                     ctx.expectedType = expectedStack.isEmpty()
                             ? null : lastOfType(expectedStack);
                     ctx.locals.addAll(locals);
+                    ctx.enumValues = pendingEnumValues;
+                    // Position de membre (v1.16.0) — même calcul que
+                    // captureType : le marqueur nu en corps de classe peut
+                    // se récupérer en référence de nom.
+                    ReferenceBinding innermostName = last(typeStack);
+                    ctx.memberPosition = staticStack.isEmpty()
+                            && innermostName != null
+                            && !innermostName.isInterface()
+                            && !innermostName.isAnnotationType()
+                            && pendingTypePosition == TypePosition.ANY;
                     captured(ctx);
                 }
 
@@ -1751,6 +2243,20 @@ public final class EcjCompletionEngine {
                             ? null : lastOfType(expectedStack);
                     ctx.typeScope = scope;
                     ctx.locals.addAll(locals);
+                    ctx.typePosition = pendingTypePosition;
+                    // Position de MEMBRE (v1.16.0) : corps de classe HORS
+                    // méthode (pile statique vide) et hors position
+                    // grammaticale spécialisée — l'endroit où un stub
+                    // d'override est une intention forte.
+                    ReferenceBinding innermost = last(typeStack);
+                    ctx.memberPosition = staticStack.isEmpty()
+                            && innermost != null
+                            && !innermost.isInterface()
+                            && !innermost.isAnnotationType()
+                            && pendingTypePosition == TypePosition.ANY;
+                    if (trace != null && ctx.memberPosition) {
+                        trace.append(";MEMBER-POSITION");
+                    }
                     captured(ctx);
                 }
 
@@ -1983,6 +2489,16 @@ public final class EcjCompletionEngine {
                 if (ctx != null && ctx.typeScope != null) {
                     resolved = resolveType(ctx.typeScope, fqn);
                 }
+                // Filtre de position grammaticale (v1.16.0) : après
+                // extends/implements/throws/catch/new/@anno, seul le LÉGAL
+                // est proposé. Les candidats NON résolus (plateforme
+                // absente) restent proposés — un filtre aveugle viderait
+                // la liste.
+                if (ctx != null && ctx.typePosition != TypePosition.ANY
+                        && resolved != null
+                        && !typePositionAccepts(ctx.typePosition, resolved)) {
+                    continue;
+                }
                 int score = rankScore(matcher, simple, PROX_UNIMPORTED_TYPE,
                         resolved, ctx != null ? ctx.expectedType : null,
                         false, false);
@@ -2075,6 +2591,353 @@ public final class EcjCompletionEngine {
             }
             out.add(new CompletionItem(kw, CompletionItem.Kind.KEYWORD,
                     null, null, kw, relevance(score)));
+        }
+        return out;
+    }
+
+    // ─── Filtres de position grammaticale (v1.16.0) ──────────────────
+
+    /**
+     * Le type résolu est-il LÉGAL à la position syntaxique ? Portage du
+     * principe des filtres de contexte du projet tiers de référence :
+     * {@code extends} → classes concrètes non finales non-enum non-record,
+     * {@code implements} → interfaces, {@code throws}/{@code catch} →
+     * sous-classes de Throwable, {@code new} → classes concrètes,
+     * {@code @} → types d'annotation.
+     */
+    static boolean typePositionAccepts(TypePosition pos, TypeBinding t) {
+        if (pos == TypePosition.ANY) return true;
+        if (!(t instanceof ReferenceBinding rb)) return false;
+        try {
+            return switch (pos) {
+                case ANY -> true;
+                case CLASS_EXTENDS -> !rb.isInterface() && !rb.isAnnotationType()
+                        && !rb.isEnum() && !rb.isFinal() && !rb.isRecord();
+                case INTERFACE -> rb.isInterface() && !rb.isAnnotationType();
+                case THROWABLE -> isThrowableSubtype(rb);
+                case INSTANTIABLE -> !rb.isInterface() && !rb.isAnnotationType()
+                        && !rb.isEnum() && !rb.isAbstract();
+                case ANNOTATION_TYPE -> rb.isAnnotationType();
+            };
+        } catch (Throwable x) {
+            // API absente sur un binding exotique — ne jamais vider la
+            // liste par accident.
+            return true;
+        }
+    }
+
+    /** Marche la chaîne des superclasses à la recherche de Throwable. */
+    private static boolean isThrowableSubtype(ReferenceBinding rb) {
+        try {
+            ReferenceBinding t = rb;
+            int guard = 0;
+            while (t != null && guard++ < 64) {
+                if ("java.lang.Throwable".equals(
+                        String.valueOf(t.readableName()))) {
+                    return true;
+                }
+                t = t.superclass();
+            }
+        } catch (Throwable ignored) {
+            // Hiérarchie incomplète.
+        }
+        return false;
+    }
+
+    // ─── Stubs d'override (v1.16.0) ──────────────────────────────
+
+    /**
+     * Ajoute les méthodes surchargeables du graphe des super-types du
+     * type englobant, en stubs complets prêts à insérer — le portage du
+     * principe « override en corps de classe » du projet tiers de
+     * référence : à une position de membre ({@code class A {|}), une
+     * override est une intention forte.
+     *
+     * <p>Le stub est un SNIPPET LSP : {@code @Override} + signature
+     * complète + corps (super-appel si le super est concret, sinon
+     * {@code throw new UnsupportedOperationException();}) + arrêt final
+     * {@code $0}. Les méthodes déjà déclarées par la classe sont exclues
+     * (clé effacée nom + types de paramètres).</p>
+     */
+    private void addOverrideTemplates(List<CompletionItem> out,
+            String workSource, int replaceStart, String prefix, Context ctx) {
+        try {
+            ReferenceBinding cls = ctx.enclosingType;
+            if (cls == null) return;
+            Set<String> own = new HashSet<>();
+            try {
+                for (MethodBinding m : cls.methods()) {
+                    if (m != null) own.add(erasedKey(m));
+                }
+            } catch (Throwable ignored) {
+                // Best-effort.
+            }
+            Map<String, MethodBinding> overridable = new LinkedHashMap<>();
+            collectOverridable(cls, cls, own, overridable, new HashSet<>());
+            if (overridable.isEmpty()) return;
+            String indent = lineIndentOf(workSource, replaceStart);
+            EcjPrefixMatcher matcher = new EcjPrefixMatcher(prefix);
+            EcjInlayHints names = new EcjInlayHints(engine);
+            for (MethodBinding m : overridable.values()) {
+                String name = String.valueOf(m.selector);
+                if (!matcher.matches(name)) continue;
+                List<String> paramNames = names.parameterNamesPublic(m);
+                if (paramNames == null) {
+                    paramNames = new ArrayList<>(m.parameters.length);
+                    for (int i = 0; i < m.parameters.length; i++) {
+                        paramNames.add("p" + (i + 1));
+                    }
+                }
+                StringBuilder label = new StringBuilder(name).append('(');
+                StringBuilder decl = new StringBuilder(name).append('(');
+                StringBuilder args = new StringBuilder();
+                for (int i = 0; i < m.parameters.length; i++) {
+                    if (i > 0) {
+                        label.append(", ");
+                        decl.append(", ");
+                        args.append(", ");
+                    }
+                    String type = EcjCompilerEngine.display(m.parameters[i]);
+                    label.append(type);
+                    decl.append(type).append(' ').append(paramNames.get(i));
+                    args.append(paramNames.get(i));
+                }
+                label.append(')');
+                decl.append(')');
+                boolean iface = m.declaringClass != null
+                        && m.declaringClass.isInterface();
+                String body;
+                if (m.isAbstract() || iface) {
+                    body = "throw new UnsupportedOperationException();";
+                } else if ("void".equals(
+                        String.valueOf(m.returnType == null
+                                ? "" : m.returnType.readableName()))) {
+                    body = "super." + name + "(" + args + ");";
+                } else {
+                    body = "return super." + name + "(" + args + ");";
+                }
+                String vis = m.isPublic() ? "public "
+                        : m.isProtected() ? "protected " : "";
+                String snippet = "@Override\n" + indent + vis
+                        + EcjCompilerEngine.display(m.returnType) + ' '
+                        + decl + " {\n" + indent + "    " + body
+                        + "$0\n" + indent + "}";
+                int score = rankScore(matcher, name, PROX_OVERRIDE, null,
+                        null, false, isDeprecated(m));
+                out.add(new CompletionItem(label.toString(),
+                        CompletionItem.Kind.METHOD,
+                        EcjCompilerEngine.readable(m.declaringClass), null,
+                        snippet, relevance(score), null, true, List.of()));
+            }
+        } catch (Throwable t) {
+            // Best-effort — les candidats ordinaires restent servis.
+        }
+    }
+
+    /**
+     * Marche le graphe des super-types (plus dérivé d'abord) en
+     * collectant les méthodes surchargeables : non-constructeur,
+     * non-statique, non-synthétique, non-privée, accessible — et non
+     * déjà déclarée (clé effacée).
+     */
+    private static void collectOverridable(ReferenceBinding type,
+            ReferenceBinding from, Set<String> own,
+            Map<String, MethodBinding> out, Set<String> visited) {
+        if (type == null || !visited.add(keyOf(type))) return;
+        try {
+            boolean samePkg = samePackage(type, from);
+            for (MethodBinding m : type.methods()) {
+                if (m == null || m.isConstructor() || m.isStatic()
+                        || m.isSynthetic() || m.isPrivate()) {
+                    continue;
+                }
+                if (!accessible(false, m.isPublic(), m.isProtected(),
+                        m.declaringClass, from, samePkg)) {
+                    continue;
+                }
+                String key = erasedKey(m);
+                if (own.contains(key) || out.containsKey(key)) continue;
+                out.put(key, m);
+            }
+        } catch (Throwable ignored) {
+            // Énumération best-effort.
+        }
+        try {
+            collectOverridable(type.superclass(), from, own, out, visited);
+            for (ReferenceBinding itf : type.superInterfaces()) {
+                collectOverridable(itf, from, own, out, visited);
+            }
+        } catch (Throwable ignored) {
+            // Hiérarchie incomplète.
+        }
+    }
+
+    /** Clé effacée d'une méthode : nom + types de paramètres affichables. */
+    private static String erasedKey(MethodBinding m) {
+        StringBuilder sb = new StringBuilder(String.valueOf(m.selector))
+                .append('(');
+        try {
+            for (int i = 0; i < m.parameters.length; i++) {
+                if (i > 0) sb.append(',');
+                sb.append(EcjCompilerEngine.display(m.parameters[i]));
+            }
+        } catch (Throwable ignored) {
+            // Best-effort.
+        }
+        return sb.append(')').toString();
+    }
+
+    /** Indentation (espaces/tabulations) de la ligne contenant {@code pos}. */
+    private static String lineIndentOf(String source, int pos) {
+        if (source == null || pos < 0 || pos > source.length()) return "";
+        int lineStart = source.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
+        int i = lineStart;
+        while (i < source.length()
+                && (source.charAt(i) == ' ' || source.charAt(i) == '\t')) {
+            i++;
+        }
+        return source.substring(lineStart, i);
+    }
+
+    // ─── Suggestions de noms de déclaration (v1.16.0) ─────────────
+
+    /**
+     * Noms suggérés pour une variable du type déclaré : suffixes de mots
+     * camel-hump avec première lettre minuscule ({@code HttpClient} →
+     * {@code httpClient}, {@code client}), puis initiale seule en repli.
+     * Portage du principe de suggestions de noms du projet tiers de
+     * référence — aucune table de synonymes, la morphologie du type
+     * suffit.
+     */
+    private static List<CompletionItem> nameSuggestions(Context ctx,
+            EcjPrefixMatcher matcher) {
+        List<CompletionItem> out = new ArrayList<>();
+        TypeBinding t = ctx.declaredType;
+        if (t == null) return out;
+        String display;
+        try {
+            display = EcjCompilerEngine.display(t);
+        } catch (Throwable x) {
+            return out;
+        }
+        if (display == null || display.isEmpty()) return out;
+        // Épluche les génériques, la qualification et les tableaux :
+        // « HttpClient<String> » → « HttpClient », « java.util.List » →
+        // « List », « String[] » → « String ».
+        int gen = display.indexOf('<');
+        if (gen > 0) display = display.substring(0, gen);
+        int dot = display.lastIndexOf('.');
+        if (dot >= 0) display = display.substring(dot + 1);
+        display = display.replace("[", "").replace("]", "").trim();
+        if (display.isEmpty() || !Character.isJavaIdentifierStart(
+                display.charAt(0))) {
+            return out;
+        }
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        List<String> words = splitCamelHumps(display);
+        for (int i = 0; i < words.size(); i++) {
+            names.add(lowerFirst(String.join("", words.subList(i, words.size()))));
+        }
+        names.add(String.valueOf(
+                Character.toLowerCase(display.charAt(0))));
+        for (String n : names) {
+            if (!matcher.matches(n)) continue;
+            int score = rankScore(matcher, n, PROX_LOCAL, t,
+                    ctx.expectedType, false, false);
+            out.add(new CompletionItem(n, CompletionItem.Kind.VARIABLE,
+                    display, null, n, relevance(score)));
+        }
+        return out;
+    }
+
+    /**
+     * Découpe camel-hump : coupe avant une majuscule précédée d'une
+     * minuscule, ou avant une majuscule suivie d'une minuscule (fin
+     * d'acronyme) — {@code HttpURLClient} → [Http, URL, Client].
+     */
+    static List<String> splitCamelHumps(String s) {
+        List<String> parts = new ArrayList<>();
+        if (s == null || s.isEmpty()) return parts;
+        int start = 0;
+        for (int i = 1; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.isUpperCase(c)
+                    && (Character.isLowerCase(s.charAt(i - 1))
+                        || (i + 1 < s.length()
+                            && Character.isLowerCase(s.charAt(i + 1))))) {
+                parts.add(s.substring(start, i));
+                start = i;
+            }
+        }
+        parts.add(s.substring(start));
+        return parts;
+    }
+
+    private static String lowerFirst(String s) {
+        return s.isEmpty() ? s
+                : Character.toLowerCase(s.charAt(0)) + s.substring(1);
+    }
+
+    // ─── Constantes d'enum et attributs d'annotation (v1.16.0) ─────
+
+    /**
+     * Constantes d'une enum ({@code case CONS|}, valeur d'attribut
+     * d'annotation enum) — champs statiques dont le type est l'enum
+     * elle-même.
+     */
+    private static List<CompletionItem> enumConstantItems(
+            ReferenceBinding enumType, EcjPrefixMatcher matcher) {
+        List<CompletionItem> out = new ArrayList<>();
+        if (enumType == null) return out;
+        try {
+            String enumName = String.valueOf(enumType.readableName());
+            for (FieldBinding f : enumType.fields()) {
+                if (f == null || !f.isStatic()) continue;
+                if (f.type == null
+                        || !enumName.equals(String.valueOf(f.type.readableName()))) {
+                    continue;
+                }
+                String name = String.valueOf(f.name);
+                if (!matcher.matches(name)) continue;
+                int score = rankScore(matcher, name, PROX_PARAMETER, null,
+                        null, false, false);
+                out.add(new CompletionItem(name, CompletionItem.Kind.ENUM,
+                        enumName, null, name, relevance(score)));
+            }
+        } catch (Throwable ignored) {
+            // Énumération best-effort.
+        }
+        return out;
+    }
+
+    /**
+     * Attributs d'une annotation ({@code @Anno(lev|}) : les méthodes
+     * publiques du type d'annotation non déjà fournies, insérées avec
+     * «&#61; » (le séparateur est inclus — l'utilisateur n'a plus qu'à
+     * taper la valeur).
+     */
+    private static List<CompletionItem> annotationAttributeItems(
+            Context ctx, EcjPrefixMatcher matcher) {
+        List<CompletionItem> out = new ArrayList<>();
+        ReferenceBinding anno = ctx.annotationAttributes;
+        if (anno == null) return out;
+        try {
+            for (MethodBinding m : anno.methods()) {
+                if (m == null || m.isSynthetic() || !m.isPublic()) continue;
+                String name = String.valueOf(m.selector);
+                if (ctx.annotationTaken != null
+                        && ctx.annotationTaken.contains(name)) {
+                    continue;
+                }
+                if (!matcher.matches(name)) continue;
+                int score = rankScore(matcher, name, PROX_PARAMETER, null,
+                        null, false, isDeprecated(m));
+                out.add(new CompletionItem(name, CompletionItem.Kind.FIELD,
+                        EcjCompilerEngine.readable(m.declaringClass), null,
+                        name + " = ", relevance(score)));
+            }
+        } catch (Throwable ignored) {
+            // Énumération best-effort.
         }
         return out;
     }
@@ -2325,6 +3188,10 @@ public final class EcjCompletionEngine {
     private static final int PROX_INHERITED = 55;
     private static final int PROX_OBJECT_MEMBER = 180;
     private static final int PROX_UNIMPORTED_TYPE = 300;
+    /** Stubs d'override en position de membre (v1.16.0) : au-dessus des
+     *  membres hérités (55) et des types visibles (40) — l'intention
+     *  forte du corps de classe. */
+    private static final int PROX_OVERRIDE = 15;
     /** Extension CodeIDE (projet tiers de référence n'a pas de mots-clés) : sous tout. */
     private static final int PROX_KEYWORD = 350;
     /** Mots-clés boostés quand un préfixe est tapé — « imp » place
