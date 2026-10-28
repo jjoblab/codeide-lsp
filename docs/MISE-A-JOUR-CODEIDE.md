@@ -12,6 +12,52 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.16.0
+
+### 1. État
+
+- `main` de codeide-lsp : release `v1.16.0`, CI **verte** attendue.
+- **Aide de signature robuste + complétion contextuelle** : réponse aux
+  deux défauts majeurs du retour du 28/10 (popup de signature vide
+  pendant la frappe ; complétion ignorant la position — import, corps
+  de classe, clause extends…). Détail complet dans `CHANGELOG.md`
+  § 1.16.0.
+
+### 2. Changements de comportement visibles
+
+- `textDocument/signatureHelp` ne rend plus systématiquement vide sur
+  le texte en cours de frappe : appels non refermés, chaînes ouvertes
+  et arguments à moitié tapés sont servis (variantes réparées en
+  interne, aucun changement de protocole) ;
+- `new Foo(` énumère maintenant TOUTES les surcharges de constructeur
+  (une seule signature avant) ;
+- `textDocument/completion` filtre selon la position grammaticale
+  (extends/implements/throws/catch/new/@annotation), propose des
+  stubs d'override en corps de classe, des noms de variables en
+  déclaration (`Button but|`), les constantes d'enum dans les `case`
+  et les valeurs d'attributs d'annotation. Les items d'override
+  voyage en `insertTextFormat: Snippet` (format déjà consommé par
+  les templates live/postfix).
+
+### 3. Actions pour CodeIDE
+
+- Aucune action obligatoire : même version de protocole LSP, même SPI
+  `IndexNoms`. Recommandé : monter la dépendance `codeide-lsp` en
+  1.16.0 (`scripts/bump-frere.sh lsp minor` depuis CodeIDE).
+
+### 4. Scénarios de vérification
+
+- taper `sb.append(` sans refermer → le popup de surcharges apparaît ;
+- taper `add(1, ` (virgule finale) → popup + paramètre 2 actif ;
+- `class C extends Runn|` → Runnable absent ; `implements Runn|` →
+  présent ;
+- `void m() throws Ex|` → Exception oui, Executor non ;
+- `@Func|` au-dessus d'une classe → FunctionalInterface, pas Function ;
+- `toStr|` dans le corps d'une classe → stub toString() complet ;
+- `Button ` (locale ou champ, caret après l'espace) → button, b ;
+- `case RE|` dans un switch sur enum → RED ;
+- `@Anno(severity = ` (attribut enum) → les constantes.
+
 ## 1.15.0
 
 ### 1. État

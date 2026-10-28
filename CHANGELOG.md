@@ -1,5 +1,46 @@
 # Changelog — codeide-lsp
 
+## 1.16.0 (2026-10-28)
+
+- **Aide de signature robuste (texte vivant cassé)** : la frappe en
+  cours (`add(`, `add(1, `, `add("abc`, `add(1, par`) laissait le
+  popup VIDE — ecj jette le MessageSend en recovery quand l'appel
+  n'est pas refermé ou l'argument non résoluble, et la chaîne de
+  résolution (arbre focalisé, parseCache, SourceFocuser) rendait null.
+  Un **niveau 4** de variantes réparées referme l'appel avec un
+  argument synthétique et les blocs ouverts : texte tel quel, littéral
+  apposé (`null`/`0`), argument courant remplacé (`null`/`0`/`true`)
+  — la première variante qui rend un appel résolu gagne. Le «;» de
+  fermeture est inséré avant la première accolade ; le splice n'ajoute
+  rien avant le caret, le paramètre actif est exactement celui de la
+  frappe. Les **constructeurs sont énumérés** (`new StringBuilder(`
+  sert (), (int), (String), (CharSequence)) et leur label perd le
+  « void » redondant.
+- **Complétion contextuelle** :
+  - **Filtres de position grammaticale** — `extends` d'une classe →
+    classes concrètes non finales ; `implements`/`extends`
+    d'interface → interfaces ; `throws`/`catch` → sous-classes de
+    Throwable ; `new` → classes concrètes ; `@anno` → annotations.
+    Les mots-clés disparaissent des positions spécialisées, les
+    candidats non résolus restent proposés (plateforme absente) ;
+  - **Stubs d'override en corps de classe** — les méthodes
+    surchargeables du graphe des super-types en snippets complets
+    (`@Override` + signature + corps super/throw + arrêt `$0`),
+    indentés, excluant les méthodes déjà déclarées ; couvre le chemin
+    synthétique du marqueur nu en corps de classe ;
+  - **Suggestions de noms en déclaration** — `Button but|` →
+    `button`, `b` (suffixes camel-hump lowerFirst : `HttpURLClient` →
+    `httpClient`, `urlClient`, `client`), pour locales, champs et
+    paramètres ; contexte dédié qui ne propose rien d'autre ;
+  - **Constantes d'enum** — labels de `case` (switch instruction et
+    expression) et valeurs d'attribut d'annotation enum (paires
+    nommées et forme mono-valeur `@Anno(LO|`) ;
+  - **Attributs d'annotation** — `@Anno(lev|` → attributs non fournis,
+    insertion avec « = ».
+- Tests : +19 (7 signature `JdtInlayAndSignatureTest` + 12
+  `CompletionContextIntelligenceTest`), 449 au total sur :lsp:java,
+  0 échec.
+
 ## 1.15.0 (2026-10-26)
 
 - **Programme utilisateurs — vague 5** (retour utilisateurs
