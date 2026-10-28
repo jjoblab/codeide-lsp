@@ -117,8 +117,15 @@ public object CodesDiagnosticsKotlin {
      * paquet, imports par défaut), NI par les appelables de premier
      * niveau de l'index. Conservateur : SÉLECTEURS qualifiés jamais
      * signalés (le récepteur peut être inconnu), `it` jamais signalé,
-     * fichiers portant une erreur de parse jamais diagnostiqués (édition
-     * en cours), régime sans classpath jamais signalé (sous-rapport D3).
+     * régime sans classpath jamais signalé (sous-rapport D3).
+     *
+     * Texte vivant (garde d'édition, P1-A) : sur un document portant
+     * des marqueurs d'erreur, la famille ne s'exprime que dans les
+     * déclarations PROPRES dont la structure reste ABSENCE-FIABLE —
+     * un nom déclaré n'importe où dans le document, une zone
+     * package/import brisée ou un en-tête de classe brisé coupent la
+     * preuve d'absence (silence, D3).
+     *
      * C'est LA cible des quick-fixes d'import ([importsCandidats]).
      */
     public const val REFERENCE_NON_RESOLUE: String = "kt.unresolved"

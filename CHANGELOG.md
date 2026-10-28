@@ -1,5 +1,36 @@
 # Changelog — codeide-lsp
 
+## 1.17.0 (2026-10-29)
+
+- **Diagnostics par déclaration sur texte vivant (chantier P1-A de la
+  feuille de route du rapport d'analyse du 28/10, ADR 0227)** : la
+  garde historique « un marqueur d'erreur de parse éteint TOUT le
+  sémantique » devient une garde PAR DÉCLARATION. Une frappe au bas du
+  fichier (nouvelle déclaration en cours) n'éteint plus les preuves du
+  reste du document — précisément le moment où l'utilisateur regarde
+  les soulignés :
+  - **régions propres** : les familles sémantiques n'émettent que dans
+    les déclarations dont le sous-arbre parse proprement (FUN,
+    PROPERTY, CLASS, OBJECT_DECLARATION, TYPEALIAS, ENUM_ENTRY, à toute
+    profondeur — un membre propre d'une classe cassée reste diagnostiqué) ;
+  - **gardes d'absence pour `kt.unresolved`** (preuve d'ABSENCE, D3) :
+    un nom DÉCLARÉ quelque part dans le document (déclaration en cours
+    de frappe ou avalée par la récupération) n'est jamais signalé ;
+    une zone package/import brisée rend les noms importés non fiables
+    (silence sur tout le document) ; un en-tête de classe brisé
+    (supertypes, paramètres de type, clause where, constructeur primaire)
+    rend les membres hérités illisibles — les membres propres restent
+    diagnosticables mais l'absence s'y tait ;
+  - **arité** : une surcharge du document courant hors région propre
+    (paramètres avalés) n'est pas un témoin d'arité fiable —
+    `kt.argumentCount` l'écarte ;
+  - **chemin propre inchangé** : un document sans marqueur d'erreur ne
+    passe jamais par la garde ; un document sans aucune région propre
+    reste muet (l'ancien comportement devient un cas particulier).
+- Tests : +8 (`DiagnosticsParDeclarationTest`), 417 au total sur
+  `:lsp:kotlin`, 0 échec ; baseline de parité re-synchronisée
+  (fichiers=299 — le corpus EST le dépôt, re-sync délibéré).
+
 ## 1.16.0 (2026-10-28)
 
 - **Aide de signature robuste (texte vivant cassé)** : la frappe en

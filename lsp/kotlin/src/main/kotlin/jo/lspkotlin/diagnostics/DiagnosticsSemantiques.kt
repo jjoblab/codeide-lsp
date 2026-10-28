@@ -1,11 +1,14 @@
 package jo.lspkotlin.diagnostics
 
+import com.intellij.platform.syntax.SyntaxElementType
 import jo.lspkotlin.api.CodesDiagnosticsKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.SeveriteKotlin
 import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.ArbreSyntaxiqueKotlin
 import jo.lspkotlin.parse.NoeudSyntaxique
+import jo.lspkotlin.parse.kt.KtDeclaration
+import jo.lspkotlin.parse.kt.KtElement
 import jo.lspkotlin.parse.kt.KtFile
 import jo.lspkotlin.parse.kt.KtFunction
 import jo.lspkotlin.parse.kt.KtProperty
@@ -29,9 +32,15 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * [kt.argumentCount], [kt.unsafeNullable], [kt.missingReturn],
  * [kt.unreachable], [kt.valReassign].
  *
- * GARDE GÉNÉRALE (D3) : un document portant le MOINDRE marqueur d'erreur
- * du parseur n'est PAS diagnostiqué sémantiquement — l'arbre tolérant
- * d'une édition en cours n'est pas une base de preuve. De même, sans
+ * GARDE D'ÉDITION (D3, P1-A « diagnostics par déclaration ») : un
+ * document portant des marqueurs d'erreur n'est plus écarté EN BLOC —
+ * seules les DÉCLARATIONS dont le sous-arbre parse proprement sont
+ * diagnostiquées (une frappe au bas du fichier n'éteint plus les
+ * preuves du reste). La famille `kt.unresolved`, preuve d'ABSENCE,
+ * porte des gardes supplémentaires (voir [GardeEdition]) : noms déclarés
+ * n'importe où dans le document jamais signalés, zone package/import
+ * brisée ⇒ silence, classe englobante à en-tête brisée (supertypes,
+ * paramètres de type) ⇒ silence dans ses régions. De même, sans
  * classpath (vue absente), `kt.unresolved` ne signale RIEN : impossible
  * de prouver qu'un nom est absent d'un index qu'on ne lit pas.
  *
@@ -89,7 +98,140 @@ internal object DiagnosticsSemantiques {
         val portFichier: jo.lspkotlin.resolve.SuperKotlin.PortFichier? = null,
         val script: Boolean = false,
         val scanProjetComplet: Boolean = false,
+        /** URI du document diagnostiqué (garde d'édition P1-A : les
+         *  candidates d'arité du document courant hors région propre
+         *  ne sont pas des témoins fiables). */
+        val uriDocument: String? = null,
+        /** Garde d'édition (P1-A) — `null` : document SANS marqueur
+         *  d'erreur (comportement inchangé, aucun filtrage). */
+        val gardeEdition: GardeEdition? = null,
     )
+
+    /**
+     * Plage d'une déclaration propre (sous-arbre sans marqueur d'erreur,
+     * ancêtres sans marqueur) — [debut, fin[ dans le document.
+     */
+    internal data class PlagePropre(
+        val debut: Int,
+        val fin: Int,
+    ) {
+        /** La plage contient-elle entièrement [debutContenu, finContenu] ? */
+        internal fun contient(debutContenu: Int, finContenu: Int): Boolean =
+            debutContenu >= debut && finContenu <= fin
+    }
+
+    /**
+     * Garde d'édition (P1-A) — calculée quand l'arbre porte AU MOINS un
+     * marqueur d'erreur (texte vivant) :
+     *
+     *  - [regions] : déclarations propres (sous-arbre ET chaîne d'ancêtres
+     *    sans marqueur) — TOUTES les familles n'émettent que dedans ;
+     *  - [regionsAbsenceFiables] : sous-ensemble où la preuve d'ABSENCE
+     *    (`kt.unresolved`) reste fondée — une classe englobante dont
+     *    l'EN-TÊTE (supertypes, paramètres de type, clause where) porte
+     *    une erreur rend les membres hérités invisibles : y signaler un
+     *    nom serait un faux positif ;
+     *  - [nomsTares] : noms de TOUTES les déclarations du document (à
+     *    toute profondeur — une déclaration en cours de frappe ou avalée
+     *    par la récupération y vit) : jamais signalés non résolus ;
+     *  - [nomsImportesBrises] : un marqueur d'erreur sous la zone
+     *    package/imports — les noms IMPORTÉS ne sont plus fiables,
+     *    `kt.unresolved` se tait sur tout le document.
+     *
+     * Toute la garde sous-rapporte : un document propre (aucun marqueur)
+     * ne passe JAMAIS par ici — comportement inchangé.
+     */
+    internal data class GardeEdition(
+        val regions: List<PlagePropre>,
+        val regionsAbsenceFiables: List<PlagePropre>,
+        val nomsTares: Set<String>,
+        val nomsImportesBrises: Boolean,
+    )
+
+    /** Types de nœuds qui portent un nom diagnostiquable (région propre). */
+    private val TYPES_DECLARATION: Set<SyntaxElementType> =
+        setOf(
+            KtNodeTypes.CLASS,
+            KtNodeTypes.OBJECT_DECLARATION,
+            KtNodeTypes.FUN,
+            KtNodeTypes.PROPERTY,
+            KtNodeTypes.TYPEALIAS,
+            KtNodeTypes.ENUM_ENTRY,
+        )
+
+    /**
+     * Construit la garde d'édition depuis la racine (une seule passe).
+     *
+     * Rappel : un marqueur d'erreur est un nœud VIDE (les jetons non
+     * reconnus restent enfants de la production englobante) — il ne peut
+     * donc jamais être l'ANCÊTRE d'une déclaration ; la propreté d'une
+     * région se joue sur son SOUS-ARBRE seul.
+     */
+    private fun construireGardeEdition(racine: NoeudSyntaxique): GardeEdition {
+        val regions = mutableListOf<PlagePropre>()
+        val regionsAbsence = mutableListOf<PlagePropre>()
+        val nomsTares = mutableSetOf<String>()
+        var nomsImportesBrises = false
+
+        fun visiter(
+            noeud: NoeudSyntaxique,
+            heritageBrise: Boolean,
+        ): Boolean {
+            // Zone package/imports : une erreur y coupe la preuve
+            // d'absence pour TOUT le document (les noms importés ne
+            // sont plus fiables) ; elle ne contient jamais de
+            // déclaration diagnostiquable.
+            if (noeud.type == KtNodeTypes.IMPORT_LIST ||
+                noeud.type == KtNodeTypes.PACKAGE_DIRECTIVE
+            ) {
+                val propre = sousArbreSansMarqueur(noeud)
+                if (!propre) nomsImportesBrises = true
+                return propre
+            }
+            if (noeud.marqueErreur) return false
+            // Nom de TOUTE déclaration (à toute profondeur) : jamais
+            // signalé non résolu tant que le document porte une erreur.
+            if (noeud.type in TYPES_DECLARATION) {
+                (KtElement.depuis(noeud) as? KtDeclaration)?.nom()?.let { nomsTares.add(it) }
+            }
+            // En-tête de classe brisé (tout enfant hors CLASS_BODY :
+            // supertypes, paramètres de type, clause where, constructeur
+            // primaire) : les membres HÉRITÉS ne sont plus lisibles — les
+            // régions internes restent diagnostiquables mais PAS
+            // absence-fiables.
+            var heritageBriseLocal = heritageBrise
+            if (noeud.type == KtNodeTypes.CLASS ||
+                noeud.type == KtNodeTypes.OBJECT_DECLARATION
+            ) {
+                heritageBriseLocal =
+                    heritageBriseLocal ||
+                        noeud.sousNoeuds.any { enfant ->
+                            enfant.type != KtNodeTypes.CLASS_BODY && !sousArbreSansMarqueur(enfant)
+                        }
+            }
+            var sousArbrePropre = true
+            noeud.sousNoeuds.forEach { enfant ->
+                if (!visiter(enfant, heritageBriseLocal)) sousArbrePropre = false
+            }
+            if (sousArbrePropre && noeud.type in TYPES_DECLARATION) {
+                regions.add(PlagePropre(noeud.debut, noeud.fin))
+                if (!heritageBriseLocal) {
+                    regionsAbsence.add(PlagePropre(noeud.debut, noeud.fin))
+                }
+            }
+            return sousArbrePropre
+        }
+
+        visiter(racine, heritageBrise = false)
+        return GardeEdition(regions, regionsAbsence, nomsTares, nomsImportesBrises)
+    }
+
+    /** Le sous-arbre porte-t-il au moins un marqueur d'erreur ? */
+    private fun sousArbreSansMarqueur(noeud: NoeudSyntaxique): Boolean {
+        if (noeud.marqueErreur) return false
+        noeud.sousNoeuds.forEach { enfant -> if (!sousArbreSansMarqueur(enfant)) return false }
+        return true
+    }
 
     /**
      * Calcule tous les diagnostics sémantiques d'un arbre, triés par
@@ -99,18 +241,50 @@ internal object DiagnosticsSemantiques {
         arbre: ArbreSyntaxiqueKotlin,
         contexte: Contexte,
     ): List<DiagnosticKotlin> {
-        // Garde : arbre en édition — aucune preuve sémantique.
-        if (arbre.nombreErreurs > 0) return emptyList()
+        // P1-A « diagnostics par déclaration » : un arbre en édition
+        // n'est plus écarté en bloc — chaque famille n'émet que dans les
+        // déclarations PROPRES ; document propre = chemin inchangé.
+        val garde =
+            if (arbre.nombreErreurs == 0) {
+                null
+            } else {
+                construireGardeEdition(arbre.racine)
+            }
+        if (garde != null && garde.regions.isEmpty()) return emptyList()
+        val contexteEffectif =
+            if (garde == null) contexte else contexte.copy(gardeEdition = garde)
         val diagnostics = mutableListOf<DiagnosticKotlin>()
-        diagnostics += referencesNonResolues(arbre.racine, contexte)
-        diagnostics += typesIncompatibles(arbre.racine, contexte)
-        diagnostics += nombresArguments(arbre.racine, contexte)
-        diagnostics += accesNonSurs(arbre.racine, contexte)
-        diagnostics += retoursManquants(arbre.racine, contexte)
-        diagnostics += codesInatteignables(arbre.racine)
-        diagnostics += reaffectationsVal(arbre.racine, contexte)
+        // `kt.unresolved` (preuve d'ABSENCE) ne vit que dans les régions
+        // où la structure reste absence-fiable ; les autres familles
+        // (preuves LOCALES ou ancrées sur une déclaration TROUVÉE)
+        // émettent dans toutes les régions propres.
+        diagnostics +=
+            filtrerRegions(
+                referencesNonResolues(arbre.racine, contexteEffectif),
+                garde?.regionsAbsenceFiables,
+            )
+        diagnostics += filtrerRegions(typesIncompatibles(arbre.racine, contexteEffectif), garde?.regions)
+        diagnostics += filtrerRegions(nombresArguments(arbre.racine, contexteEffectif), garde?.regions)
+        diagnostics += filtrerRegions(accesNonSurs(arbre.racine, contexteEffectif), garde?.regions)
+        diagnostics += filtrerRegions(retoursManquants(arbre.racine, contexteEffectif), garde?.regions)
+        diagnostics += filtrerRegions(codesInatteignables(arbre.racine), garde?.regions)
+        diagnostics += filtrerRegions(reaffectationsVal(arbre.racine, contexteEffectif), garde?.regions)
         return diagnostics.sortedWith(compareBy({ it.debut }, { it.code }))
     }
+
+    /**
+     * Filtre une famille par les régions propres — `null` (document
+     * propre) : aucune perte, comportement inchangé.
+     */
+    private fun filtrerRegions(
+        diagnostics: List<DiagnosticKotlin>,
+        regions: List<PlagePropre>?,
+    ): List<DiagnosticKotlin> =
+        if (regions == null) {
+            diagnostics
+        } else {
+            diagnostics.filter { d -> regions.any { it.contient(d.debut, d.fin) } }
+        }
 
     // ── kt.unresolved ──────────────────────────────────────────────────
 
@@ -129,11 +303,20 @@ internal object DiagnosticsSemantiques {
     ): List<DiagnosticKotlin> {
         // Sans classpath lisible, aucune preuve d'absence — sous-rapport.
         val index = contexte.indexAppelables ?: return emptyList()
+        // Garde d'édition (P1-A) : zone package/import brisée — les noms
+        // IMPORTÉS ne sont plus fiables, la preuve d'absence s'effondre.
+        if (contexte.gardeEdition?.nomsImportesBrises == true) return emptyList()
         val resultats = mutableListOf<DiagnosticKotlin>()
         parcourir(racine) { reference ->
             if (reference.type != KtNodeTypes.REFERENCE_EXPRESSION) return@parcourir
             val nom = nomReference(reference) ?: return@parcourir
             if (nom == "it") return@parcourir
+            // Garde d'édition (P1-A) : un nom DÉCLARÉ quelque part dans le
+            // document — à toute profondeur, y compris une déclaration en
+            // cours de frappe ou avalée par la récupération du parseur —
+            // n'est JAMAIS signalé : la preuve d'absence exige une
+            // structure fiable, elle sous-rapporte (D3).
+            if (contexte.gardeEdition?.nomsTares?.contains(nom) == true) return@parcourir
             // Segments d'une DIRECTIVE import/package (K5) : ce sont des
             // noms de PAQUETS (« com » de `import com.ex.app.R`) — la
             // résolution de NOMS ne les concerne pas (quick-fixes et
@@ -1147,21 +1330,37 @@ internal object DiagnosticsSemantiques {
         nom: String,
         contexte: Contexte,
     ): List<DeclarationProjet> {
+        // Garde d'édition (P1-A) : une candidate du DOCUMENT COURANT hors
+        // région propre — surcharge en cours de frappe, paramètres avalés
+        // par la récupération — n'est pas un témoin d'ARITÉ fiable ;
+        // l'exclure sous-rapporte au lieu de mentir (D3).
+        val regions = contexte.gardeEdition?.regions
+        fun fiableDocumentCourant(uri: String?, debutNom: Int, finNom: Int): Boolean =
+            regions == null ||
+                uri == null ||
+                uri != contexte.uriDocument ||
+                regions.any { it.contient(debutNom, finNom) }
         val fonctions =
             contexte.declarationsProjet.filter { it.genre == GenreDeclaration.FONCTION && it.nom == nom }
+                .filter { fiableDocumentCourant(it.uri, it.debutNom, it.finNom) }
         // K5 : les candidates JAVA n'ont pas d'arité extraite (types
         // seuls) — le contrôle d'arité les IGNORE (sous-rapport D3,
         // jamais de faux « 0 attendu » sur un constructeur Java).
         val classes =
             contexte.declarationsProjet.filter {
                 it.genre == GenreDeclaration.CLASSE && it.nom == nom && !it.estJava
-            }
+            }.filter { fiableDocumentCourant(it.uri, it.debutNom, it.finNom) }
         // Fonctions MEMBRES des classes englobantes (this implicite) :
         // leur arité vit dans l'arbre, pas dans les déclarations projet
-        // (conteneur qualifié) — on sonde les membres englobants.
+        // (conteneur qualifié) — on sonde les membres englobants. Garde
+        // d'édition (P1-A) : un membre englobant hors région propre
+        // n'est pas un témoin d'arité fiable.
         val membres =
             SymbolesProjet.membresEnglobants(racine, appel.debut)
                 .filterIsInstance<KtFunction>()
+                .filter { membre ->
+                    regions == null || regions.any { it.contient(membre.debut, membre.fin) }
+                }
                 .map { it.nom() to it.parametres().size }
         val resultats = mutableListOf<DeclarationProjet>()
         resultats += fonctions

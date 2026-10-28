@@ -215,6 +215,11 @@ internal class SessionLangageKotlinParse(
                         // rendrait une absence « prouvée » fausse
                         // (extension d'un fichier non scanné), D3.
                         scanProjetComplet = scanProjet.estUniversConnu(),
+                        // P1-A « diagnostics par déclaration » : l'URI du
+                        // document permet à la garde d'édition d'écarter
+                        // les candidates d'arité du document courant hors
+                        // région propre (surcharge en cours de frappe).
+                        uriDocument = uri,
                     ),
                 )
             (syntaxiques + semantiques).sortedWith(compareBy({ it.debut }, { it.code }))
