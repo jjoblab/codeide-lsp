@@ -12,6 +12,47 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.18.0
+
+### 1. État
+
+- `main` de codeide-lsp : chantier **P1-B « complétion contextuelle
+  vague 1 »** (ADR 0228, deuxième chantier P1 de la feuille de route du
+  rapport d'analyse du 28/10/2026).
+- **Ce que ça change** : la complétion Kotlin sert trois CONTEXTES
+  DÉDIÉS dans les positions à forte valeur de frappe — **arguments
+  nommés** de l'appel englobant (`foo(na|` → `nom = `, noms des
+  surcharges prouvées, déjà fournis exclus, fusionnés aux noms ordinaires),
+  **constantes d'enum** des branches d'un `when` à sujet enum
+  (`when (c) { RO|` → `ROUGE`…, contexte exclusif), **attributs
+  d'annotation** (`@Anno(lev|` → `level = `, contexte exclusif).
+
+### 2. Ce que CodeIDE doit faire
+
+- **Rien d'obligatoire** : les contextes traversent le canal
+  `textDocument/completion` existant. Le nouveau champ
+  `insertText` des candidats (« nom = » affiché, `nom = ` inséré) est
+  déjà la sémantique du client cel-lsp (insertion du texte quand
+  présent, repli sur le libellé) — le séparateur s'insère avec le
+  candidat, l'utilisateur n'a plus qu'à taper la valeur.
+- Optionnel (mise en avant) : les items `nom =` / `level =` portent le
+  kind LSP `Variable` / `Field` — si le popup éditeur affiche des badges
+  par kind, ils héritent des glyphes existants, aucun réglage nouveau.
+
+### 3. Scénarios de vérification (démo)
+
+1. Dans un fichier Kotlin du projet, taper un appel de fonction du
+   PROJET à plusieurs paramètres puis le préfixe d'un nom de paramètre
+   dans la liste d'arguments : la liste de complétion offre `nom =`
+   (séparateur inclus) à côté des locales de portée.
+2. Dans un `when` dont le sujet est une énumération du projet, placer
+   le curseur dans une condition de branche : seules les CONSTANTES de
+   l'enum sont offertes (aucun mot-clé) ; dans le corps d'une branche,
+   la complétion redevient ordinaire.
+3. Sur une annotation du classpath (par ex. `@Deprecated(`), taper le
+   préfixe d'un attribut : `level = ` / `replaceWith = ` etc. sont
+   offerts, insérés avec «&#160;= ».
+
 ## 1.17.0
 
 ### 1. État
