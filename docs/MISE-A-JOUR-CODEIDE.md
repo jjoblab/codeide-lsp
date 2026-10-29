@@ -12,6 +12,19 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.22.1 (correctif interne — les consommateurs de 1.22.0 n'ont RIEN à faire)
+
+> La CI de v1.22.0 est rouge sur `PariteCorpusDepotTest` (baseline de
+> TEST périmée dans le dépôt — la régénération avait été silencieusement
+> court-circuitée par le cache Gradle UP-TO-DATE). **Aucune incidence
+> sur les artefacts publiés** : la baseline vit dans les ressources de
+> test, elle n'entre jamais dans les jars/AAR consommables. 1.22.0
+> reste CONSOMMABLE (publication complète) ; 1.22.1 republie le même
+> contenu avec la baseline corrigée et un garde-fou durci (la commande
+> de régénération exige désormais `--rerun-tasks`, l'exécution réelle
+> est vérifiée par le diff). Monter sur 1.22.1 ou rester sur 1.22.0 :
+> équivalent fonctionnellement.
+
 ## 1.22.0
 
 ### 1. État
