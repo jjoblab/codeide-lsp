@@ -21,8 +21,15 @@ import java.security.MessageDigest
  * Équivalent, côté projet tiers de référence : son sweep « 2381/2381 sur son propre dépôt ».
  * La baseline (`src/test/resources/parite/digeste-corpus.txt`) se met à
  * jour DÉLIBÉRÉMENT : `./gradlew :lsp:kotlin:test
- * -Dparite.majBase=true` — le diff de baseline fait alors partie de la
- * revue du re-sync (cf. VENDOR.md du vendoring).
+ * --tests '*PariteCorpusDepotTest*' -Dparite.majBase=true --rerun-tasks`
+ * — le diff de baseline fait alors partie de la revue du re-sync (cf.
+ * VENDOR.md du vendoring). **`--rerun-tasks` OBLIGATOIRE** (incident
+ * v1.22.0, 29/10/2026) : la régénération est un EFFET DE BORD d'une
+ * tâche de test — sans `--rerun-tasks`, Gradle peut déclarer la tâche
+ * UP-TO-DATE et NE PAS l'exécuter : la baseline reste alors PÉRIMÉE en
+ * silence, la CI suivante échoue sur un digeste qui ne correspond plus
+ * à l'arbre commis. TOUJOURS vérifier que le fichier a bien changé
+ * (le diff fait partie de la revue).
  *
  * Racine du corpus : le dépôt (remontée depuis le répertoire de travail
  * du test jusqu'à `settings.gradle.kts`) ; `-Dparite.racineCorpus=…` la
@@ -125,13 +132,16 @@ class PariteCorpusDepotTest {
         }
         assertTrue(
             "baseline de parité absente (${fichierBase.path}) — générer une première fois : " +
-                "./gradlew :lsp:kotlin:test --tests '*PariteCorpusDepotTest*' -Dparite.majBase=true",
+                "./gradlew :lsp:kotlin:test --tests '*PariteCorpusDepotTest*' " +
+                "-Dparite.majBase=true --rerun-tasks",
             fichierBase.isFile,
         )
         val ligneAttendue = fichierBase.readLines().lastOrNull { it.isNotBlank() }
         assertEquals(
             "digeste du corpus divergé de la baseline — grammaire modifiée ? " +
-                "si le changement est délibéré (re-sync), régénérer -Dparite.majBase=true",
+                "si le changement est délibéré (re-sync), régénérer -Dparite.majBase=true " +
+                "--rerun-tasks (sans quoi la tâche peut être UP-TO-DATE et ne rien réécrire — " +
+                "incident v1.22.0)",
             ligneAttendue,
             ligneCorpus,
         )

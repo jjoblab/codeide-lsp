@@ -1,5 +1,30 @@
 # Changelog — codeide-lsp
 
+## 1.22.1 (2026-10-29)
+
+- **Correctif CI : baseline de parité périmée dans 1.22.0** (aucune
+  incidence sur les artefacts publiés) : la régénération de la baseline
+  du chantier 3 (`-Dparite.majBase=true`) avait été déclarée UP-TO-DATE
+  par Gradle — la tâche de test NE S'EST PAS EXÉCUTÉE, la baseline n'a
+  pas été réécrite après le dernier reformatage (detekt/spotless) du
+  chantier — et la validation finale, elle aussi servie par le cache,
+  n'a rien vu. Résultat : la CI de v1.22.0 échoue sur
+  `PariteCorpusDepotTest` (digeste du corpus ≠ baseline), alors que le
+  contenu des artefacts (jars/AAR, ressources MAIN seulement) est
+  IDENTIQUE — la baseline est une ressource de TEST, elle ne quitte
+  jamais les artefacts consommables.
+  - la baseline est régénérée par EXÉCUTION RÉELLE (`--rerun-tasks`,
+    diff vérifié : `fichiers=307 digeste=370af2a5…`), la parité est
+    VERTE sur JDK 17 et JDK 21 (le JDK de la CI) en exécution forcée ;
+  - durcissement du garde-fou (anti-récidive) : la KDoc et le message
+    d'échec de `PariteCorpusDepotTest` exigent désormais
+    `--rerun-tasks` dans la commande de régénération — un EFFET DE BORD
+    d'une tâche de test ne doit jamais être confié au cache de Gradle ;
+  - 1.22.0 reste CONSOMMABLE (publication GitHub Packages complète,
+    workflow vert) ; 1.22.1 republie le même contenu avec la baseline
+    corrigée — les consommateurs peuvent rester sur 1.22.0 ou monter
+    sur 1.22.1, aucun changement fonctionnel.
+
 ## 1.22.0 (2026-10-29)
 
 - **Correctifs d'expression wrap / cast / surround (chantier 3 de la
