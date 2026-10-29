@@ -12,6 +12,51 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.21.0
+
+### 1. État
+
+- `main` de codeide-lsp : chantier **2 « indices lambda des littéraux
+  de fonction »** (ADR 0231, feuille de route post-P1).
+- **Ce que ça change** : `textDocument/inlayHint` rend de NOUVEAUX
+  indices sur les lambdas — le `it` IMPLICITE porte un indice au
+  libellé COMPLET `it: Type` (kind Parameter, `paddingLeft` ET
+  `paddingRight` à true — le fantôme respire entre l'accolade et le
+  corps), positionné JUSTE APRÈS l'accolade ouvrante ; chaque
+  paramètre EXPLICITE sans type écrit porte un indice `: Type` (kind
+  Type) positionné en FIN de nom. CORRECTION de rendu au passage : les
+  indices TYPE des déclarations (`val entier = 42` → `: Int`) sont
+  désormais positionnés APRÈS le nom (fin d'ancre) — ils se tissaient
+  AVANT (`val : Int entier`), contredisant le contrat du genre.
+
+### 2. Ce que CodeIDE doit faire
+
+- **Rien de bloquant** : les indices traversent `inlayHint` existant,
+  aucune capability ne change. Le pont `LspInlayHintProvider` honore
+  déjà `paddingLeft`/`paddingRight` (le texte tissé gagne ses espaces
+  de respiration).
+- À VÉRIFIER côté rendu : un indice positionné à une offset donné se
+  tisse À cet offset — le rendu `entier: Int = 42` (après le nom) et
+  `{ it: View println(it) }` (après l'accolade, avec padding) doit
+  être visuellement cohérent ; c'est la première surface qui utilise
+  les indices APRÈS ancre côté Kotlin (le Java ECJ le faisait déjà
+  pour `var`).
+
+### 3. Scénarios de vérification (démo)
+
+1. `fun repeter(n: Int, action: (String) -> Unit) = Unit` puis
+   `repeter(2) { println(it) }` : l'indice `it: String` apparaît en
+   pâle juste après l'accolade, `n =` avant le `2`.
+2. `val rappel: (Int) -> Unit = { println(it) }` : `it: Int` après
+   l'accolade de l'initialiseur.
+3. `combiner(1, 2) { x, y -> x + y }` (attente `(Int, Int) -> Int`) :
+   `x` et `y` portent `: Int` ; un paramètre déjà typé
+   (`{ x: Int, y -> }`) n'en porte pas, `y` garde le sien.
+4. Un littéral passé à une fonction INCONNUE (`inconnu(2) { … }`) ne
+   rend RIEN (preuve par le consommateur, D3).
+5. `val entier = 42` : `: Int` se rend APRÈS le nom (plus jamais
+   avant).
+
 ## 1.20.0
 
 ### 1. État
