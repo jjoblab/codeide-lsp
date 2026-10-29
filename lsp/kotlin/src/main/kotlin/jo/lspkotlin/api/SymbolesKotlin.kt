@@ -101,6 +101,78 @@ public data class CorrectifMembresManquantsKotlin(
 )
 
 /**
+ * Genre d'un correctif d'EXPRESSION (chantier 3, ADR 0232 — wrap /
+ * cast / surround sur les diagnostics PROUVÉS `kt.unsafeNullable` et
+ * `kt.typeMismatch`). Le moteur rend l'édition CONCRÈTE ; l'hôte
+ * dérive le TITRE du genre (le moteur ne connaît ni LSP ni libellé).
+ */
+public enum class GenreCorrectifKotlin {
+    /**
+     * Remplacer le `.` de l'accès non sûr par `?.` (`s.length` →
+     * `s?.length`) — le correctif le plus sûr : l'appel devient
+     * conditionnel, jamais d'exception.
+     */
+    APPEL_SUR,
+
+    /**
+     * Encadrer le récepteur de `!!` (`s.length` → `s!!.length`) — le
+     * « cast » de nullité T? → T : l'assertion non nulle lève si la
+     * valeur est nulle, le type écrit est honoré tel quel.
+     */
+    ASSERTION_NON_NULLE,
+
+    /**
+     * Entourer l'instruction englobante d'un test de nullité
+     * (`s.length` → `if (s != null) { s.length }`) — le correctif
+     * STRUCTUREL : la garde protège TOUT le bloc.
+     */
+    TEST_NULLITE,
+
+    /**
+     * Changer le TYPE ÉCRIT pour le représentant de la famille du
+     * littéral (`val x: Int = "5"` → `val x: String = "5"`) — toujours
+     * légal : un littéral de sa propre famille affecte son type.
+     */
+    CHANGEMENT_TYPE,
+
+    /**
+     * Encadrer l'initialiseur d'une conversion standard (`"5"` →
+     * `"5".toInt()`) — uniquement les conversions du LANGAGE (stdlib
+     * Kotlin), jamais un cast `as` (illégal entre familles disjointes,
+     * le correctif ne doit pas produire du code cassé, D3).
+     */
+    CONVERSION,
+}
+
+/**
+ * Correctif d'expression CONCRET (chantier 3, ADR 0232) — une édition
+ * de texte calculée sur l'arbre COURANT (le moteur re-prouve à la
+ * requête : un diagnostic périmé ne produit AUCUN correctif, la preuve
+ * est structurale). L'hôte la traduit en `CodeAction` LSP (titre dérivé
+ * du genre, `WorkspaceEdit`) — miroir de
+ * [CorrectifMembresManquantsKotlin].
+ *
+ * @property genre la nature du correctif (→ titre côté hôte).
+ * @property debut décalage de début de l'édition (inclus) — insertion
+ *           quand `debut == fin`.
+ * @property fin décalage de fin de l'édition (exclusif).
+ * @property texte le texte de remplacement (`?`, `!!`, `if (s != null)
+ *           { … }`, `String`, `.toInt()`).
+ * @property argument l'argument du TITRE côté hôte : le nom du
+ *           récepteur ([GenreCorrectifKotlin.TEST_NULLITE]), le nom du
+ *           type cible ([GenreCorrectifKotlin.CHANGEMENT_TYPE]) ou
+ *           l'appel de conversion ([GenreCorrectifKotlin.CONVERSION]) ;
+ *           `null` quand le genre se suffit.
+ */
+public data class CorrectifTexteKotlin(
+    public val genre: GenreCorrectifKotlin,
+    public val debut: Int,
+    public val fin: Int,
+    public val texte: String,
+    public val argument: String? = null,
+)
+
+/**
  * Contenu de survol (`textDocument/hover`) — texte simple (même forme
  * que le LSP Java : le client rend une chaîne, pas du markdown riche ;
  * la richesse arrive avec le mode profond, jamais par devinette).

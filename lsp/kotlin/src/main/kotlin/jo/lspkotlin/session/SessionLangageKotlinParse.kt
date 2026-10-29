@@ -6,6 +6,7 @@ import jo.lspkotlin.api.CibleNavigationKotlin
 import jo.lspkotlin.api.ClasspathKotlin
 import jo.lspkotlin.api.CorrectifMembresManquantsKotlin
 import jo.lspkotlin.api.ContenuSurvoleKotlin
+import jo.lspkotlin.api.CorrectifTexteKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EditionSourceKotlin
 import jo.lspkotlin.api.EmplacementKotlin
@@ -19,6 +20,7 @@ import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspkotlin.api.SymboleDocumentKotlin
 import jo.lspkotlin.api.SymboleEspaceKotlin
 import jo.lspkotlin.completion.CompletionKotlin
+import jo.lspkotlin.diagnostics.CorrectifsKotlin
 import jo.lspkotlin.diagnostics.DiagnosticsSemantiques
 import jo.lspkotlin.diagnostics.DiagnosticsSyntaxiques
 import jo.lspkotlin.documentation.DocumentationKotlin
@@ -357,6 +359,42 @@ internal class SessionLangageKotlinParse(
                     declarationsProjet = declarations,
                     port = portFichierDeclaration(declarations),
                     vue = classpath?.vue,
+                ),
+            )
+        }
+
+    /**
+     * Correctifs d'expression (chantier 3, ADR 0232 — wrap / cast /
+     * surround) : la marche vit dans [CorrectifsKotlin], dérivée des
+     * MÊMES preuves que les diagnostics (collecteurs partagés, régions
+     * propres comprises). La session fournit le contexte de résolution
+     * du document — les deux familles (`kt.unsafeNullable`,
+     * `kt.typeMismatch`) ne lisent NI l'index NI le port de fichiers,
+     * `indexAppelables` reste `null` (jamais une passe d'indexation
+     * pour un quick-fix). Document inconnu/fermé : liste VIDE.
+     */
+    override fun correctifs(
+        uri: String,
+        decalage: Int,
+    ): List<CorrectifTexteKotlin> =
+        enLecture {
+            if (fermee) return emptyList()
+            val document = documents[uri] ?: return emptyList()
+            val contexteNom = contexteNomDe(document, uri)
+            val declarations = declarationsProjet(document, uri, contexteNom.paquet)
+            CorrectifsKotlin.correctifs(
+                document.arbre,
+                document.texte,
+                decalage,
+                DiagnosticsSemantiques.Contexte(
+                    texte = document.texte,
+                    contexteNom = contexteNom,
+                    resolution = resolution,
+                    declarationsProjet = declarations,
+                    // Les deux familles de preuves ne lisent pas
+                    // l'index (c'est la cascade `kt.unresolved` seule).
+                    indexAppelables = null,
+                    script = document.script,
                 ),
             )
         }

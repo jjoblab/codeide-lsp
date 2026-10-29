@@ -3,9 +3,11 @@ package jo.codeide.lsp.host
 import jo.lspjava.api.NavigationTarget
 import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ChaineSelectionKotlin
+import jo.lspkotlin.api.CorrectifTexteKotlin
 import jo.lspkotlin.api.DiagnosticKotlin
 import jo.lspkotlin.api.EmplacementKotlin
 import jo.lspkotlin.api.GenreCompletionKotlin
+import jo.lspkotlin.api.GenreCorrectifKotlin
 import jo.lspkotlin.api.GenreIndiceKotlin
 import jo.lspkotlin.api.GenreSymboleKotlin
 import jo.lspkotlin.api.PropositionCompletionKotlin
@@ -1160,9 +1162,97 @@ internal class KotlinLanguageServer(
             // déclaration englobante, elle ne peut pas se tromper de
             // cible).
             actionMembresManquants(uri, document, params.range.start)?.let { actions.add(it) }
+            // Chantier 3 (ADR 0232) : correctifs d'expression wrap /
+            // cast / surround — chaque diagnostic `kt.unsafeNullable` /
+            // `kt.typeMismatch` du contexte interroge le moteur à SON
+            // offset (le moteur RE-PROUVE sur l'arbre courant : un
+            // diagnostic périmé rend VIDE, honnête par construction).
+            actions += actionsCorrectifsExpression(uri, document, params.context.diagnostics)
             val reponses = actions.map { action -> Either.forRight<Command, CodeAction>(action) }
             return CompletableFuture.completedFuture(reponses)
         }
+
+        /**
+         * Les correctifs d'expression (chantier 3, ADR 0232) : pour
+         * chaque diagnostic ciblé (`kt.unsafeNullable`,
+         * `kt.typeMismatch`), les éditions concrètes du moteur traduites
+         * en CodeActions — le TITRE dérive du GENRE (le moteur ne
+         * connaît ni LSP ni libellé, miroir P1-C). Un moteur en échec
+         * ou silencieux ne produit RIEN (jamais d'exception vers le
+         * client, jamais d'action muette).
+         */
+        private fun actionsCorrectifsExpression(
+            uri: String,
+            document: DocumentLsp?,
+            diagnostics: List<org.eclipse.lsp4j.Diagnostic>,
+        ): List<CodeAction> {
+            val texte = document?.texte ?: return emptyList()
+            val actions = mutableListOf<CodeAction>()
+            val cibles =
+                diagnostics
+                    .filter {
+                        it.code?.left == CODE_ACCES_NON_SUR || it.code?.left == CODE_TYPE_INCOMPATIBLE
+                    }
+                    // Le client peut renvoyer le MÊME diagnostic deux
+                    // fois (contextes cumulés) — une édition par plage.
+                    .distinctBy { it.range }
+            for (diagnostic in cibles) {
+                val decalage = decalageDe(diagnostic.range.start, texte)
+                val correctifs =
+                    try {
+                        session.correctifs(uri, decalage)
+                    } catch (t: Throwable) {
+                        LOGGER.log(Level.WARNING, "correctifs d'expression échoués ($uri)", t)
+                        emptyList()
+                    }
+                correctifs.forEach { correctif ->
+                    val action = CodeAction(titreCorrectif(correctif))
+                    action.kind = CodeActionKind.QuickFix
+                    action.diagnostics = listOf(diagnostic)
+                    action.edit =
+                        WorkspaceEdit(
+                            linkedMapOf(
+                                uri to
+                                    listOf(
+                                        TextEdit(
+                                            Range(
+                                                positionDe(correctif.debut, texte),
+                                                positionDe(correctif.fin, texte),
+                                            ),
+                                            correctif.texte,
+                                        ),
+                                    ),
+                            ),
+                        )
+                    actions.add(action)
+                }
+            }
+            return actions
+        }
+
+        /** Le titre d'un correctif d'expression — du genre seul, l'argument précise (ADR 0232). */
+        private fun titreCorrectif(correctif: CorrectifTexteKotlin): String =
+            when (correctif.genre) {
+                GenreCorrectifKotlin.APPEL_SUR -> {
+                    "Remplacer « . » par « ?. »"
+                }
+
+                GenreCorrectifKotlin.ASSERTION_NON_NULLE -> {
+                    "Encadrer le récepteur de « !! »"
+                }
+
+                GenreCorrectifKotlin.TEST_NULLITE -> {
+                    "Entourer d'un test de nullité « if (${correctif.argument} != null) »"
+                }
+
+                GenreCorrectifKotlin.CHANGEMENT_TYPE -> {
+                    "Changer le type en « ${correctif.argument} »"
+                }
+
+                GenreCorrectifKotlin.CONVERSION -> {
+                    "Encadrer d'une conversion « ${correctif.argument} »"
+                }
+            }
 
         /**
          * L'action « implémenter les membres manquants » de la
@@ -1489,6 +1579,11 @@ internal class KotlinLanguageServer(
 
         /** Code des diagnostics ciblés par les quick-fixes d'import. */
         private const val CODE_NON_RESOLU: String = "kt.unresolved"
+
+        /** Codes des diagnostics ciblés par les correctifs d'expression (ADR 0232). */
+        private const val CODE_ACCES_NON_SUR: String = "kt.unsafeNullable"
+
+        private const val CODE_TYPE_INCOMPATIBLE: String = "kt.typeMismatch"
 
         /** Correctifs d'import maximum PAR diagnostic (palette bornée). */
         private const val PLAFOND_CORRECTIFS: Int = 8

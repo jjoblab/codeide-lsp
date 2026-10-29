@@ -1208,6 +1208,226 @@ class KotlinLanguageServerTest {
         session.close()
     }
 
+    // ── Chantier 3 (ADR 0232) : correctifs d'expression ──────────────
+
+    /**
+     * Les trois correctifs scriptés de `fun demo(s: String?) { s.length }`
+     * (récepteur à l'offset 25, point à 26, instruction 25..33).
+     */
+    private fun correctifsAccesNonSurScriptes(): List<jo.lspkotlin.api.CorrectifTexteKotlin> =
+        listOf(
+            jo.lspkotlin.api.CorrectifTexteKotlin(
+                genre = jo.lspkotlin.api.GenreCorrectifKotlin.APPEL_SUR,
+                debut = 26,
+                fin = 26,
+                texte = "?",
+            ),
+            jo.lspkotlin.api.CorrectifTexteKotlin(
+                genre = jo.lspkotlin.api.GenreCorrectifKotlin.ASSERTION_NON_NULLE,
+                debut = 26,
+                fin = 26,
+                texte = "!!",
+            ),
+            jo.lspkotlin.api.CorrectifTexteKotlin(
+                genre = jo.lspkotlin.api.GenreCorrectifKotlin.TEST_NULLITE,
+                debut = 25,
+                fin = 33,
+                texte = "if (s != null) {\n      s.length\n  }",
+                argument = "s",
+            ),
+        )
+
+    /** Les deux correctifs scriptés de `val x: Int = "5"` (type 7..10, initialiseur fin 16). */
+    private fun correctifsLitteralScriptes(): List<jo.lspkotlin.api.CorrectifTexteKotlin> =
+        listOf(
+            jo.lspkotlin.api.CorrectifTexteKotlin(
+                genre = jo.lspkotlin.api.GenreCorrectifKotlin.CHANGEMENT_TYPE,
+                debut = 7,
+                fin = 10,
+                texte = "String",
+                argument = "String",
+            ),
+            jo.lspkotlin.api.CorrectifTexteKotlin(
+                genre = jo.lspkotlin.api.GenreCorrectifKotlin.CONVERSION,
+                debut = 16,
+                fin = 16,
+                texte = ".toInt()",
+                argument = ".toInt()",
+            ),
+        )
+
+    @Test
+    fun `codeAction - acces non sur, trois actions titrees et reliees au diagnostic`() {
+        // `fun demo(s: String?) {\n  s.length\n}\n` — récepteur ligne 1
+        // colonne 2, point colonne 3.
+        val source = "fun demo(s: String?) {\n  s.length\n}\n"
+        val session = SessionScriptee(correctifsRetournes = correctifsAccesNonSurScriptes())
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///sur.kt", "kotlin", 1, source)),
+        )
+        val nonSur =
+            org.eclipse.lsp4j.Diagnostic(
+                Range(Position(1, 2), Position(1, 3)),
+                "Appel non sûr sur un type nullable (« String? ») : utiliser « ?. » ou « !! »",
+                org.eclipse.lsp4j.DiagnosticSeverity.Error,
+                "codeide-kotlin",
+                "kt.unsafeNullable",
+            )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///sur.kt"),
+                nonSur.range,
+                CodeActionContext(listOf(nonSur)),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        assertEquals(3, actions.size)
+        val titres = actions.map { it.right.title }
+        assertEquals(
+            listOf(
+                "Remplacer « . » par « ?. »",
+                "Encadrer le récepteur de « !! »",
+                "Entourer d'un test de nullité « if (s != null) »",
+            ),
+            titres,
+        )
+        // Chaque action porte le diagnostic, le genre QuickFix et
+        // l'édition CONCRÈTE du moteur (ici l'appel sûr : insertion
+        // ligne 1 colonne 3 — avant le point).
+        val premiere = actions.first().right
+        assertEquals(org.eclipse.lsp4j.CodeActionKind.QuickFix, premiere.kind)
+        assertEquals(1, premiere.diagnostics.size)
+        val edition = checkNotNull(premiere.edit?.changes?.get("file:///sur.kt"))?.single()
+        assertEquals("?", edition?.newText)
+        assertEquals(1, edition?.range?.start?.line)
+        assertEquals(3, edition?.range?.start?.character)
+        assertEquals(1, edition?.range?.end?.line)
+        assertEquals(3, edition?.range?.end?.character)
+        session.close()
+    }
+
+    @Test
+    fun `codeAction - type mismatch, deux actions et diagnostic du contexte seul`() {
+        val source = "val x: Int = \"5\"\n"
+        val session = SessionScriptee(correctifsRetournes = correctifsLitteralScriptes())
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///type.kt", "kotlin", 1, source)),
+        )
+        val incompatibile =
+            org.eclipse.lsp4j.Diagnostic(
+                Range(Position(0, 13), Position(0, 16)),
+                "Type incompatible : littéral de chaîne affecté à « Int »",
+                org.eclipse.lsp4j.DiagnosticSeverity.Error,
+                "codeide-kotlin",
+                "kt.typeMismatch",
+            )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///type.kt"),
+                incompatibile.range,
+                CodeActionContext(listOf(incompatibile)),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        val titres = actions.map { it.right.title }
+        assertEquals(
+            listOf(
+                "Changer le type en « String »",
+                "Encadrer d'une conversion « .toInt() »",
+            ),
+            titres,
+        )
+        // L'édition de type REMPLACE la plage écrite (Int → String).
+        val edition =
+            checkNotNull(
+                actions
+                    .first()
+                    .right.edit
+                    ?.changes
+                    ?.get("file:///type.kt"),
+            )?.single()
+        assertEquals("String", edition?.newText)
+        assertEquals(0, edition?.range?.start?.line)
+        assertEquals(7, edition?.range?.start?.character)
+        assertEquals(10, edition?.range?.end?.character)
+        session.close()
+    }
+
+    @Test
+    fun `codeAction - moteur en echec sur les correctifs, liste honnete sans les actions`() {
+        val session = SessionScriptee(leverSurCorrectifs = true)
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        val source = "fun demo(s: String?) {\n  s.length\n}\n"
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///casse.kt", "kotlin", 1, source)),
+        )
+        val nonSur =
+            org.eclipse.lsp4j.Diagnostic(
+                Range(Position(1, 2), Position(1, 3)),
+                "Appel non sûr",
+                org.eclipse.lsp4j.DiagnosticSeverity.Error,
+                "codeide-kotlin",
+                "kt.unsafeNullable",
+            )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///casse.kt"),
+                nonSur.range,
+                CodeActionContext(listOf(nonSur)),
+            )
+        assertTrue(
+            serveur.textDocumentService
+                .codeAction(params)
+                .join()
+                .isEmpty(),
+        )
+        session.close()
+    }
+
+    @Test
+    fun `codeAction - diagnostic duplique dans le contexte, editions uniques`() {
+        val session =
+            SessionScriptee(
+                correctifsRetournes =
+                    listOf(
+                        jo.lspkotlin.api.CorrectifTexteKotlin(
+                            genre = jo.lspkotlin.api.GenreCorrectifKotlin.ASSERTION_NON_NULLE,
+                            debut = 26,
+                            fin = 26,
+                            texte = "!!",
+                        ),
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.connect(EspionClient())
+        val source = "fun demo(s: String?) {\n  s.length\n}\n"
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///double.kt", "kotlin", 1, source)),
+        )
+        val nonSur =
+            org.eclipse.lsp4j.Diagnostic(
+                Range(Position(1, 2), Position(1, 3)),
+                "Appel non sûr",
+                org.eclipse.lsp4j.DiagnosticSeverity.Error,
+                "codeide-kotlin",
+                "kt.unsafeNullable",
+            )
+        val params =
+            CodeActionParams(
+                TextDocumentIdentifier("file:///double.kt"),
+                nonSur.range,
+                // Le client renvoie le MÊME diagnostic deux fois (les
+                // contextes se cumulent) — une édition par plage.
+                CodeActionContext(listOf(nonSur, nonSur)),
+            )
+        val actions = serveur.textDocumentService.codeAction(params).join()
+        assertEquals(1, actions.size)
+        session.close()
+    }
+
     @Test
     fun `capacites K4 - codeAction declare (honnete)`() {
         val espace = espaceAvecEspion()
@@ -1344,6 +1564,8 @@ class KotlinLanguageServerTest {
         private val renommageRetourne: List<EmplacementKotlin> = emptyList(),
         private val membresManquantsRetourne: jo.lspkotlin.api.CorrectifMembresManquantsKotlin? = null,
         private val leverSurMembresManquants: Boolean = false,
+        private val correctifsRetournes: List<jo.lspkotlin.api.CorrectifTexteKotlin> = emptyList(),
+        private val leverSurCorrectifs: Boolean = false,
     ) : SessionLangageKotlin {
         public var fermee: Boolean = false
             private set
@@ -1411,6 +1633,14 @@ class KotlinLanguageServerTest {
         ): jo.lspkotlin.api.CorrectifMembresManquantsKotlin? {
             check(!leverSurMembresManquants) { "membres manquants scriptés en échec" }
             return membresManquantsRetourne
+        }
+
+        override fun correctifs(
+            uri: String,
+            decalage: Int,
+        ): List<jo.lspkotlin.api.CorrectifTexteKotlin> {
+            check(!leverSurCorrectifs) { "correctifs scriptés en échec" }
+            return correctifsRetournes
         }
 
         override fun survol(

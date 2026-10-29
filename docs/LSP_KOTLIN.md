@@ -129,7 +129,13 @@ scan paresseux persistant par jar (empreinte de contenu, segments ADR 0111),
 - **Quick-fixes** : import (un correctif par FQN candidate, position triée) ;
   **implémenter les membres manquants** (P1-C, ADR 0229 — stubs de la
   clôture des supertypes, projet substitué + classpath sous garde
-  générique, correctif SANS diagnostic) ; les suivants après K4.
+  générique, correctif SANS diagnostic) ; **correctifs d'expression**
+  (chantier 3, ADR 0232 — `kt.unsafeNullable` → `?.` sur le point /
+  `!!` sur le récepteur / entourage `if (nom != null)` de l'instruction
+  englobante ; `kt.typeMismatch` → changement du type écrit pour le
+  représentant de la famille / conversion standard `.toX()` — matrice
+  fermée, jamais de cast `as` illégal ; dérivés des MÊMES marches que
+  les diagnostics, re-prouvés à la requête).
 
 ### 4.4 Protocole et complétude des capacités
 

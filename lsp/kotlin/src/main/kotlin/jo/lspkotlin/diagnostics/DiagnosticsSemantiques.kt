@@ -1212,15 +1212,61 @@ internal object DiagnosticsSemantiques {
 
     // ── kt.typeMismatch ────────────────────────────────────────────────
 
-    /** Types d'initialiseurs LITTÉRAUX incompatibles avec le type écrit. */
+    /**
+     * Preuve réutilisable « littéral incompatible » (ADR 0232, chantier
+     * 3 — les quick-fixes dérivent de la MÊME marche que le diagnostic,
+     * l'alignement est par construction) : la propriété, le NŒUD de son
+     * type écrit (plage du remplacement), le texte du type, le nœud
+     * initialiseur littéral, la famille autorisée et le FQCN résolu du
+     * type écrit.
+     */
+    internal data class LitteralIncompatible(
+        val propriete: NoeudSyntaxique,
+        val noeudType: NoeudSyntaxique,
+        val typeEcrit: String,
+        val initialisateur: NoeudSyntaxique,
+        val famille: Set<String>,
+        val fqcnEcrit: String,
+    )
+
+    /**
+     * Types d'initialiseurs LITTÉRAUX incompatibles avec le type écrit —
+     * le MAPPING diagnostic ; la MARCHE (predicates complets) vit dans
+     * [litterauxIncompatibles], partagée avec les quick-fixes (ADR
+     * 0232). `calculer` applique ensuite le filtre des régions propres.
+     */
     private fun typesIncompatibles(
         racine: NoeudSyntaxique,
         contexte: Contexte,
-    ): List<DiagnosticKotlin> {
-        val resultats = mutableListOf<DiagnosticKotlin>()
+    ): List<DiagnosticKotlin> =
+        litterauxIncompatibles(racine, contexte).map { preuve ->
+            DiagnosticKotlin(
+                code = CodesDiagnosticsKotlin.TYPE_INCOMPATIBLE,
+                severite = SeveriteKotlin.ERREUR,
+                message = "Type incompatible : littéral ${preuve.famille.famille()} " +
+                    "affecté à « ${preuve.typeEcrit} »",
+                debut = preuve.initialisateur.debut,
+                fin = preuve.initialisateur.fin,
+            )
+        }
+
+    /**
+     * La MARCHE des littéraux incompatibles (ADR 0232) : chaque
+     * propriété à type ÉCRIT non nullable, initialiseur LITTÉRAL, dont
+     * le FQCN résolu du type écrit n'appartient PAS à la famille du
+     * littéral — les MÊMES gardes que le diagnostic `kt.typeMismatch`
+     * (un quick-fix offert hors de cette preuve serait un correctif sur
+     * du code légal, D3).
+     */
+    internal fun litterauxIncompatibles(
+        racine: NoeudSyntaxique,
+        contexte: Contexte,
+    ): List<LitteralIncompatible> {
+        val resultats = mutableListOf<LitteralIncompatible>()
         parcourir(racine) { declaration ->
             if (declaration.type != KtNodeTypes.PROPERTY) return@parcourir
             val propriete = KtProperty(declaration)
+            val noeudType = propriete.typeReferences().firstOrNull()?.noeud ?: return@parcourir
             val typeEcrit = propriete.type() ?: return@parcourir
             // Type NULLABLE : l'affectation d'un littéral nullable-legal
             // (« s: String? = "a" ») n'est jamais une erreur — la preuve
@@ -1235,13 +1281,13 @@ internal object DiagnosticsSemantiques {
                 ) ?: return@parcourir
             if (fqcn in attendues) return@parcourir
             resultats +=
-                DiagnosticKotlin(
-                    code = CodesDiagnosticsKotlin.TYPE_INCOMPATIBLE,
-                    severite = SeveriteKotlin.ERREUR,
-                    message = "Type incompatible : littéral ${attendues.famille()} " +
-                        "affecté à « $typeEcrit »",
-                    debut = initialiseur.debut,
-                    fin = initialiseur.fin,
+                LitteralIncompatible(
+                    propriete = declaration,
+                    noeudType = noeudType,
+                    typeEcrit = typeEcrit,
+                    initialisateur = initialiseur.noeud,
+                    famille = attendues,
+                    fqcnEcrit = fqcn,
                 )
         }
         return resultats
@@ -1392,12 +1438,51 @@ internal object DiagnosticsSemantiques {
 
     // ── kt.unsafeNullable ──────────────────────────────────────────────
 
-    /** Sélecteurs `.` sur récepteurs NULLABLES démontrables, sans garde. */
+    /**
+     * Preuve réutilisable « accès non sûr » (ADR 0232, chantier 3) :
+     * l'expression qualifiée (le `.` à remplacer vit dedans), le nœud
+     * RÉCEPTEUR (plage de l'insertion `!!`), le NOM du récepteur (le
+     * test de nullité l'écrit) et son type écrit nullable.
+     */
+    internal data class AccesNonSur(
+        val expression: NoeudSyntaxique,
+        val recepteur: NoeudSyntaxique,
+        val nom: String,
+        val typeEcrit: String,
+    )
+
+    /**
+     * Sélecteurs `.` sur récepteurs NULLABLES démontrables, sans garde —
+     * le MAPPING diagnostic ; la MARCHE vit dans [accesNonSursProuves],
+     * partagée avec les quick-fixes (ADR 0232). `calculer` applique
+     * ensuite le filtre des régions propres.
+     */
     private fun accesNonSurs(
         racine: NoeudSyntaxique,
         contexte: Contexte,
-    ): List<DiagnosticKotlin> {
-        val resultats = mutableListOf<DiagnosticKotlin>()
+    ): List<DiagnosticKotlin> =
+        accesNonSursProuves(racine, contexte).map { preuve ->
+            DiagnosticKotlin(
+                code = CodesDiagnosticsKotlin.ACCES_NON_SUR,
+                severite = SeveriteKotlin.ERREUR,
+                message = "Appel non sûr sur un type nullable (« ${preuve.typeEcrit} ») : " +
+                    "utiliser « ?. » ou « !! »",
+                debut = preuve.recepteur.debut,
+                fin = preuve.recepteur.fin,
+            )
+        }
+
+    /**
+     * La MARCHE des accès non sûrs (ADR 0232) : chaque expression
+     * qualifiée par `.` dont le récepteur est un NOM SIMPLE au type
+     * écrit NULLABLE, sans garde de nullité dominante — les MÊMES
+     * gardes que le diagnostic `kt.unsafeNullable`.
+     */
+    internal fun accesNonSursProuves(
+        racine: NoeudSyntaxique,
+        contexte: Contexte,
+    ): List<AccesNonSur> {
+        val resultats = mutableListOf<AccesNonSur>()
         parcourir(racine) { expression ->
             if (expression.type != KtNodeTypes.DOT_QUALIFIED_EXPRESSION) return@parcourir
             val recepteur = expression.sousNoeuds.firstOrNull() ?: return@parcourir
@@ -1408,18 +1493,24 @@ internal object DiagnosticsSemantiques {
             // Garde de nullité dominante : `nom != null` au-dessus ou
             // garde `nom == null` à sortie précoce — accès légal.
             if (estProtegeNonNull(racine, recepteur, nom)) return@parcourir
-            resultats +=
-                DiagnosticKotlin(
-                    code = CodesDiagnosticsKotlin.ACCES_NON_SUR,
-                    severite = SeveriteKotlin.ERREUR,
-                    message = "Appel non sûr sur un type nullable (« $typeEcrit ») : " +
-                        "utiliser « ?. » ou « !! »",
-                    debut = recepteur.debut,
-                    fin = recepteur.fin,
-                )
+            resultats += AccesNonSur(expression, recepteur, nom, typeEcrit)
         }
         return resultats
     }
+
+    /**
+     * Régions PROPRES de l'arbre (garde d'édition P1-A) — `null` quand
+     * le document ne porte AUCUN marqueur d'erreur (aucun filtrage).
+     * Exposé pour les quick-fixes (ADR 0232) : un correctif dérivé d'un
+     * diagnostic ne s'offre QUE là où le diagnostic peut s'exprimer —
+     * une région brisée n'est pas un terrain de preuve (D3).
+     */
+    internal fun regionsPropres(arbre: ArbreSyntaxiqueKotlin): List<PlagePropre>? =
+        if (arbre.nombreErreurs == 0) {
+            null
+        } else {
+            construireGardeEdition(arbre.racine).regions
+        }
 
     /** Type ÉCRIT d'un nom simple (locale, membre englobant, premier niveau). */
     private fun typeEcritNomSimple(

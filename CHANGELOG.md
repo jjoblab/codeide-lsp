@@ -1,5 +1,52 @@
 # Changelog — codeide-lsp
 
+## 1.22.0 (2026-10-29)
+
+- **Correctifs d'expression wrap / cast / surround (chantier 3 de la
+  feuille de route post-P1, ADR 0232)** : les deux diagnostics les plus
+  actionnables du moteur Kotlin gagnent leurs quick-fixes — le message
+  « utiliser « ?. » ou « !! » » devient un geste :
+  - **`kt.unsafeNullable` → trois correctifs** : « Remplacer « . » par
+    « ?. » » (insertion du `?` devant le point de CETTE expression —
+    `s.length.trim()` corrige le point de son propre segment), «
+    Encadrer le récepteur de « !! » » (le cast de nullité T? → T), «
+    Entourer d'un test de nullité « if (s != null) » » — l'instruction
+    englobante (l'enfant direct du bloc le plus profond), MULTI-LIGNE
+    quand elle possède sa ligne (corps indenté d'un pas de 4 espaces,
+    garde fermée à l'indent de l'instruction, miroir Android Studio),
+    EN LIGNE sinon ; sans bloc ancêtre (premier niveau), l'entourage
+    reste muet (`if` illégal au sommet d'un fichier) ;
+  - **`kt.typeMismatch` → deux correctifs** : « Changer le type en « X »
+    » (le représentant de la famille du littéral — `val x: Int = "5"`
+    → `val x: String = "5"`, toujours légal) et « Encadrer d'une
+    conversion « .toX() » » (matrice FERMÉE des conversions standard :
+    numérique → numérique/Char/String, chaîne → numérique et Boolean,
+    booléen/caractère → String ; caractère → numérique EXCLU —
+    `Char.toInt()` déprécié depuis Kotlin 1.5) ; JAMAIS de cast `as` —
+    illégal entre familles disjointes, le correctif ne doit pas
+    produire du code cassé (D3) ;
+  - **l'alignement est par construction** : les correctifs dérivent des
+    MÊMES marches que les diagnostics (collecteurs internes partagés
+    `litterauxIncompatibles`/`accesNonSursProuves`, régions propres
+    P1-A comprises) — un correctif ne s'offre QUE là où le diagnostic
+    peut s'exprimer ; le moteur RE-PROUVE à la requête sur l'arbre
+    courant : un diagnostic périmé rend VIDE (la preuve est
+    structurelle, jamais une mémoire du publié) ;
+  - branchement session : `correctifs(uri, decalage)` au contrat
+    (défaut VIDE — tolérance de version), le transport `codeAction`
+    traduit chaque édition en CodeAction QuickFix relié à son
+    diagnostic, plages dédoublonnées, moteur en échec honnête (rien) ;
+    aucune capability ne change.
+- Tests : +13 moteur (`CorrectifsTexteTest` — les trois correctifs de
+  l'accès non sûr aux éditions exactes, l'entourage multi-ligne/en
+  ligne/propriété locale/premier niveau muet, le segment imbriqué, les
+  gardes D3, la matrice de conversion fermée, l'alignement ⟺
+  diagnostic, le diagnostic périmé, le document inconnu), +4 hôte
+  (`KotlinLanguageServerTest` — trois actions titrées reliées au
+  diagnostic, deux actions du littéral avec l'édition de la plage
+  écrite, moteur en échec honnête, diagnostic dupliqué dédoublonné),
+  baseline de parité re-synchronisée.
+
 ## 1.21.1 (2026-10-29)
 
 - **Republication complète de 1.21.0 (publication interrompue en

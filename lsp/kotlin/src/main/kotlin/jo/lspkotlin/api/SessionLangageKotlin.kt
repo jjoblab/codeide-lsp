@@ -207,6 +207,41 @@ public interface SessionLangageKotlin : AutoCloseable {
     ): CorrectifMembresManquantsKotlin? = null
 
     /**
+     * Correctifs d'EXPRESSION (chantier 3, ADR 0232 — wrap / cast /
+     * surround) aux DÉCALAGES des diagnostics `kt.unsafeNullable` et
+     * `kt.typeMismatch` : le moteur RE-PROUVE sur l'arbre courant (un
+     * diagnostic périmé rend VIDE — la preuve est structurale, jamais
+     * une mémoire du diagnostic publié) et rend chaque correctif comme
+     * une édition CONCRÈTE ([CorrectifTexteKotlin]).
+     *
+     * Les familles : accès non sûr (`?.` sur le point, `!!` sur le
+     * récepteur, entourage `if (nom != null)` de l'instruction
+     * englobante — cette dernière SEULEMENT dans un bloc : une
+     * propriété de premier niveau ne s'entoure pas) et littéral
+     * incompatible (changement du type écrit pour le représentant de la
+     * famille, encadrement d'une conversion STANDARD `.toX()` quand le
+     * type écrit est une primitive Kotlin qui l'admet — JAMAIS de cast
+     * `as`, illégal entre familles disjointes, D3).
+     *
+     * L'alignement est par construction : les correctifs dérivent des
+     * MÊMES marches que les diagnostics (régions propres comprises) —
+     * un correctif ne s'offre QUE là où le diagnostic peut s'exprimer.
+     *
+     * Tolérance de version : défaut VIDE — un pack antérieur à l'ADR
+     * 0232 dégrade honnêtement (pas de correctif, jamais d'exception).
+     *
+     * @param uri identité du document.
+     * @param decalage décalage du curseur (le début de la plage du
+     *        diagnostic côté hôte).
+     * @return les correctifs triés du plus sûr au plus structurel ;
+     *         liste VIDE sans preuve, document inconnu/fermé.
+     */
+    public fun correctifs(
+        uri: String,
+        decalage: Int,
+    ): List<CorrectifTexteKotlin> = emptyList()
+
+    /**
      * Symboles de document (`textDocument/documentSymbol`, S1) —
      * structure hiérarchique de l'arbre Kotlin : classes, fonctions,
      * propriétés, objets, enum entries, typealias. L'outline éditeur
