@@ -12,7 +12,13 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
-## 1.21.0
+## 1.21.1 (républication de 1.21.0 — celle-ci est CONSOMMABLE)
+
+> **1.21.0 ne doit PAS être consommée** : sa publication GitHub
+> Packages a été interrompue en plein vol (annulation concurrence au
+> re-tag) — le module `index` y est PARTIEL (jar sans pom, non
+> résoluble) et host/kotlin/xml y sont absents. Le contenu de 1.21.1
+> est IDENTIQUE (chantier 2, ADR 0231) et publié intégralement.
 
 ### 1. État
 
