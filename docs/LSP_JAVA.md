@@ -1,5 +1,13 @@
 # LSP Java — étude de l'étape 0 (v0.91.0)
 
+> **DOCUMENT D'ÉPOQUE — MOTEUR ARCHIVÉ (30/10/2026, ADR 0233)** : le
+> moteur Java vendored est **gelé** ; le LSP Java de CodeIDE vit désormais
+> dans le dépôt [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp)
+> (réécriture intégrale en Kotlin, v1.0.0 publiée sur GitHub Packages —
+> bascule §8.5 du 30/10/2026). Ce document reste la référence d'analyse du
+> moteur vendored (époque v0.91.0) et de son historique de décisions
+> (ADR 0108–0112) ; il n'évoluera plus.
+
 > **Mission** : prompt 2 « LSP Java : modèle de projet, indexation des
 > classpaths/sourcesets et intégration ». Ce document est le livrable
 > d'analyse de l'étape 0 : vérification des constats W1–W10 **avec

@@ -1,5 +1,23 @@
 # Changelog — codeide-lsp
 
+## Non publié
+
+- **Archivage du moteur Java vendored `:lsp:java` (ADR 0233, décision
+  propriétaire du 30/10/2026)** : [`code-lsp`](https://github.com/jjoblab/code-lsp)
+  (v1.0.0 publiée sur GitHub Packages — `jo.codeide.lsp.java:jo-codeide-lsp-java`)
+  devient l'habitat unique du LSP Java de CodeIDE. Le module est **gelé**
+  (aucune évolution, aucun correctif hors instruction explicite), reste
+  compilable et publiable tant que `:lsp:host` consomme la façade vendored
+  (l'adaptation de l'hôte à la façade neuve est le chaînon restant de la
+  bascule §8.5 — `docs/BASCULE-CODEIDE.md` §3.2.2 du dépôt code-lsp) ;
+  `:lsp:ecj-art` gelé solidairement. **Aucune incidence sur les artefacts
+  publiés** — le gel est déclaratif, le contenu des coordonnées
+  `com.github.jjoblab.codeide-lsp:*` est inchangé. Kotlin, XML, modèle,
+  index et hôte restent ACTIFS (la migration ou réécriture des LSP Kotlin
+  et XML vers `code-lsp` reste à venir, décision propriétaire). Marquages :
+  README racine, `docs/LSP_JAVA.md`, `lsp/java/README.md`, en-tête de
+  `lsp/java/build.gradle.kts`.
+
 ## 1.22.1 (2026-10-29)
 
 - **Correctif CI : baseline de parité périmée dans 1.22.0** (aucune

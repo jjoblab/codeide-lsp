@@ -3,14 +3,26 @@
 Moteurs LSP de [CodeIDE](https://github.com/jjoblab/CodeIDE) **extraits
 le 2026-10-17** (`git filter-repo`, historique conservé — 339 commits).
 
+> **ARCHIVAGE DU MOTEUR JAVA (30/10/2026, [ADR 0233](docs/adr/0233-archive-moteur-java-habitat-unique-code-lsp.md))**
+> — `:lsp:java` (moteur vendored) est **archivé : gelé, sans évolution**.
+> Le LSP Java de CodeIDE vit désormais dans
+> [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp) (v1.0.0 publiée
+> sur GitHub Packages — bascule §8.5 du 30/10/2026). Ce dépôt reste
+> l'habitat des LSP **Kotlin** et **XML**, du **modèle**, de l'**index**
+> et de l'**hôte** (`:lsp:host`) jusqu'à la migration ou réécriture
+> complète des LSP Kotlin et XML vers `code-lsp` (à venir, décision
+> propriétaire). Le module archivé reste au build tant que l'hôte
+> consomme la façade vendored (chaînon restant de la bascule) ; retrait
+> physique après « 2 versions sans régression ».
+
 ## Modules
 
 | Module | Type | Rôle |
 | --- | --- | --- |
 | `:lsp:model` | JVM pur | Modèle de projet LSP — snapshots immuables depuis `ClasspathResult` du protocole tooling |
 | `:lsp:index` | JVM pur | Index disque en segments par jar (clés de contenu, fusion LSM à la requête, ADR 0111) |
-| `:lsp:java` | Android (AAR) | Moteur Java vendored — ecj patché pour ART (ADR 0108), lsp4j 0.21.2 |
-| `:lsp:ecj-art` | JVM (build-time) | Patcher ASM de l'ecj — jamais dans l'APK |
+| `:lsp:java` | Android (AAR) | **ARCHIVÉ (30/10/2026, ADR 0233)** — moteur Java vendored gelé ; remplacé par [`code-lsp`](https://github.com/jjoblab/code-lsp) v1.0.0 (GitHub Packages) ; reste au build tant que `:lsp:host` consomme la façade `jo.lspjava.api.*` |
+| `:lsp:ecj-art` | JVM (build-time) | Patcher ASM de l'ecj — jamais dans l'APK — **gelé solidairement (ADR 0233)** : ne sert que le moteur vendored archivé |
 | `:lsp:testing` | JVM | Suite d'intégration moteur ↔ index (au-dessus des deux, ADR 0108) |
 | `:lsp:host` | Android (AAR) | L'HÔTE — SessionLsp, orchestrateur sync → modèle → index → moteurs (ADR 0109) |
 | `:lsp:kotlin` | JVM pur | Moteur Kotlin — parseur sur la grammaire officielle du compilateur VENDORÉE (ADR 0115, étapes K1–K3) ; l'Analysis API K2 est écartée (D1) et la compilation K2 différée au tooling (D8) ; suite de parité |
@@ -28,7 +40,10 @@ case cite sa preuve (annonce verrouillée par le test de parité, tests
 moteur, aller-retour LSP4J réel ; définition « en service » : ADR 0201).
 Résumé :
 
-- **Java** : complétion, survol, définition, définition de type,
+- **Java** — *module archivé (ADR 0233) : liste d'époque, gelée ; la
+  référence vivante est le `USAGE.md` du dépôt
+  [`code-lsp`](https://github.com/jjoblab/code-lsp)* : complétion, survol,
+  définition, définition de type,
   implémentations, super-définition (expérimental), source décompilée
   (expérimental), actions de code, symboles de document et d'espace,
   surlignage, références, renommage + prepareRename, formatage (document

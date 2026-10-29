@@ -1,5 +1,16 @@
 import java.util.zip.ZipInputStream
 
+// ============================================================================
+// :lsp:java — MODULE ARCHIVÉ le 30/10/2026 (ADR 0233 — instruction du
+// propriétaire ; bascule §8.5 du 30/10/2026 dans jjoblab/code-lsp).
+// GELÉ : aucune évolution. Le LSP Java de CodeIDE vit désormais dans
+// jjoblab/code-lsp (jo.codeide.lsp.java:jo-codeide-lsp-java:1.0.0,
+// maven.pkg.github.com/jjoblab/code-lsp). Ce module reste au build tant
+// que :lsp:host consomme la façade vendored jo.lspjava.api.* (chaînon
+// restant de l'adaptation hôte — docs/BASCULE-CODEIDE.md §3.2.2 du dépôt
+// code-lsp) ; retrait physique après « 2 versions sans régression ».
+// ============================================================================
+
 // :lsp:java — moteur d'analyse Java vendored (mission « LSP Java »,
 // prompt 2 §3 D1 — ADR 0108).
 //

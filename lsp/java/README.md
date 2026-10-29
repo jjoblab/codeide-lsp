@@ -1,5 +1,14 @@
 # :lsp:java — moteur d'analyse Java vendored
 
+> **MODULE ARCHIVÉ le 30/10/2026 ([ADR 0233](../docs/adr/0233-archive-moteur-java-habitat-unique-code-lsp.md))**
+> — gelé, sans évolution. Le LSP Java de CodeIDE vit désormais dans le
+> dépôt [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp)
+> (v1.0.0 sur GitHub Packages — `jo.codeide.lsp.java:jo-codeide-lsp-java`).
+> Ce module reste au build tant que `:lsp:host` consomme la façade
+> vendored `jo.lspjava.api.*` (chaînon restant de la bascule §8.5) ;
+> retrait physique après « 2 versions sans régression » servies par le
+> moteur neuf.
+
 > **Exemption « Kotlin 100 % » (règle 8 d'AGENTS.md, ADR 0108)** : ce
 > module est un module JVM **vendored en Java**, exempté de la règle
 > « Kotlin 100 %, aucun Java écrit à la main » par l'ADR 0108. detekt et
