@@ -12,6 +12,52 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.20.0
+
+### 1. État
+
+- `main` de codeide-lsp : chantier **P1-D « fiche classpath au survol,
+  KDoc aux signatures »** (ADR 0230, quatrième chantier P1 de la
+  feuille de route du rapport d'analyse du 28/10/2026).
+- **Ce que ça change** : le survol d'un type du CLASSPATH (Android,
+  stdlib) rend une FICHE — `public class android.widget.TextView
+  extends android.view.View`, puis `Interfaces : …`, `Constantes : …`
+  (enum) ou `Champs publics : Type nom, …` (plafonds 20/8, le marqueur
+  `INSTANCE` d'un objet et les synthétiques `$` exclus) ; le genre
+  (`interface`/`enum`/`class`/`object`) est prouvé par les drapeaux
+  du bytecode. L'aide à la signature accompagne ses candidates PROJET
+  de leur KDoc (document courant, autre fichier du projet ouvert ou
+  fermé — lecture bornée) ; les candidates du classpath restent sans
+  doc (le bytecode n'en porte pas).
+
+### 2. Ce que CodeIDE doit faire
+
+- **Rien** : les deux surfaces traversent les canaux existants
+  (`textDocument/hover` — la fiche vit dans la fence `kotlin` avec
+  ses sections en markdown dessous ; `textDocument/signatureHelp` —
+  le champ `documentation` de `SignatureInformation`, en plaintext,
+  déjà transporté). Aucune capability ne change.
+- Optionnel (rendu) : le panneau de signature peut afficher la
+  documentation sous l'étiquette quand le champ est présent (le
+  client cel le rend déjà pour le survol) ; sans le champ, rien à
+  faire (jamais vide).
+
+### 3. Scénarios de vérification (démo)
+
+1. Survoler `TextView` dans `val v: TextView = …` (projet Android
+   avec android.jar au classpath) : la fiche dit `public class
+   android.widget.TextView extends android.view.View` puis
+   `Champs publics : …` ; survoler une interface (`CharSequence`) :
+   `public interface java.lang.CharSequence` + `Interfaces : …`,
+   jamais de `extends`.
+2. Survoler le nom d'une enum du classpath : `Constantes : ROUGE,
+   VERT, BLEU` (plafond 20 au-delà, « … » en fin).
+3. Dans un fichier appelant une fonction KDoc-ée d'un AUTRE fichier
+   du projet (ouvert ou fermé), ouvrir la signature de l'appel : la
+   KDoc accompagne la candidate dans le panneau ; appeler une méthode
+   du classpath (`v.setText(`) : signature seule, jamais de doc
+   inventée.
+
 ## 1.19.0
 
 ### 1. État
