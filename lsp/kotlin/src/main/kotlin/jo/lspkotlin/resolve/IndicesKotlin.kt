@@ -4,6 +4,7 @@ import jo.lspkotlin.api.GenreIndiceKotlin
 import jo.lspkotlin.api.IndiceEnLigneKotlin
 import jo.lspkotlin.parse.NoeudSyntaxique
 import jo.lspkotlin.parse.kt.KtProperty
+import jo.lspkotlin.parse.kt.jetonNomReference
 import org.jetbrains.kotlin.kmp.lexer.KtTokens
 import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
 
@@ -11,7 +12,7 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * Indices en ligne (`textDocument/inlayHint`, L2 — plan 1.3.0) :
  * annotations fantômes en texte estompé — noms de PARAMÈTRES aux
  * appels positionnels, types CERTAINS aux déclarations sans type
- * écrit.
+ * écrit, indices de LITTÉRAUX DE FONCTION (ADR 0231).
  *
  * ## Noms de paramètres (preuve par la résolution)
  * Un appel ne rend des indices QUE si la candidate est PROUVÉE par
@@ -29,6 +30,17 @@ import org.jetbrains.kotlin.kmp.parser.KtNodeTypes
  * constructeur RÉSOLU en classe du projet par la chaîne de navigation
  * de types ([TypesKotlin]). Un suffixe non modélisé (`u`, `UL`), une
  * expression composée, une référence : AUCUN indice (D3).
+ *
+ * ## Indices de littéraux de fonction (ADR 0231)
+ * Le `it` IMPLICITE d'un littéral sans liste de paramètres rend un
+ * indice LAMBDA — libellé COMPLET `it: Type`, ancré sur l'accolade
+ * ouvrante (le nom n'est NULLE PART dans le source, l'indice le
+ * porte) ; chaque paramètre EXPLICITE sans type écrit rend un indice
+ * TYPE `: Type` ancré sur son NOM (le même contrat que les
+ * déclarations). La preuve vient de l'attente du CONSOMMATEUR du
+ * littéral ([ParametresLambda.typesLitteral] — propriété typée,
+ * fonction projet, SAM projet/classpath) : sans preuve ou arité
+ * incohérente, AUCUN indice (D3 — jamais deviné).
  */
 internal object IndicesKotlin {
     /** Jetons blancs (filtre des littéraux). */
@@ -66,6 +78,8 @@ internal object IndicesKotlin {
                         resultat.addAll(indicesAppel(racine, noeud, contexte.signatures))
                     KtNodeTypes.PROPERTY ->
                         resultat.addAll(indiceType(racine, noeud, uri, contexte.interrogations))
+                    KtNodeTypes.FUNCTION_LITERAL ->
+                        resultat.addAll(indicesLitteral(racine, noeud, contexte.interrogations))
                     else -> {}
                 }
             }
@@ -121,6 +135,72 @@ internal object IndicesKotlin {
             jetons[0].type == KtTokens.IDENTIFIER &&
             jetons[1].type == KtTokens.EQ
     }
+
+    /**
+     * Indices d'un LITTÉRAL DE FONCTION (ADR 0231) — la preuve vient
+     * de l'attente du CONSOMMATEUR ([ParametresLambda.typesLitteral]
+     * : propriété typée, appel projet/SAM, appel classpath) :
+     *
+     *  - SANS liste de paramètres : le `it` IMPLICITE — UN indice
+     *    LAMBDA de libellé COMPLET `it: Type` (le nom n'existe nulle
+     *    part dans le source), ancré sur l'ACCOLADE OUVRANTE, rendu
+     *    APRÈS elle par l'hôte ; l'attente doit être UNAIRE (un `it`
+     *    n'existe que pour un paramètre attendu unique) ;
+     *  - AVEC liste : UN indice TYPE par paramètre SANS type écrit,
+     *    ancré sur son NOM (le contrat des déclarations) — un
+     *    paramètre typé n'en reçoit pas (déjà visible), l'arité doit
+     *    épouser l'attente (`{ -> }` et les corps en édition ne
+     *    prouvent rien).
+     *
+     * Exemption detekt ciblée (règle 16) : ReturnCount — chaque garde
+     * (attente introuvable, `it` non unaire, arité divergente) est une
+     * ISSUE distincte du conservatisme D3.
+     */
+    @Suppress("ReturnCount")
+    private fun indicesLitteral(
+        racine: NoeudSyntaxique,
+        litteral: NoeudSyntaxique,
+        contexte: InterrogationsSymboles.Contexte,
+    ): List<IndiceEnLigneKotlin> {
+        val types =
+            ParametresLambda.typesLitteral(
+                racine,
+                litteral,
+                contexte.contexteNom,
+                contexte.resolution,
+                contexte.declarationsProjet,
+            ) ?: return emptyList()
+        // `it` implicite : le littéral n'a PAS de liste de paramètres.
+        val liste = litteral.sousNoeuds.firstOrNull { it.type == KtNodeTypes.VALUE_PARAMETER_LIST }
+        if (liste == null) {
+            // Un `it` n'existe que pour une attente UNAIRE — ni plus
+            // (paramètres inaccessibles), ni moins (`{ -> }` explicite).
+            if (types.size != 1) return emptyList()
+            return listOf(
+                IndiceEnLigneKotlin(
+                    litteral.debut,
+                    litteral.debut + 1,
+                    "it: " + nomCourt(types.single()),
+                    GenreIndiceKotlin.LAMBDA,
+                ),
+            )
+        }
+        // Paramètres explicites : l'arité doit épouser l'attente (un
+        // littéral en édition ou confus ne prouve rien — D3).
+        val parametres = liste.sousNoeuds.filter { it.type == KtNodeTypes.VALUE_PARAMETER }
+        if (parametres.size != types.size) return emptyList()
+        val resultat = mutableListOf<IndiceEnLigneKotlin>()
+        parametres.forEachIndexed { indice, parametre ->
+            // Type ÉCRIT : déjà visible, l'indice n'apporterait rien.
+            if (parametre.sousNoeuds.any { it.type == KtNodeTypes.TYPE_REFERENCE }) return@forEachIndexed
+            val nom = jetonNomReference(parametre) ?: return@forEachIndexed
+            resultat.add(IndiceEnLigneKotlin(nom.debut, nom.fin, nomCourt(types[indice]), GenreIndiceKotlin.TYPE))
+        }
+        return resultat
+    }
+
+    /** Nom COURT d'un FQCN (`android.view.View` → `View`) — l'affichage. */
+    private fun nomCourt(fqcn: String): String = fqcn.substringAfterLast('.')
 
     /**
      * Indice de TYPE d'une déclaration sans type écrit — seulement si

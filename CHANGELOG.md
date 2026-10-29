@@ -1,5 +1,46 @@
 # Changelog — codeide-lsp
 
+## 1.21.0 (2026-10-29)
+
+- **Indices lambda des littéraux de fonction (chantier 2 de la feuille
+  de route post-P1, ADR 0231)** : les indices en ligne
+  (`textDocument/inlayHint`) rejoignent l'information la plus précieuse
+  d'un littéral — le paramètre IMPLICITE, dont le nom n'existe NULLE
+  PART dans le source :
+  - **genre LAMBDA** : le `it` implicite d'un littéral sans liste de
+    paramètres rend un indice au libellé COMPLET `it: TypeCourt`
+    (`repeter(2) { println(it) }` → `it: String` en pâle après
+    l'accolade ouvrante — miroir du rendu d'Android Studio), ancré sur
+    l'accolade, rendu APRÈS elle, kind Parameter, padding des deux
+    côtés ; l'attente doit être UNAIRE (garde D3) ;
+  - **paramètres explicites** : chaque paramètre sans type écrit rend
+    un indice TYPE `: T` ancré sur son NOM (`combiner(1, 2) { x, y ->
+    }` → `x: Int`, `y: Int`), libellé au nom COURT du FQCN prouvé ;
+    un paramètre déjà typé n'en reçoit pas, l'arité doit épouser
+    l'attente — à la moindre divergence, AUCUN indice (D3) ;
+  - **la preuve** réutilise l'inférence bornée K4/K5 : nouvelle sonde
+    `ParametresLambda.typesLitteral` (même moteur que `typeParametre`,
+    ancre au DÉBUT du littéral) rend la liste COMPLÈTE des types
+    attendus du CONSOMMATEUR (propriété typée, fonction projet, SAM
+    projet, appel classpath qualifié), `null` sans preuve — un littéral
+    passé à une fonction inconnue ou imbriqué dans un autre littéral
+    reste MUET ;
+  - **ancre TYPE honorée par le transport** : le pont LSP positionnait
+    TOUT à `debut` — le type se tissait AVANT le nom (`val : Int
+    entier`), contredisant le contrat du genre (« le label se rend
+    APRÈS le nom »). Corrigé : PARAMETRE → `debut` (AVANT l'argument,
+    inchangé), TYPE et LAMBDA → `fin` (APRÈS l'ancre) — `val entier:
+    Int = 42` ;
+  - branchement session : le contexte d'indices réutilise
+    `InterrogationsSymboles.Contexte` (nommage, résolveur, déclarations
+    projet) — aucun contexte nouveau.
+- Tests : +4 moteur (`CapacitesL2KotlinTest` — `it` implicite par
+  fonction projet, paramètres explicites par nom, gardes sans
+  preuve/arité divergente/paramètre typé, propriété typée + SAM
+  projet), +1 hôte (`KotlinLanguageServerL2Test` — libellé LAMBDA
+  rendu TEL QUEL après l'accolade, padding, position `n =` AVANT,
+  ancre TYPE en fin de nom), baseline de parité re-synchronisée.
+
 ## 1.20.0 (2026-10-29)
 
 - **Fiche classpath au survol, KDoc aux signatures (chantier P1-D de la
@@ -1145,3 +1186,9 @@
 - Vérifié : chaîne locale verte (spotless, detekt, règles, tests tous
   modules, koverVerify) — voir journal d'exécution du dépôt CodeIDE
   (PLAN_SEPARATION_DEPOTS.md §8).
+
+## [1.21.0] – 2026-10-29
+
+### Ajouté
+
+- (à compléter)

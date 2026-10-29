@@ -59,7 +59,7 @@
 | Capacité | Java | Kotlin | XML | Preuves |
 |---|---|---|---|---|
 | Pliage (`foldingRange`) | ✅ | ✅ | ✅ | PlisDocumentKotlin, XmlLanguageServerTest |
-| Indices en ligne (`inlayHint`) | ✅ ⚠️ | ✅ (lot L2) ⚠️ | ❌ | IndicesKotlin via CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
+| Indices en ligne (`inlayHint`) | ✅ ⚠️ | ✅ (lot L2 + indices lambda ADR 0231) ⚠️ | ❌ | IndicesKotlin via CapacitesL2KotlinTest ; KotlinLanguageServerL2Test (E2E) |
 | Jetons sémantiques (`semanticTokens`) | ✅ | ❌ (NON annoncée — distinction non fiable au niveau parseur, D3 ; dette consignée) | ❌ | Table de parité W4 (absence verrouillée) |
 | Lentilles de code (`codeLens`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |
 | Hiérarchie d'appels (`callHierarchy`) | ✅ ⚠️ | ❌ | ❌ | Table de parité W4 |

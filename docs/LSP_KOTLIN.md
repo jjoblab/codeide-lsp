@@ -145,7 +145,10 @@ scan paresseux persistant par jar (empreinte de contenu, segments ADR 0111),
 > jamais d'homonymie), **indices en ligne** (`inlayHint` : noms de paramètres
 > aux appels positionnels PROUVÉS par la chaîne de l'aide à la signature,
 > types CERTAINS des déclarations sans type écrit — littéraux canoniques et
-> constructeurs résolus, jamais un type inféré deviné), **symboles d'espace**
+> constructeurs résolus, jamais un type inféré deviné — et indices de
+> LITTÉRAUX DE FONCTION, ADR 0231 : le `it` implicite rend `it: Type` après
+> l'accolade ouvrante, les paramètres explicites sans type écrit rendent
+> `: Type` sur leur nom, preuve par l'attente du consommateur du littéral), **symboles d'espace**
 > (`workspace/symbol` : déclarations nommées du projet, requête contient,
 > locales exclues, plafonnées) et **chaînes de sélection** (`selectionRange` :
 > nœuds englobants du plus profond au fichier entier). Les JETONS SÉMANTIQUES

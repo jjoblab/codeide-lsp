@@ -8,10 +8,11 @@ package jo.lspkotlin.api
  */
 
 /**
- * Genre d'un indice en ligne — pilote le rendu côté éditeur (le label
- * d'un nom de paramètre se termine par `:`, celui d'un type commence
- * par `:` ; l'hôte ajoute les séparateurs, le moteur rend le TEXTE
- * SEUL).
+ * Genre d'un indice en ligne — pilote le rendu côté éditeur : le
+ * label d'un nom de paramètre se termine par `:`, celui d'un type
+ * commence par `:` ; l'hôte ajoute les séparateurs, le moteur rend
+ * le TEXTE SEUL. Le genre LAMBDA fait EXCEPTION : son libellé est
+ * COMPLET (nom et type), l'hôte le rend TEL QUEL.
  */
 public enum class GenreIndiceKotlin {
     /** Nom de paramètre d'un appel positionnel (`nom =` avant l'argument). */
@@ -19,6 +20,15 @@ public enum class GenreIndiceKotlin {
 
     /** Type CERTAIN d'une déclaration sans type écrit (`: Int` après le nom). */
     TYPE,
+
+    /**
+     * Paramètre IMPLICITE `it` d'un littéral de fonction (ADR 0231) :
+     * libellé COMPLET `it: Vue` (`nom: TypeCourt`), ancre sur
+     * l'ACCOLADE OUVRANTE du littéral — le label se rend APRÈS elle
+     * (le nom n'est nulle part dans le source, l'indice le porte).
+     * L'hôte le rend TEL QUEL, sans séparateur ajouté.
+     */
+    LAMBDA,
 }
 
 /**
@@ -28,10 +38,13 @@ public enum class GenreIndiceKotlin {
  *
  * @property debut décalage de début du point d'ancrage (inclus) —
  *           l'argument d'un appel (le label se rend AVANT lui), le nom
- *           d'une déclaration (le label se rend APRÈS lui).
+ *           d'une déclaration ou l'accolade ouvrante d'un littéral de
+ *           fonction (le label se rend APRÈS lui).
  * @property fin décalage de fin du point d'ancrage (exclusif).
- * @property libelle texte de l'indice (`nom`, `Int`) — SANS séparateur.
- * @property genre nature de l'indice (paramètre / type).
+ * @property libelle texte de l'indice (`nom`, `Int`, `it: Vue` pour
+ *           le genre LAMBDA) — SANS séparateur sauf LAMBDA (libellé
+ *           COMPLET, rendu tel quel).
+ * @property genre nature de l'indice (paramètre / type / lambda).
  */
 public data class IndiceEnLigneKotlin(
     public val debut: Int,

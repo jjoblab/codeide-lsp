@@ -6,6 +6,7 @@ import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.DocumentRangeFormattingParams
 import org.eclipse.lsp4j.FormattingOptions
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InlayHintKind
 import org.eclipse.lsp4j.InlayHintParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
@@ -280,7 +281,54 @@ class KotlinLanguageServerL2Test {
         )
         val type = indices.single { hint -> hint.label.left.startsWith(":") }
         assertEquals(": Int", type.label.left)
-        assertEquals(Position(2, 4), type.position)
+        // Le label TYPE se rend APRÈS le nom (le contrat du genre) :
+        // position en FIN d'ancre — `val entier: Int = 42` (le nom
+        // `entier` occupe les colonnes 4..10).
+        assertEquals(Position(2, 10), type.position)
+        espace.fermer()
+    }
+
+    @Test
+    fun `inlayHint - it implicite du litteral rendu tel quel apres l'accolade`() {
+        val uri = "file:///a.kt"
+        val texte =
+            "fun repeter(n: Int, action: (String) -> Unit) = Unit\n" +
+                "fun essai() {\n" +
+                "    repeter(2) { println(it) }\n" +
+                "}\n"
+        val espace = espaceAvecEspion()
+        ouvrir(espace, uri, texte)
+        val params = InlayHintParams()
+        params.textDocument = TextDocumentIdentifier(uri)
+        params.range = Range(Position(0, 0), Position(4, 0))
+        val indices =
+            espace.serveur.textDocumentService
+                .inlayHint(params)
+                .join()
+        // Le `it` implicite porte UN indice LAMBDA au libellé COMPLET
+        // (`it: String` — l'hôte n'ajoute NI séparateur NI préfixe),
+        // positionné JUSTE APRÈS l'accolade ouvrante (fin d'ancre),
+        // kind Parameter, padding des deux côtés (le fantôme respire
+        // entre l'accolade et le corps).
+        val lambda =
+            indices.single { hint ->
+                hint.kind == InlayHintKind.Parameter && hint.label.left.startsWith("it:")
+            }
+        assertEquals("it: String", lambda.label.left)
+        val accolade = texte.indexOf("{", texte.indexOf("repeter(2)"))
+        val debutLigne = texte.lastIndexOf('\n', accolade) + 1
+        val colonneAccolade = accolade - debutLigne
+        assertEquals(
+            Position(2, colonneAccolade + 1),
+            lambda.position,
+            "l'indice vit juste APRÈS l'accolade ouvrante (ligne 2)",
+        )
+        assertEquals(true, lambda.paddingLeft)
+        assertEquals(true, lambda.paddingRight)
+        // L'argument positionnel 2 garde son indice de paramètre
+        // (`n =`) AVANT lui — le lambda TRAILING n'en porte pas.
+        val n = indices.single { hint -> hint.label.left == "n =" }
+        assertTrue(n.position.character < colonneAccolade, "l'indice n= précède le littéral")
         espace.fermer()
     }
 

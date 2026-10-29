@@ -454,9 +454,15 @@ public interface SessionLangageKotlin : AutoCloseable {
      * Indices en ligne d'une plage (`textDocument/inlayHint`, L2 —
      * plan 1.3.0) : noms de paramètres aux appels de la plage
      * (arguments POSITIONNELS seulement — un argument nommé porte déjà
-     * son nom) et types CERTAINS des déclarations sans type écrit de
+     * son nom), types CERTAINS des déclarations sans type écrit de
      * la plage (littéraux et constructeurs — jamais un type inféré
-     * deviné).
+     * deviné) et indices de LITTÉRAUX DE FONCTION (ADR 0231) — le
+     * `it` IMPLICITE rend un indice LAMBDA au libellé complet
+     * (`it: Vue`, ancré sur l'accolade ouvrante), chaque paramètre
+     * EXPLICITE sans type écrit rend un indice TYPE ancré sur son
+     * nom ; la preuve vient de l'attente du CONSOMMATEUR du littéral
+     * (propriété typée, fonction projet, SAM) — sans preuve ou arité
+     * incohérente, AUCUN indice.
      *
      * Conservateur (D3) : un appel dont la candidate n'est pas prouvée
      * ne rend AUCUN indice de paramètre (réutilise l'extraction de

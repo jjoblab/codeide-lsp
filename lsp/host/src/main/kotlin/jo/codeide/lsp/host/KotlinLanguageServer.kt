@@ -827,10 +827,13 @@ internal class KotlinLanguageServer(
 
         /**
          * Indices en ligne (L2) : annotations fantômes du moteur
-         * (noms de paramètres, types certains) — libellé PRÊT À
-         * AFFICHER, l'hôte ajoute les séparateurs de rendu selon le
-         * genre (`nom =` / `: Type`), la position LSP est convertie
-         * par ses soins. Liste VIDE pour un document inconnu.
+         * (noms de paramètres, types certains, indices de littéraux
+         * de fonction — ADR 0231) — libellé PRÊT À AFFICHER, l'hôte
+         * ajoute les séparateurs de rendu selon le genre (`nom =`
+         * AVANT l'argument, `: Type` APRÈS le nom, libellé LAMBDA
+         * TEL QUEL après l'accolade ouvrante), la position LSP est
+         * convertie par ses soins. Liste VIDE pour un document
+         * inconnu.
          */
         override fun inlayHint(params: InlayHintParams): CompletableFuture<List<InlayHint>> {
             val uri = params.textDocument.uri
@@ -846,16 +849,36 @@ internal class KotlinLanguageServer(
                 }
             val resultat =
                 indices.map { indice ->
-                    val texte =
-                        when (indice.genre) {
-                            GenreIndiceKotlin.PARAMETRE -> indice.libelle + " ="
-                            GenreIndiceKotlin.TYPE -> ": " + indice.libelle
-                        }
+                    // Le contrat du genre (api/IndicesKotlin.kt) : le
+                    // label PARAMETRE se rend AVANT l'ancre, les autres
+                    // APRÈS — la position LSP suit (le client tisse le
+                    // texte fantôme à cet offset).
+                    val position =
+                        if (indice.genre == GenreIndiceKotlin.PARAMETRE) indice.debut else indice.fin
                     val indiceLsp = InlayHint()
-                    indiceLsp.position = document.convertisseur.positionDe(indice.debut)
-                    indiceLsp.label = Either.forLeft(texte)
-                    indiceLsp.kind =
-                        if (indice.genre == GenreIndiceKotlin.PARAMETRE) InlayHintKind.Parameter else InlayHintKind.Type
+                    indiceLsp.position = document.convertisseur.positionDe(position)
+                    when (indice.genre) {
+                        GenreIndiceKotlin.PARAMETRE -> {
+                            indiceLsp.label = Either.forLeft(indice.libelle + " =")
+                            indiceLsp.kind = InlayHintKind.Parameter
+                        }
+
+                        GenreIndiceKotlin.TYPE -> {
+                            indiceLsp.label = Either.forLeft(": " + indice.libelle)
+                            indiceLsp.kind = InlayHintKind.Type
+                        }
+
+                        GenreIndiceKotlin.LAMBDA -> {
+                            // Libellé COMPLET (`it: Vue`) rendu TEL QUEL
+                            // — le genre pilote aussi le padding : le
+                            // fantôme respire entre l'accolade ouvrante
+                            // et le corps du littéral.
+                            indiceLsp.label = Either.forLeft(indice.libelle)
+                            indiceLsp.kind = InlayHintKind.Parameter
+                            indiceLsp.paddingLeft = true
+                            indiceLsp.paddingRight = true
+                        }
+                    }
                     indiceLsp
                 }
             return CompletableFuture.completedFuture(resultat)

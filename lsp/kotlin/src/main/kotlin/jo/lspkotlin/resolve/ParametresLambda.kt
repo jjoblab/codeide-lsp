@@ -67,6 +67,27 @@ internal object ParametresLambda {
         return types.getOrNull(indexParametre)
     }
 
+    /**
+     * Types attendus des paramètres du littéral [litteral] LUI-MÊME —
+     * les INDICES EN LIGNE des littéraux (ADR 0231) : le consommateur
+     * du littéral (propriété typée, appel projet/SAM, appel classpath)
+     * rend la liste COMPLÈTE, `null` sans preuve. Même moteur que
+     * [typeParametre] — l'ancre est le DÉBUT du littéral (son accolade
+     * ouvrante : le littéral lui-même est le plus profond qui la porte).
+     */
+    internal fun typesLitteral(
+        racine: NoeudSyntaxique,
+        litteral: NoeudSyntaxique,
+        contexteNom: ResolutionKotlin.ContexteNom,
+        resolution: ResolutionKotlin,
+        declarationsProjet: List<DeclarationProjet>,
+    ): List<String>? {
+        val chaine = chaineAncetresA(racine, litteral.debut)
+        val indiceLitteral = chaine.indexOf(litteral)
+        if (indiceLitteral < 0) return null
+        return typesAttendus(chaine, indiceLitteral, litteral, contexteNom, resolution, declarationsProjet)
+    }
+
     /** Indice du littéral ENGLOBANT dans la chaîne (le plus profond). */
     private fun indiceLitteralEnglobant(
         chaine: List<NoeudSyntaxique>,

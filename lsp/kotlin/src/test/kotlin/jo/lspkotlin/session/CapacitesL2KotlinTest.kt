@@ -171,6 +171,119 @@ class CapacitesL2KotlinTest {
         session.close()
     }
 
+    @Test
+    fun `indices - it implicite du littéral, preuve par la fonction projet`() {
+        val texte =
+            """
+            fun repeter(n: Int, action: (String) -> Unit) = Unit
+
+            fun essai() {
+                repeter(2) { println(it) }
+            }
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        val indices = session.indices("fixture://Main.kt", 0, texte.length)
+        // Le `it` IMPLICITE porte UN indice LAMBDA au libellé COMPLET
+        // (nom et type — le nom n'existe nulle part dans le source),
+        // ancré sur l'ACCOLADE OUVRANTE du littéral.
+        val braceLitteral = texte.indexOf("{", texte.indexOf("repeter(2)"))
+        val lambdas = indices.filter { it.genre == GenreIndiceKotlin.LAMBDA }
+        assertEquals(1, lambdas.size)
+        assertEquals("it: String", lambdas.single().libelle)
+        assertEquals(braceLitteral, lambdas.single().debut)
+        assertEquals(braceLitteral + 1, lambdas.single().fin)
+        session.close()
+    }
+
+    @Test
+    fun `indices - paramètres explicites sans type écrit, un TYPE par nom`() {
+        val texte =
+            """
+            fun combiner(a: Int, b: Int, calcul: (Int, Int) -> Int): Int = 0
+
+            fun essai(): Int {
+                return combiner(1, 2) { x, y -> x + y }
+            }
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        val indices = session.indices("fixture://Main.kt", 0, texte.length)
+        // Chaque paramètre EXPLICITE sans type écrit porte UN indice
+        // TYPE ancré sur son NOM (le contrat des déclarations) ; le
+        // littéral lui-même ne porte PAS d'indice LAMBDA (les noms
+        // sont déjà écrits).
+        assertTrue(indices.none { it.genre == GenreIndiceKotlin.LAMBDA })
+        val types = indices.filter { it.genre == GenreIndiceKotlin.TYPE }
+        assertEquals(listOf("Int", "Int"), types.map { it.libelle })
+        assertEquals(decalageDe(texte, "x"), types[0].debut)
+        assertEquals(decalageDe(texte, "y"), types[1].debut)
+        // Les arguments positionnels gardent leurs indices PARAMETRE.
+        assertTrue(indices.any { it.genre == GenreIndiceKotlin.PARAMETRE && it.libelle == "a" })
+        assertTrue(indices.any { it.genre == GenreIndiceKotlin.PARAMETRE && it.libelle == "b" })
+        session.close()
+    }
+
+    @Test
+    fun `indices - littéral sans preuve, arité divergente, paramètre typé`() {
+        val texte =
+            """
+            fun combiner(a: Int, b: Int, calcul: (Int, Int) -> Int): Int = 0
+
+            fun essai(): Int {
+                inconnu(2) { println(it) }
+                val r = combiner(1, 2) { x -> x }
+                return combiner(1, 2) { x: Int, y -> x + y }
+            }
+            """.trimIndent()
+        val session = sessionAvecRacines("Main.kt" to texte)
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        val indices = session.indices("fixture://Main.kt", 0, texte.length)
+        // `inconnu` n'est résolu NULLE PART : son littéral ne prouve
+        // rien — AUCUN indice LAMBDA dans tout le document.
+        assertTrue(indices.none { it.genre == GenreIndiceKotlin.LAMBDA })
+        // L'arité du littéral diverge de l'attente (1 paramètre écrit
+        // contre 2 attendus) : AUCUN indice de type sur `x`.
+        val indicesX = indices.filter { it.genre == GenreIndiceKotlin.TYPE && it.debut == decalageDe(texte, "x") }
+        assertTrue("arité divergente : aucun indice — reçus: $indices", indicesX.isEmpty())
+        // Un paramètre DÉJÀ typé (`x: Int`) n'en reçoit pas non plus ;
+        // le paramètre SANS type écrit (`y`) garde le sien.
+        assertTrue(indices.any { it.genre == GenreIndiceKotlin.TYPE && it.debut == decalageDe(texte, "y") })
+        session.close()
+    }
+
+    @Test
+    fun `indices - it implicite par propriété typée et SAM du projet`() {
+        val texte =
+            """
+            interface Ecrivain {
+                fun ecrire(ligne: String)
+            }
+
+            val rappel: (Int) -> Unit = { println(it) }
+
+            fun essai() {
+                val e = Ecrivain { println(it) }
+            }
+            """.trimIndent()
+        // Session SANS racines sources : le document ouvert EST la
+        // seule source de déclarations (une session à racines qui
+        // scannerait CE MÊME fichier sous une autre URI produirait un
+        // DOUBLON de l'interface — la garde d'unicité du SAM la
+        // rejetterait honnêtement, D3).
+        val session = ServiceMoteurLangageKotlin.unique().creerSession()
+        session.ouvrirDocument("fixture://Main.kt", texte)
+        val indices = session.indices("fixture://Main.kt", 0, texte.length)
+        val lambdas = indices.filter { it.genre == GenreIndiceKotlin.LAMBDA }
+        // DEUX `it` implicites prouvés : l'initialiseur de la
+        // PROPRIÉTÉ typée (`rappel: (Int) -> Unit`) et le constructeur
+        // SAM de l'interface à méthode unique.
+        assertEquals(listOf("it: Int", "it: String"), lambdas.map { it.libelle }.sorted())
+        val braceRappel = texte.indexOf("{", texte.indexOf("rappel"))
+        assertEquals(braceRappel, lambdas.single { it.libelle == "it: Int" }.debut)
+        session.close()
+    }
+
     // ── Symboles d'espace ────────────────────────────────────────────
 
     @Test

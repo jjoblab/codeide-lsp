@@ -692,10 +692,14 @@ internal class SessionLangageKotlinParse(
 
     /**
      * Indices en ligne d'une plage (L2) — noms de paramètres aux
-     * appels POSITIONNELS prouvés (chaîne de l'aide à la signature)
-     * et types CERTAINS des déclarations sans type écrit (littéraux
-     * canoniques, constructeurs résolus) ; le calcul vit dans
-     * [IndicesKotlin], l'incertain ne rend RIEN (D3).
+     * appels POSITIONNELS prouvés (chaîne de l'aide à la signature),
+     * types CERTAINS des déclarations sans type écrit (littéraux
+     * canoniques, constructeurs résolus) et indices de LITTÉRAUX DE
+     * FONCTION (ADR 0231 : `it` implicite au libellé complet ancré
+     * sur l'accolade ouvrante, paramètres explicites sans type écrit
+     * ancrés sur leur nom — preuve par l'attente du consommateur) ;
+     * le calcul vit dans [IndicesKotlin], l'incertain ne rend RIEN
+     * (D3).
      */
     override fun indices(
         uri: String,
