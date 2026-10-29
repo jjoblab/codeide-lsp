@@ -86,10 +86,10 @@ class OrchestrateurLspTest {
         val (session, fixture, _, _) = sessionSurFixture()
         try {
             val environnement =
-                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+                (session.serveur() as jo.codeide.lsp.java.protocole.ServeurLangageJava).environnement()!!
             // DEUX moteurs distincts (lot E) — :app et :lib.
-            val moteurApp = environnement.jdt(":app")
-            val moteurLib = environnement.jdt(":lib")
+            val moteurApp = environnement.moteur(":app")
+            val moteurLib = environnement.moteur(":lib")
             assertNotSame(moteurApp, moteurLib)
 
             // Le diagnostic de :app résout alpha.Alpha : par les SOURCES
@@ -98,8 +98,8 @@ class OrchestrateurLspTest {
             val main = fixture.dossierApp.resolve("Main.java")
             Files.writeString(main, SOURCE_MAIN)
             val diagnostics = moteurApp.diagnose(main.toString(), SOURCE_MAIN)
-            val erreurs = diagnostics.filter { it.severity() == jo.lspjava.api.Severity.ERROR }
-            assertEquals(emptyList<String>(), erreurs.map { it.message() })
+            val erreurs = diagnostics.filter { it.severite == jo.codeide.lsp.java.diagnostics.Severite.ERREUR }
+            assertEquals(emptyList<String>(), erreurs.map { it.message })
         } finally {
             session.close()
         }
@@ -123,27 +123,27 @@ class OrchestrateurLspTest {
                 ),
             )
             val environnement =
-                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+                (session.serveur() as jo.codeide.lsp.java.protocole.ServeurLangageJava).environnement()!!
 
             // Le niveau POSÉ sur chaque contexte (brut, tel que le
             // modèle l'a normalisé).
-            assertEquals("8", environnement.complianceModule(":app"))
-            assertEquals("21", environnement.complianceModule(":lib"))
+            assertEquals("8", environnement.moteur(":app").complianceModule())
+            assertEquals("21", environnement.moteur(":lib").complianceModule())
 
             // Chaque moteur est construit avec SON niveau.
-            assertEquals("8", environnement.jdt(":app").complianceDemandee())
-            assertEquals("21", environnement.jdt(":lib").complianceDemandee())
+            assertEquals("8", environnement.moteur(":app").complianceDemandee())
+            assertEquals("21", environnement.moteur(":lib").complianceDemandee())
 
             // Deuxième sync IDENTIQUE : pas de retrait du niveau (no-op
             // système conservé — les moteurs ne sont pas reconstruits).
-            val moteurAvant = environnement.jdt(":app")
+            val moteurAvant = environnement.moteur(":app")
             session.appliquerClasspath(
                 fixture.resultatClasspath(
                     jar,
                     compatibiliteSourceParNom = mapOf(":app" to "8", ":lib" to "21"),
                 ),
             )
-            assertEquals(moteurAvant, environnement.jdt(":app"), "sync redondant : moteur conservé")
+            assertEquals(moteurAvant, environnement.moteur(":app"), "sync redondant : moteur conservé")
         } finally {
             session.close()
         }
@@ -322,9 +322,9 @@ class OrchestrateurLspTest {
             )
         try {
             val environnement =
-                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+                (session.serveur() as jo.codeide.lsp.java.protocole.ServeurLangageJava).environnement()!!
             assertTrue(
-                environnement.classpathEntries().any { it.name == "android.jar" },
+                environnement.jarsDefaut().any { it.fileName.toString() == "android.jar" },
                 "le contexte par défaut porte la plateforme du toolchain",
             )
         } finally {
@@ -348,17 +348,21 @@ class OrchestrateurLspTest {
             )
         try {
             val environnement =
-                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+                (session.serveur() as jo.codeide.lsp.java.protocole.ServeurLangageJava).environnement()!!
             val sources = Files.createDirectories(racine.resolve("src/app"))
             val androidMain = sources.resolve("AndroidMain.java")
             Files.writeString(androidMain, SOURCE_ANDROID_MAIN)
-            environnement.addSourceDir(sources.parent.toFile())
+            environnement.remplacerContexteModule(
+                null,
+                environnement.racinesDefaut() + sources.parent,
+                environnement.jarsDefaut(),
+            )
             val erreurs =
                 environnement
-                    .jdt()
+                    .moteur()
                     .diagnose(androidMain.toString(), SOURCE_ANDROID_MAIN)
-                    .filter { it.severity() == jo.lspjava.api.Severity.ERROR }
-            assertEquals(emptyList<String>(), erreurs.map { it.message() })
+                    .filter { it.severite == jo.codeide.lsp.java.diagnostics.Severite.ERREUR }
+            assertEquals(emptyList<String>(), erreurs.map { it.message })
         } finally {
             session.close()
         }
@@ -382,17 +386,17 @@ class OrchestrateurLspTest {
         try {
             session.appliquerClasspath(fixture.resultatClasspath(jar, androidJar = plateforme))
             val environnement =
-                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+                (session.serveur() as jo.codeide.lsp.java.protocole.ServeurLangageJava).environnement()!!
             val android = fixture.dossierApp.resolve("AndroidMain.java")
             Files.writeString(android, SOURCE_ANDROID_MAIN)
             val erreurs =
                 environnement
-                    .jdt(":app")
+                    .moteur(":app")
                     .diagnose(android.toString(), SOURCE_ANDROID_MAIN)
-                    .filter { it.severity() == jo.lspjava.api.Severity.ERROR }
+                    .filter { it.severite == jo.codeide.lsp.java.diagnostics.Severite.ERREUR }
             assertEquals(
                 emptyList<String>(),
-                erreurs.map { it.message() },
+                erreurs.map { it.message },
                 "android.util.Log devait résoudre par le android.jar du module",
             )
         } finally {
@@ -436,17 +440,17 @@ class OrchestrateurLspTest {
             // Les moteurs sont nourris SANS sync : Main.java résout
             // alpha.Alpha par le classpath relu du disque.
             val environnement =
-                (session.serveur() as jo.lspjava.lsp.JavaLanguageServer).environment()
+                (session.serveur() as jo.codeide.lsp.java.protocole.ServeurLangageJava).environnement()!!
             val main = fixture.dossierApp.resolve("Main.java")
             Files.writeString(main, SOURCE_MAIN)
             val erreurs =
                 environnement
-                    .jdt(":app")
+                    .moteur(":app")
                     .diagnose(main.toString(), SOURCE_MAIN)
-                    .filter { it.severity() == jo.lspjava.api.Severity.ERROR }
+                    .filter { it.severite == jo.codeide.lsp.java.diagnostics.Severite.ERREUR }
             assertEquals(
                 emptyList<String>(),
-                erreurs.map { it.message() },
+                erreurs.map { it.message },
                 "le moteur :app devait résoudre par le modèle persisté",
             )
         } finally {

@@ -2,7 +2,7 @@ package jo.codeide.lsp.host.harnais
 
 import jo.codeide.lsp.host.SessionLsp
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.lspjava.lsp.JavaLanguageServer
+import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import kotlinx.serialization.json.Json
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult
@@ -25,10 +25,10 @@ import java.util.concurrent.CompletableFuture
  *
  *   SessionLsp (routeur fichier → module posé, android.jar branché au
  *   contexte défaut comme sur device) → session.serveur() (le VRAI
- *   JavaLanguageServer de production) → WRAPPER délégant (la classe de
- *   production est `final` — le wrapper ajoute UNE notification
- *   JSON-RPC custom sans jamais la toucher) → LSPLauncher sur
- *   System.in/System.out.
+ *   serveur de production — moteur RÉÉCRIT, bascule §3.2.2) → WRAPPER
+ *   délégant (la classe de production est `final` — le wrapper ajoute
+ *   UNE notification JSON-RPC custom sans jamais la toucher) →
+ *   LSPLauncher sur System.in/System.out.
  *
  * La notification `harnais/appliquerClasspath` (chemin d'un
  * `ClasspathResult` sérialisé JSON sur disque) rejoue la sync de
@@ -59,13 +59,13 @@ public object ServeurStdioJava {
      * la notification custom vit ICI.
      */
     private class ServeurHarnaisJava(
-        private val reel: JavaLanguageServer,
+        private val reel: ServeurLangageJava,
         private val nourrir: (String) -> Unit,
     ) : LanguageServer {
-        override fun initialize(params: InitializeParams?): CompletableFuture<InitializeResult> =
+        override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> =
             reel.initialize(params)
 
-        override fun initialized(params: InitializedParams?) {
+        override fun initialized(params: InitializedParams) {
             reel.initialized(params)
         }
 
@@ -80,7 +80,7 @@ public object ServeurStdioJava {
         override fun getWorkspaceService(): WorkspaceService = reel.workspaceService
 
         /** Le connect est propre à l'implémentation — délègue au réel. */
-        public fun connect(client: LanguageClient?) {
+        public fun connect(client: LanguageClient) {
             reel.connect(client)
         }
 
@@ -113,8 +113,9 @@ public object ServeurStdioJava {
             )
         val json = Json { ignoreUnknownKeys = true }
         // Le type statique est LanguageServer (façade publique) — la
-        // fabrique de production retourne TOUJOURS JavaLanguageServer.
-        val reel = session.serveur() as JavaLanguageServer
+        // fabrique de production retourne TOUJOURS le serveur du moteur
+        // neuf (régime vivant, bascule §3.2.2).
+        val reel = session.serveur() as ServeurLangageJava
         val serveur =
             ServeurHarnaisJava(reel) { chemin ->
                 val brut = json.decodeFromString(ClasspathResult.serializer(), File(chemin).readText())

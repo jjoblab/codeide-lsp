@@ -11,7 +11,7 @@ import jo.codeide.lsp.model.KindEntree
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.ModuleLsp
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.lspjava.engine.CompilationEnvironment
+import jo.codeide.lsp.java.EnvironnementCompilation
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -65,7 +65,7 @@ import java.util.logging.Logger
  */
 @Suppress("TooManyFunctions")
 internal class OrchestrateurLsp(
-    private val environnement: CompilationEnvironment,
+    private val environnement: EnvironnementCompilation,
     private val depot: DepotModeleLsp,
     private val stockage: File,
     private val scope: CoroutineScope,
@@ -265,10 +265,13 @@ internal class OrchestrateurLsp(
                 continue
             }
             actifs++
+            // Moteur neuf (bascule §3.2.2) : l'API qualifiée du lot E vit
+            // sur le moteur RÉÉCRIT — chemins en Path (racines + jars),
+            // niveau par module inchangé (S1-a).
             environnement.remplacerContexteModule(
                 module.nom,
-                racinesSourcesDe(module, modulesParNom),
-                jarsDe(module),
+                racinesSourcesDe(module, modulesParNom).map { it.toPath() },
+                jarsDe(module).map { it.toPath() },
                 module.compatibiliteSource,
             )
         }

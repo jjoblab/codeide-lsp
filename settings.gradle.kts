@@ -13,9 +13,50 @@ pluginManagement {
     }
 }
 
+// Jeton de lecture GitHub Packages (même recette que CodeIDE — les
+// packages exigent une authentification MÊME en lecture publique).
+// En DEV sans jeton : mavenLocal (publishToMavenLocal de code-lsp pose
+// jo/codeide/lsp/java) — le chemin de test local.
+val jetonPackages: String? =
+    providers.gradleProperty("github.packages.pat")
+        .orElse(providers.environmentVariable("CODEIDE_PACKAGES_PAT"))
+        .orNull
+
+// Interrupteur du mode composite (opt-in, même convention que CodeIDE) :
+// substituer le moteur Java RÉÉCRIT par le PROJET du checkout frère
+// code-lsp pour une session de chirurgie croisée multi-dépôts — sans
+// lui, la coordonnée résout en binaire (mavenLocal d'abord, Packages
+// ensuite).
+val modeSourcesMoteur: Boolean =
+    providers.gradleProperty("freres.sources").isPresent ||
+        providers.environmentVariable("CODEIDE_FRERES_SOURCES").isPresent
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // Moteur Java RÉÉCRIT (bascule §8.5 / INTEGRATION-CODEIDE §3.2.2) :
+        // chemin binaire LOCAL EN TÊTE (avant google/mavenCentral — sinon
+        // Central est interrogé d'abord pour ce groupe) — le
+        // publishToMavenLocal de code-lsp y fait ombre au registre
+        // distant et est consommé immédiatement, sans jeton (DEV).
+        // FILTRE STRICT : seul le groupe du moteur neuf y résout.
+        mavenLocal {
+            content {
+                includeGroup("jo.codeide.lsp.java")
+            }
+        }
+        if (jetonPackages != null) {
+            // Moteur Java RÉÉCRIT : dépôt jjoblab/code-lsp, même jeton de
+            // lecture, filtre strict sur le groupe du moteur.
+            maven {
+                url = uri("https://maven.pkg.github.com/jjoblab/code-lsp")
+                content { includeGroup("jo.codeide.lsp.java") }
+                credentials {
+                    username = "jjoblab"
+                    password = jetonPackages
+                }
+            }
+        }
         google()
         mavenCentral()
         // cel-lsp (l'AAR LSP4J du dépôt code-editor, consommé par
@@ -76,6 +117,30 @@ includeBuild(dossierTooling) {
         substitute(module("com.github.jjoblab.codeide-tooling:protocol")).using(project(":tooling:protocol"))
         substitute(module("com.github.jjoblab.codeide-tooling:api")).using(project(":tooling:api"))
         substitute(module("com.github.jjoblab.codeide-tooling:testing")).using(project(":tooling:testing"))
+    }
+}
+
+// Moteur Java RÉÉCRIT (bascule §8.5 / INTEGRATION-CODEIDE §3.2.2) —
+// composite OPT-IN (même convention que CodeIDE) : le dossier est résolu
+// dans cet ordre : propriété Gradle `moteur-java.dir`, variable
+// d'environnement CODEIDE_MOTEUR_JAVA_DIR, puis défaut `../code-lsp`
+// (checkout frère). La SUBSTITUTION remplace la coordonnée moteur par
+// le projet :java du build inclus (l'épinglage par le ref git check out ;
+// le compagnon ecj-art reste résolu en binaire — mavenLocal/Packages).
+if (modeSourcesMoteur) {
+    val dossierMoteurJava: File =
+        providers.gradleProperty("moteur-java.dir")
+            .orElse(providers.environmentVariable("CODEIDE_MOTEUR_JAVA_DIR"))
+            .map(rootDir::resolve)
+            .orElse(rootDir.resolve("../code-lsp"))
+            .get()
+    if (dossierMoteurJava.resolve("settings.gradle.kts").isFile) {
+        includeBuild(dossierMoteurJava) {
+            dependencySubstitution {
+                substitute(module("jo.codeide.lsp.java:jo-codeide-lsp-java"))
+                    .using(project(":java"))
+            }
+        }
     }
 }
 

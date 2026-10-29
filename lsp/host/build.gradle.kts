@@ -51,14 +51,18 @@ android {
 }
 
 dependencies {
-    // Moteur vendored + son api lsp4j 0.21.2 (SessionLsp.serveur()
-    // expose un LanguageServer — le type traverse la surface publique).
-    // NOTE : :lsp:java porte lsp4j en `implementation` (choix vendored)
-    // — l'hôte le déclare EXPLICITEMENT ; la résolution prend 0.22.0
-    // (imposée par cel-lsp, la plus haute — AlignementLsp4jTest prouve
-    // le moteur binaire 0.21.2 SOUS 0.22.0 ; écart §2.6 tranché :
-    // aligner, pas isoler).
-    api(project(":lsp:java"))
+    // Moteur Java RÉÉCRIT (bascule §8.5 du 30/10/2026 — INTEGRATION-CODEIDE
+    // §3.2.2 du dépôt code-lsp) : la façade `jo.codeide.lsp.java.*` traverse
+    // la surface publique (SessionLsp.serveur() expose un LanguageServer —
+    // lsp4j), l'ENVIRONNEMENT de compilation et la SPI IndexNoms sont des
+    // types du moteur neuf → api. Le moteur est ecj-LESS par construction
+    // (compileOnly) : le COMPAGNON ecj-art (jar ecj 3.40.0 patché, EPL-2.0)
+    // voyage en runtimeOnly — même recette que le vendored posait son jar.
+    // Résolution : mavenLocal filtré d'abord (publishToMavenLocal de
+    // code-lsp — DEV sans jeton), GitHub Packages ensuite (jeton de
+    // lecture), composite sur opt-in freres.sources (settings.gradle.kts).
+    api("jo.codeide.lsp.java:jo-codeide-lsp-java:1.1.0")
+    runtimeOnly("jo.codeide.lsp.java:jo-codeide-lsp-java-ecj-art:1.1.0")
     api(libs.lsp4j)
 
     // Modèle LSP (types de la surface publique : ClasspathResult par

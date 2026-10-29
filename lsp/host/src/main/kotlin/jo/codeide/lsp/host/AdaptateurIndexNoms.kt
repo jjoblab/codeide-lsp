@@ -1,15 +1,11 @@
 package jo.codeide.lsp.host
 
 import jo.codeide.lsp.index.Conteneur
-import jo.codeide.lsp.index.DRAPEAU_STATIC
 import jo.codeide.lsp.index.PhaseIndex
 import jo.codeide.lsp.index.VueIndex
-import jo.lspjava.api.IndexNoms
+import jo.codeide.lsp.java.IndexNoms
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.io.File
-import java.nio.file.Path
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -17,6 +13,15 @@ import java.util.logging.Logger
  * Adaptateur de PRODUCTION de la SPI [IndexNoms] sur la vue d'index
  * disque (mission « LSP Java » étape 4 — l'homologue de TEST vit dans
  * `:lsp:testing` depuis v0.96.3).
+ *
+ * **Bascule moteur neuf (v1.23.0, INTEGRATION-CODEIDE §3.2.2)** : la SPI
+ * est désormais l'interface du moteur RÉÉCRIT (`jo.codeide.lsp.java.IndexNoms`)
+ * — les signatures traduites : `jarDe` rend le CHEMIN du conteneur
+ * (String — le moteur neuf lit le jar par chemin), `nomsParPrefixe` rend
+ * les NOMS SIMPLES seuls (le matcher gradué du moteur fait le reste), et
+ * `fqnsForSimpleName` (nouveau) sert la complétion d'imports par nom
+ * exact — préfixe = nom, filtre d'égalité en aval (miroir de
+ * `:lsp:testing` de code-lsp).
  *
  * Différences avec l'adaptateur de test, toutes deux VOLONTAIRES :
  *  - les clés de segments viennent du MODÈLE (empreintes W6
@@ -46,7 +51,7 @@ internal class AdaptateurIndexNoms(
     }
 
     /** Observateurs P7/P8 — notifiés une fois, hors verrou d'état. */
-    private val observateurs = CopyOnWriteArrayList<Runnable>()
+    private val observateurs = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
 
     /** Miroir volatil de la phase PRÊT (lecture sans suspension). */
     @Volatile
@@ -54,10 +59,10 @@ internal class AdaptateurIndexNoms(
 
     override fun estPret(): Boolean = pret || vue.etat.value.phase == PhaseIndex.PRET
 
-    override fun ajouterObservateurPret(observateur: Runnable) {
+    override fun ajouterObservateurPret(observateur: () -> Unit) {
         if (estPret()) {
             // Déjà prêt : notification immédiate, une fois (contrat SPI).
-            observateur.run()
+            observateur()
             return
         }
         observateurs.add(observateur)
@@ -66,17 +71,17 @@ internal class AdaptateurIndexNoms(
     // ReturnCount justifié (règle 8) : chaque clause de garde (vide,
     // introuvable, conteneur non-jar, levée) est une ISSUE distincte.
     @Suppress("ReturnCount")
-    override fun jarDe(fqcn: String): Path? {
+    override fun jarDe(fqcn: String): String? {
         if (fqcn.isEmpty()) return null
         return try {
             val localisation = vue.localiser(fqcn) ?: return null
             val conteneur = localisation.conteneur
             if (conteneur is Conteneur.Jar) {
-                // File.toPath() (API 26) plutôt que Path.of (API 34) —
-                // même résultat, minSdk respecté.
-                File(conteneur.chemin).toPath()
+                // Le moteur neuf consomme le CHEMIN du jar (String) — la
+                // lecture brute (LecteurZipBrut) est la sienne.
+                conteneur.chemin
             } else {
-                // Dossier (sortie d'un module) : illisible côté moteur —
+                // Dossier (sortie d'un module) : hors index de jars —
                 // retour honnête, le repli disque du moteur tranche.
                 null
             }
@@ -89,58 +94,55 @@ internal class AdaptateurIndexNoms(
     override fun nomsParPrefixe(
         prefixe: String,
         limite: Int,
-    ): Map<String, List<String>> {
-        val fusion = LinkedHashMap<String, MutableList<String>>()
+    ): List<String> =
         try {
-            val noms = vue.nomsParPrefixe(prefixe, limite) ?: return fusion
-            for (nom in noms) {
-                fusion.getOrPut(nom.nomSimple) { mutableListOf() }.addAll(nom.fqcns)
-            }
+            vue.nomsParPrefixe(prefixe, limite.coerceAtLeast(1)).map { it.nomSimple }
         } catch (t: Throwable) {
             LOGGER.log(Level.FINE, "nomsParPrefixe a levé — $prefixe", t)
+            emptyList()
         }
-        return fusion
-    }
 
-    override fun estPaquet(nom: String): Boolean =
+    override fun fqnsForSimpleName(nom: String): List<String> =
         try {
-            vue.estPaquet(nom)
+            vue.nomsParPrefixe(nom, LIMITE_RECHERCHE_EXACTE)
+                .filter { it.nomSimple == nom }
+                .flatMap { it.fqcns }
         } catch (t: Throwable) {
-            LOGGER.log(Level.FINE, "estPaquet a levé — $nom", t)
+            LOGGER.log(Level.FINE, "fqnsForSimpleName a levé — $nom", t)
+            emptyList()
+        }
+
+    override fun estPaquet(paquet: String): Boolean =
+        try {
+            vue.estPaquet(paquet)
+        } catch (t: Throwable) {
+            LOGGER.log(Level.FINE, "estPaquet a levé — $paquet", t)
             false
         }
 
-    override fun sousPaquetsDirects(nom: String): List<String> =
+    override fun sousPaquetsDirects(paquet: String): List<String> =
         try {
-            vue.sousPaquetsDirects(nom)
+            vue.sousPaquetsDirects(paquet)
         } catch (t: Throwable) {
-            LOGGER.log(Level.FINE, "sousPaquetsDirects a levé — $nom", t)
+            LOGGER.log(Level.FINE, "sousPaquetsDirects a levé — $paquet", t)
             emptyList()
         }
 
-    override fun typesDansPaquet(nom: String): List<String> =
+    override fun typesDansPaquet(paquet: String): List<String> =
         try {
-            vue.typesDansPaquet(nom)
+            vue.typesDansPaquet(paquet)
         } catch (t: Throwable) {
-            LOGGER.log(Level.FINE, "typesDansPaquet a levé — $nom", t)
+            LOGGER.log(Level.FINE, "typesDansPaquet a levé — $paquet", t)
             emptyList()
         }
 
-    override fun membresStatiques(fqcn: String): List<String> {
-        val noms = ArrayList<String>()
+    override fun membresStatiques(fqcn: String): List<String> =
         try {
-            val membres = vue.membres(fqcn) ?: return noms
-            for (champ in membres.champs) {
-                if (champ.drapeaux and DRAPEAU_STATIC != 0) noms.add(champ.nom)
-            }
-            for (methode in membres.methodes) {
-                if (methode.drapeaux and DRAPEAU_STATIC != 0) noms.add(methode.nom)
-            }
+            vue.membresStatiques(fqcn).map { it.nom }
         } catch (t: Throwable) {
             LOGGER.log(Level.FINE, "membresStatiques a levé — $fqcn", t)
+            emptyList()
         }
-        return noms
-    }
 
     /** Attend la transition PRÊT et notifie les observateurs (une fois). */
     private suspend fun observerTransitionPret() {
@@ -151,7 +153,7 @@ internal class AdaptateurIndexNoms(
                 observateurs.clear()
                 for (observateur in aNotifier) {
                     try {
-                        observateur.run()
+                        observateur()
                     } catch (t: Throwable) {
                         // Un observateur fautif ne bloque pas les autres —
                         // journalisé, jamais avalé.
@@ -166,5 +168,8 @@ internal class AdaptateurIndexNoms(
 
     private companion object {
         private val LOGGER: Logger = Logger.getLogger("AdaptateurIndexNoms")
+
+        /** Garde des recherches de nom exact (préfixe = nom, égalité filtrée en aval). */
+        private const val LIMITE_RECHERCHE_EXACTE: Int = 1_000
     }
 }

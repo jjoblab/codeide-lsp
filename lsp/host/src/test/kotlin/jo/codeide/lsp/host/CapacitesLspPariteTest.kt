@@ -1,6 +1,7 @@
 package jo.codeide.lsp.host
 
-import jo.lspjava.engine.CompilationEnvironment
+import jo.codeide.lsp.java.EnvironnementCompilation
+import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import jo.lspkotlin.api.SessionLangageKotlin
 import jo.lspxml.api.SessionLangageXml
 import org.eclipse.lsp4j.InitializeParams
@@ -52,7 +53,7 @@ import java.util.concurrent.TimeUnit
 class CapacitesLspPariteTest {
     @Test
     fun `java - table = capacites reelles du serveur`() {
-        val serveur = jo.lspjava.lsp.JavaLanguageServer(CompilationEnvironment()) {}
+        val serveur = ServeurLangageJava(EnvironnementCompilation()) {}
         val capacites = capaciteReelles(serveur)
         assertEquals(
             CapacitesAnnoncees.capacites(LangageLsp.JAVA) - CapaciteLsp.DIAGNOSTICS,
@@ -90,7 +91,7 @@ class CapacitesLspPariteTest {
 
     @Test
     fun `java - table COMPLETE des capacites annoncees (L0)`() {
-        val serveur = jo.lspjava.lsp.JavaLanguageServer(CompilationEnvironment()) {}
+        val serveur = ServeurLangageJava(EnvironnementCompilation()) {}
         val resultat = serveur.initialize(InitializeParams()).get(10, TimeUnit.SECONDS)
         assertEquals(
             TABLE_JAVA,
@@ -378,19 +379,29 @@ class CapacitesLspPariteTest {
             )
 
         /**
-         * Table COMPLÈTE attendue du serveur Java (L0) — miroir exact de
-         * `ServerCapabilitiesProvider.createCapabilities()` : toute
-         * divergence (ajout, retrait, détail) fait tomber le test.
+         * Table COMPLÈTE attendue du serveur Java (L0) — miroir exact des
+         * capabilities du moteur RÉÉCRIT (`CapacitesServeur.reponseInitialize()`
+         * du dépôt code-lsp, bascule INTEGRATION-CODEIDE §3.2.2) : toute
+         * divergence (ajout, retrait, détail) fait tomber le test. Écarts
+         * ASSUMÉS du vendord : synchronisation COMPLÈTE (plein texte, fiche
+         * 059 — le vendord annonçait l'incrémentale), complétion au seul
+         * déclencheur « . » (fiche 058), actions de code au seul kind
+         * « quickfix » (fiche 055 — le multi-kinds et l'organizeImports au
+         * fil sont des écarts documentés §13 d'USAGE.md), PAS de jetons
+         * sémantiques (règle matrice ADR 0015 — le client garde sa
+         * coloration de repli) ; les extensions maison superDefinition /
+         * decompiledSource restent annoncées dans experimental (miroir du
+         * vendord — les entrées UI du client en dépendent).
          */
         private val TABLE_JAVA: Map<String, String> =
             linkedMapOf(
-                "synchronisation" to "incrémentale",
-                "complétion" to "déclencheurs .@",
+                "synchronisation" to "complète",
+                "complétion" to "déclencheurs .",
                 "survol" to "oui",
                 "définition" to "oui",
                 "définition de type" to "oui",
                 "implémentations" to "oui",
-                "actions de code" to "quickfix,refactor,refactor.extract,refactor.rewrite,source.organizeImports",
+                "actions de code" to "quickfix",
                 "symboles de document" to "oui",
                 "surlignage" to "oui",
                 "références" to "oui",
@@ -406,7 +417,6 @@ class CapacitesLspPariteTest {
                 "aide à la signature" to "déclencheurs (,",
                 "indices en ligne" to "oui",
                 "pliage" to "oui",
-                "jetons sémantiques" to "complète, légende 11 types",
                 "encodage de position" to "utf-16",
                 "super-définition (expérimental)" to "oui",
                 "source décompilée (expérimental)" to "oui",

@@ -1,6 +1,5 @@
 package jo.codeide.lsp.host
 
-import jo.lspjava.api.NavigationTarget
 import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.ChaineSelectionKotlin
 import jo.lspkotlin.api.CorrectifTexteKotlin
@@ -98,7 +97,7 @@ import java.util.logging.Logger
  * 0210) — MÉTHODE LSP PERSONNALISÉE `textDocument/superDefinition`,
  * miroir exact de [jo.lspjava.lsp.NavTextDocumentService] du LSP Java
  * (même nom, mêmes paramètres `TextDocumentPositionParams`, même DTO
- * [NavigationTarget] : le client cel-lsp consomme les DEUX serveurs par
+ * [NavigationCible] : le client cel-lsp consomme les DEUX serveurs par
  * le même câble — il appelle la méthode PAR SON NOM via
  * `Launcher.getRemoteEndpoint().request(…)` et son miroir DTO porte
  * les mêmes noms de champs Gson).
@@ -118,12 +117,12 @@ internal interface ServiceDocumentsNavKotlin : TextDocumentService {
      * du type en contexte (libellé `« Simple  ·  pkg »`).
      *
      * @param params le document + la position (forme standard LSP)
-     * @return les cibles (`NavigationTarget` : chemin ABSOLU, plage du
+     * @return les cibles (`NavigationCible` : chemin ABSOLU, plage du
      *         nom en OFFSETS, libellé picker) — vide quand rien ne
      *         s'applique (l'option Super n'apparaît pas)
      */
     @JsonRequest("textDocument/superDefinition")
-    fun superDefinition(params: TextDocumentPositionParams): CompletableFuture<List<NavigationTarget>>
+    fun superDefinition(params: TextDocumentPositionParams): CompletableFuture<List<NavigationCible>>
 }
 
 /**
@@ -804,12 +803,12 @@ internal class KotlinLanguageServer(
          * GO TO « Super » (ADR 0210, `textDocument/superDefinition` —
          * méthode personnalisée, miroir du LSP Java) : les cibles du
          * moteur ([SessionLangageKotlin.superDefinition]) traduites en
-         * [NavigationTarget] — chemin ABSOLU + plage du nom en OFFSETS
+         * [NavigationCible] — chemin ABSOLU + plage du nom en OFFSETS
          * + libellé picker (aucun round-trip Position↔offset à risquer
          * côté client, même contrat que le serveur Java). Liste VIDE
          * quand rien ne s'applique (l'option Super n'apparaît pas).
          */
-        override fun superDefinition(params: TextDocumentPositionParams): CompletableFuture<List<NavigationTarget>> {
+        override fun superDefinition(params: TextDocumentPositionParams): CompletableFuture<List<NavigationCible>> {
             val uri = params.textDocument.uri
             val document = documents[uri] ?: return CompletableFuture.completedFuture(emptyList())
             val decalage = decalageDe(params.position, document.texte)
@@ -822,7 +821,12 @@ internal class KotlinLanguageServer(
                 }
             return CompletableFuture.completedFuture(
                 cibles.map { cible ->
-                    NavigationTarget(cheminAbsoluDe(cible.uri), cible.debutNom, cible.finNom, cible.libelle)
+                    NavigationCible(
+                        path = cheminAbsoluDe(cible.uri),
+                        start = cible.debutNom,
+                        end = cible.finNom,
+                        label = cible.libelle,
+                    )
                 },
             )
         }
@@ -1427,7 +1431,7 @@ internal class KotlinLanguageServer(
         /**
          * Chemin ABSOLU d'une URI de document (`file:///a/b.kt` comme
          * `file:/a/b.kt` — [File.toURI] rend la forme À UN slash — →
-         * `/a/b.kt`) — [NavigationTarget.path] du GO TO « Super »
+         * `/a/b.kt`) — [NavigationCible.path] du GO TO « Super »
          * (ADR 0210) porte le CHEMIN, pas l'URI (même contrat que le
          * serveur Java) ; une URI sans schéma file: passe TELLE
          * QUELLE (fixture de test — honnête, jamais une exception).

@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host.harnais
 
+import jo.codeide.lsp.host.NavigationCible
 import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
@@ -324,7 +325,7 @@ public object OutilsHarnais {
         @org.eclipse.lsp4j.jsonrpc.services.JsonRequest("textDocument/superDefinition")
         fun superDefinition(
             params: org.eclipse.lsp4j.TextDocumentPositionParams,
-        ): java.util.concurrent.CompletableFuture<List<jo.lspjava.api.NavigationTarget>>
+        ): java.util.concurrent.CompletableFuture<List<NavigationCible>>
     }
 
     /** Client LSP collecteur : publications, messages, attente polie. */
@@ -628,8 +629,9 @@ public object OutilsHarnais {
      * miroir exact du câble cel-lsp (`getExtendedServer()
      * .superDefinition(params)` sur `CodeIdeLanguageServer`) : le proxy
      * du harnais porte l'interface étendue [NavServeurKotlinHarnais],
-     * la désérialisation rend des `NavigationTarget` typés (champs
-     * publics Gson).
+     * la désérialisation rend des `NavigationCible` typés (champs
+     * publics Gson — contrat de sérialisation du vendord repris à
+     * l'identique, bascule moteur neuf INTEGRATION-CODEIDE §2).
      *
      * @return les cibles (chemin ABSOLU + plage du nom en offsets + libellé)
      */
@@ -637,7 +639,7 @@ public object OutilsHarnais {
         connexion: Connexion,
         uri: String,
         position: Position,
-    ): List<jo.lspjava.api.NavigationTarget> {
+    ): List<NavigationCible> {
         val proxy =
             connexion.distant as? NavServeurKotlinHarnais
                 ?: return emptyList()

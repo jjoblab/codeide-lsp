@@ -2,20 +2,62 @@
 
 ## Non publié
 
+- **CHAÎNON RESTANT FRANCHI — `:lsp:host` consomme le moteur Java RÉÉCRIT**
+  (INTEGRATION-CODEIDE §3.2.2 du dépôt code-lsp, arbitrage §3.3 OPTION B :
+  routeur multi-modules AU PROTOCOLE) : la dépendance
+  `api(project(":lsp:java"))` devient
+  `api("jo.codeide.lsp.java:jo-codeide-lsp-java:1.1.0")` + compagnon
+  `ecj-art` en `runtimeOnly` (moteur ecj-less par construction). L'option B
+  est la seule qui satisfait le critère 6 d'acceptation (« une session LSP
+  Java vivante par projet, pas de reconstruction moteur à chaque
+  reconfiguration, invariant ADR 0211 ») sous le régime E4 mesuré sur
+  appareil (10 ouvertures en 1,4 s).
+  - `SessionLsp` : l'environnement vivant `EnvironnementCompilation`
+    (jdkHome au constructeur), routeur fichier → module par propriété var,
+    plateforme `android.jar` au contexte DÉFAUT par REMPLACEMENT (racines
+    vides + jar), `ServeurLangageJava(environnement) { rappel }` par
+    connexion — UNE session par projet, moteurs résolus PAR REQUÊTE.
+  - `OrchestrateurLsp` : `remplacerContexteModule` en chemins `Path`
+    (l'API qualifiée du lot E du moteur neuf), `setIndexNoms` inchangé.
+  - `AdaptateurIndexNoms` : implémente la SPI `jo.codeide.lsp.java.IndexNoms`
+    (`jarDe` rend le chemin String, `nomsParPrefixe` rend les noms simples,
+    `fqnsForSimpleName` nouveau — miroir de `:lsp:testing` de code-lsp).
+  - `NavigationCible` (nouveau, `:lsp:host`) : le contrat de sérialisation
+    du vendord `NavigationTarget` repris À L'IDENTIQUE ({path, start, end,
+    label}) — le JSON sur le fil est INCHANGÉ, le client cel-lsp est
+    consommé TEL QUEL (le LSP Kotlin l'emprunte pour son superDefinition).
+  - TABLE_JAVA du test de parité L0 : miroir des capabilities du moteur
+    réécrit (sync COMPLÈTE, déclencheur « . » seul, kinds quickfix seuls,
+    PAS de jetons sémantiques — règle matrice ADR 0015 ; les extensions
+    maison superDefinition/decompiledSource restent annoncées dans
+    experimental, miroir du vendord).
+  - Corrigé AU PASSEAGE au moteur (v1.1.0 de code-lsp) pour l'intégration :
+    `cheminDeUri` admet la forme `file:/path` (`File.toUri()` du client —
+    sans elle le routeur recevait l'URI BRUTE et rien ne routait, mesuré
+    par le harnais D1–D5) ; LIVE-REPUBLISH (auditeur de contexte →
+    republication des documents ouverts du module remplacé, motif
+    ContextListener du vendord).
+  - Rails de résolution (settings.gradle.kts) : mavenLocal filtré
+    `jo.codeide.lsp.java` EN TÊTE (publishToMavenLocal — DEV sans jeton),
+    GitHub Packages `jjoblab/code-lsp` (jeton, filtre strict), composite
+    OPT-IN `freres.sources` (substitution vers `:java` du checkout frère).
+  - Vérifié : 257 tests d'hôte VERTS contre la façade neuve (dont les
+    scénarios E2E stdio D1–D5 : live-republish après sync, définitions
+    inter-modules, ViewBinding de la racine GENERATED, bindings ecj) ;
+    `:lsp:java` (vendord) reste au build, gelé (ADR 0233) — plus AUCUN
+    module ne le consomme, son retrait physique suivra la règle
+    « 2 versions sans régression ».
+
 - **Archivage du moteur Java vendored `:lsp:java` (ADR 0233, décision
   propriétaire du 30/10/2026)** : [`code-lsp`](https://github.com/jjoblab/code-lsp)
   (v1.0.0 publiée sur GitHub Packages — `jo.codeide.lsp.java:jo-codeide-lsp-java`)
   devient l'habitat unique du LSP Java de CodeIDE. Le module est **gelé**
-  (aucune évolution, aucun correctif hors instruction explicite), reste
-  compilable et publiable tant que `:lsp:host` consomme la façade vendored
-  (l'adaptation de l'hôte à la façade neuve est le chaînon restant de la
-  bascule §8.5 — `docs/BASCULE-CODEIDE.md` §3.2.2 du dépôt code-lsp) ;
+  (aucune évolution, aucun correctif hors instruction explicite) ;
   `:lsp:ecj-art` gelé solidairement. **Aucune incidence sur les artefacts
-  publiés** — le gel est déclaratif, le contenu des coordonnées
-  `com.github.jjoblab.codeide-lsp:*` est inchangé. Kotlin, XML, modèle,
-  index et hôte restent ACTIFS (la migration ou réécriture des LSP Kotlin
-  et XML vers `code-lsp` reste à venir, décision propriétaire). Marquages :
-  README racine, `docs/LSP_JAVA.md`, `lsp/java/README.md`, en-tête de
+  publiés** — le gel est déclaratif. Kotlin, XML, modèle, index et hôte
+  restent ACTIFS (la migration ou réécriture des LSP Kotlin et XML vers
+  `code-lsp` reste à venir, décision propriétaire). Marquages : README
+  racine, `docs/LSP_JAVA.md`, `lsp/java/README.md`, en-tête de
   `lsp/java/build.gradle.kts`.
 
 ## 1.22.1 (2026-10-29)

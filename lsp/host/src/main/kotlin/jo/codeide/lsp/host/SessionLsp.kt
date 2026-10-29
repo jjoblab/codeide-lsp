@@ -9,8 +9,8 @@ import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.PersistanceModeleLsp
 import jo.codeide.lsp.model.ProjetLsp
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.lspjava.engine.CompilationEnvironment
-import jo.lspjava.lsp.JavaLanguageServer
+import jo.codeide.lsp.java.EnvironnementCompilation
+import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -108,8 +108,15 @@ public class SessionLsp(
     /** Scope possédé par la session (fermé dans [close]). */
     private val scope = CoroutineScope(SupervisorJob(parentJob) + dispatcheurIo)
 
-    /** Environnement de compilation partagé (plateforme + moteurs par module). */
-    private val environnement = CompilationEnvironment()
+    /**
+     * Environnement de compilation VIVANT du moteur Java RÉÉCRIT
+     * (bascule INTEGRATION-CODEIDE §3.2.2, option B) : contextes PAR
+     * MODULE nourris par l'orchestrateur, routeur fichier → module relu
+     * à chaque requête, index de noms partagé (adaptateur SPI neuf) —
+     * le serveur (`ServeurLangageJava`) y vit SANS jamais le libérer,
+     * la session le détient et le dispose à [close].
+     */
+    private val environnement = EnvironnementCompilation(jdkHome = jdkHome)
 
     /** Dépôt du modèle LSP (instantanés publiés à chaque sync). */
     private val depot = DepotModeleLsp()
@@ -146,7 +153,7 @@ public class SessionLsp(
      * s'inscrit ici et se retire lui-même à son shutdown/exit (rappel
      * aLArret — aucun serveur mort ne reçoit d'événements de fichiers).
      */
-    private val serveursJava = java.util.concurrent.CopyOnWriteArrayList<jo.lspjava.lsp.JavaLanguageServer>()
+    private val serveursJava = java.util.concurrent.CopyOnWriteArrayList<ServeurLangageJava>()
 
     /**
      * Destinataires EXTERNES des événements de fichiers (lot L1 du plan
@@ -169,27 +176,31 @@ public class SessionLsp(
     private var fermee = false
 
     init {
-        if (jdkHome != null) {
-            environnement.setJdkHome(jdkHome)
-        }
         // ADR 0215 (découverte D6) : ROUTAGE fichier → module — le serveur
         // Java analyse chaque fichier avec le moteur de SON module (racines
         // sources, jars, android.jar du modèle) au lieu du contexte défaut
         // (android.jar seul). Le routeur lit l'INSTANTANÉ COURANT du dépôt à
         // CHAQUE requête : un modèle remplacé par la sync suivante route
         // aussitôt sans re-pose. `AssociationFichier` (modèle) faisait déjà
-        // l'association — il n'était branché NULLE PART.
-        environnement.setRouteurModules { chemin ->
+        // l'association — il n'était branché NULLE PART. Le moteur neuf
+        // pose le routeur par PROPRIÉTÉ VAR (relue à chaque requête — même
+        // contrat fiche 047).
+        environnement.routeurFichierModule = { chemin ->
             depot.instantane.value
                 ?.let { projet -> AssociationFichier.associer(projet, chemin)?.nom }
         }
         // Lot h4 écart 1 (v0.102.0) : la plateforme du toolchain rejoint le
         // contexte PAR DÉFAUT AVANT tout branchement d'onglet — la voie
-        // rapide d'Android Studio. addClasspathEntry filtre lui-même les
-        // chemins absents (garde isFile) : un SDK non installé laisse le
-        // moteur en repli SANS erreur ici.
+        // rapide d'Android Studio. Le moteur neuf nourrit le contexte
+        // DÉFAUT par REMPLACEMENT (racines vides + jar de la plateforme :
+        // garde d'existence du remplacement — un SDK non installé laisse le
+        // moteur en repli SANS erreur ici).
         if (androidJar != null && androidJar.isFile) {
-            environnement.addClasspathEntry(androidJar)
+            environnement.remplacerContexteModule(
+                null,
+                emptyList(),
+                listOf(androidJar.toPath()),
+            )
             LOGGER.info("[h4] android.jar de la plateforme branche au moteur par defaut")
         }
         orchestrateur.purgerTemporaires()
@@ -451,9 +462,13 @@ public class SessionLsp(
         verifierOuverte()
         // Le rappel aLArret (Runnable, SANS paramètre) capture le serveur
         // par variable locale — affectée une fois le serveur construit.
-        var inscrit: jo.lspjava.lsp.JavaLanguageServer? = null
+        // Moteur neuf (bascule §3.2.2) : le constructeur VIVANT
+        // `ServeurLangageJava(environnement) { rappel }` — UNE session par
+        // projet, moteur résolu PAR REQUÊTE (routeur fiche 047), contextes
+        // remplacés À CHAUD par les syncs (replaceAll fiche 034).
+        var inscrit: ServeurLangageJava? = null
         val serveur =
-            jo.lspjava.lsp.JavaLanguageServer(environnement) {
+            ServeurLangageJava(environnement) {
                 inscrit?.let { vivant -> serveursJava.remove(vivant) }
             }
         inscrit = serveur

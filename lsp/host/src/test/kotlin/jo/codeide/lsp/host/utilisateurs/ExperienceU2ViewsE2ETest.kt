@@ -10,7 +10,7 @@ import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.lspjava.lsp.JavaLanguageServer
+import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -252,7 +252,7 @@ class ExperienceU2ViewsE2ETest {
         // ── Le MÊME espion pour les trois serveurs (comme l'éditeur) ──
         val espion = EspionClient()
 
-        val serveurJava = sessionJava.serveur() as JavaLanguageServer
+        val serveurJava = sessionJava.serveur() as ServeurLangageJava
         serveurJava.connect(espion)
         serveurJava.initialize(InitializeParams()).join()
         // Le protocole LSP EXIGE la notification initialized APRÈS la
@@ -476,7 +476,7 @@ class ExperienceU2ViewsE2ETest {
      */
     @Suppress("LongMethod")
     private fun sonderHovers(
-        serveurJava: JavaLanguageServer,
+        serveurJava: ServeurLangageJava,
         serveurKotlin: KotlinLanguageServer,
         contenus: Map<File, String>,
         sources: File,
@@ -559,7 +559,7 @@ class ExperienceU2ViewsE2ETest {
      */
     @Suppress("LongMethod")
     private fun sonderCompletions(
-        serveurs: Triple<JavaLanguageServer, KotlinLanguageServer, XmlLanguageServer>,
+        serveurs: Triple<ServeurLangageJava, KotlinLanguageServer, XmlLanguageServer>,
         contenus: Map<File, String>,
         sources: File,
         projet: File,
