@@ -15,6 +15,14 @@
 # encore publiés sont passés à ./gradlew. Si tout existe déjà, le
 # workflow se termine en succès sans rien publier.
 #
+# JAMAIS d'annulation en cours de route (leçon v1.21.0 du 29/10/2026) :
+# un re-tag a ANNULÉ une publication en plein vol — le module `index`
+# est resté PARTIEL (jar publié, pom manquant : Gradle téléverse le
+# jar AVANT le pom), irrécupérable sans droit delete:packages. La
+# file d'attente laisse donc TOUTE publication finir : le run suivant
+# sonde l'état complet et saute (garde 409) — un re-tag devient
+# inoffensif.
+#
 # Coordonnées (convention multi-modules) :
 #   com.github.jjoblab.codeide-lsp:{model,index,java,ecj-art,testing,
 #   kotlin,xml} (composant java) + :host (composant release, AAR).
@@ -36,7 +44,10 @@ permissions:
 
 concurrency:
   group: pub-${{ github.ref }}
-  cancel-in-progress: true
+  # JAMAIS cancel-in-progress (leçon v1.21.0) : tuer une publication
+  # mi-course laisse des modules PARTIELS (jar sans pom) que la garde
+  # 409 ne sait pas réparer. On laisse finir ; le run suivant saute.
+  cancel-in-progress: false
 
 jobs:
   publier:

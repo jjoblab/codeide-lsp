@@ -1,5 +1,26 @@
 # Changelog — codeide-lsp
 
+## 1.21.1 (2026-10-29)
+
+- **Republication complète de 1.21.0 (publication interrompue en
+  plein vol)** : le re-tag de v1.21.0 (restructuration feat/release
+  des commits juste après la poussée) a ANNULÉ la publication GitHub
+  Packages en cours — l'annulation concurrence (`cancel-in-progress:
+  true`) a laissé le module `index` PARTIEL (jar publié, pom manquant
+  : Gradle téléverse le jar AVANT le pom), état irrécupérable sans
+  droit `delete:packages` (la garde 409 sonde le pom seul, le jar
+  existant refuse tout nouveau téléversement). La version 1.21.0
+  doit rester NON CONSOMMÉE (modules model/java/ecj-art/testing
+  complets mais index non résoluble, host/kotlin/xml absents) ;
+  1.21.1 republie le MÊME contenu intégralement :
+  - le workflow de publication n'annule JAMAIS plus un run en cours
+    (`cancel-in-progress: false`) — un re-tag devient inoffensif : la
+    publication en file d'attente FINIT, la suivante sonde l'état
+    complet et saute (garde 409) ; un module partiel ne peut plus se
+    produire par ce chemin ;
+  - aucun changement de code : le contenu des artefacts 1.21.1 est le
+    chantier 2 (ADR 0231) de 1.21.0.
+
 ## 1.21.0 (2026-10-29)
 
 - **Indices lambda des littéraux de fonction (chantier 2 de la feuille
@@ -1186,9 +1207,3 @@
 - Vérifié : chaîne locale verte (spotless, detekt, règles, tests tous
   modules, koverVerify) — voir journal d'exécution du dépôt CodeIDE
   (PLAN_SEPARATION_DEPOTS.md §8).
-
-## [1.21.0] – 2026-10-29
-
-### Ajouté
-
-- (à compléter)
