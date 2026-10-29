@@ -12,6 +12,55 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.22.0
+
+### 1. État
+
+- `main` de codeide-lsp : chantier **3 « quick fixes complémentaires
+  (wrap / cast / surround) »** (ADR 0232, feuille de route post-P1).
+- **Ce que ça change** : `textDocument/codeAction` rend de NOUVELLES
+  actions sur deux diagnostics existants —
+  - `kt.unsafeNullable` (appui sur le récepteur souligné) :
+    « Remplacer « . » par « ?. » » (le point devient `?.`),
+    « Encadrer le récepteur de « !! » » (`s` → `s!!`),
+    « Entourer d'un test de nullité « if (s != null) » » (l'instruction
+    englobante est wrappée, multi-ligne si elle possède sa ligne) ;
+  - `kt.typeMismatch` (appui sur le littéral souligné) : « Changer le
+    type en « X » » (le type écrit est remplacé par celui du littéral)
+    et « Encadrer d'une conversion « .toX() » » (`"5"` → `"5".toInt()`
+    — uniquement les conversions standard du langage).
+  Les actions sont ordonnées du plus sûr au plus structurel, chacune
+  reliée à son diagnostic (kind QuickFix, `edit` = un WorkspaceEdit).
+
+### 2. Ce que CodeIDE doit faire
+
+- **Rien de bloquant** : les actions traversent `codeAction` existant,
+  aucune capability ne change. Le panneau d'ampoule/quickfix rend déjà
+  les CodeActions des imports — les nouvelles s'y mélangent.
+- À VÉRIFIER côté rendu : les éditions d'entourage sont MULTI-LIGNES
+  (remplacement d'une plage par trois lignes indentées) — appliquer
+  l'édition telle quelle puis laisser le formateur/viewport faire son
+  travail ; l'undo doit revenir au texte d'origine en UNE étape.
+- Nuance honnête (D3) : le moteur RE-PROUVE à la requête — si le texte
+  a changé depuis la publication du diagnostic (frappe rapide), la
+  palette peut être VIDE sur un diagnostic encore affiché : c'est le
+  comportement attendu, jamais de correctif sur une preuve périmée.
+
+### 3. Scénarios de vérification (démo)
+
+1. `fun demo(s: String?) { s.length }` : ampoule sur `s` → trois
+   actions ; « ?. » rend `s?.length`, « !! » rend `s!!.length`,
+   l'entourage rend `if (s != null) { s.length }` (en ligne, la
+   déclaration partage sa ligne) puis multi-ligne sur la forme
+   indentée.
+2. `val n = s.length` dans un corps : l'entourage enveloppe TOUTE la
+   déclaration (`if (s != null) { val n = s.length }`).
+3. `val x: Int = "5"` : « Changer le type en « String » » et « Encadrer
+   d'une conversion « .toInt() » » ; `val c: Int = 'a'` ne propose QUE
+   le changement de type (pas de conversion dépréciée).
+4. `val ok: Long = 1` (conversion littérale légale) : aucune action —
+   pas de diagnostic, pas de correctif.
+
 ## 1.21.1 (républication de 1.21.0 — celle-ci est CONSOMMABLE)
 
 > **1.21.0 ne doit PAS être consommée** : sa publication GitHub
