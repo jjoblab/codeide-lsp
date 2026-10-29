@@ -6,14 +6,20 @@ le 2026-10-17** (`git filter-repo`, historique conservé — 339 commits).
 > **ARCHIVAGE DU MOTEUR JAVA (30/10/2026, [ADR 0233](docs/adr/0233-archive-moteur-java-habitat-unique-code-lsp.md))**
 > — `:lsp:java` (moteur vendored) est **archivé : gelé, sans évolution**.
 > Le LSP Java de CodeIDE vit désormais dans
-> [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp) (v1.0.0 publiée
-> sur GitHub Packages — bascule §8.5 du 30/10/2026). Ce dépôt reste
+> [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp) (v1.1.0
+> publiée sur GitHub Packages — bascule §8.5 + intégration
+> INTEGRATION-CODEIDE §3.2.2, option B). **Le chaînon restant est
+> FRANCHI (v1.23.0)** : `:lsp:host` consomme le moteur RÉÉCRIT
+> (`jo.codeide.lsp.java:jo-codeide-lsp-java:1.1.0` + compagnon ecj-art)
+> — l'option B (routeur multi-modules au protocole) préserve l'invariant
+> ADR 0211 : une session LSP Java vivante par projet, moteurs résolus PAR
+> REQUÊTE, contextes remplacés À CHAUD par les syncs. Ce dépôt reste
 > l'habitat des LSP **Kotlin** et **XML**, du **modèle**, de l'**index**
 > et de l'**hôte** (`:lsp:host`) jusqu'à la migration ou réécriture
 > complète des LSP Kotlin et XML vers `code-lsp` (à venir, décision
-> propriétaire). Le module archivé reste au build tant que l'hôte
-> consomme la façade vendored (chaînon restant de la bascule) ; retrait
-> physique après « 2 versions sans régression ».
+> propriétaire). Le module archivé reste au build, GELE et plus consommé
+> par AUCUN module ; retrait physique après « 2 versions sans
+> régression ».
 
 ## Modules
 
