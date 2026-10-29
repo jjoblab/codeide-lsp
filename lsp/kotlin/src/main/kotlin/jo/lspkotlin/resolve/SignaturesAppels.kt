@@ -3,6 +3,7 @@ package jo.lspkotlin.resolve
 import jo.lspkotlin.api.AideSignatureKotlin
 import jo.lspkotlin.api.SignatureKotlin
 import jo.lspkotlin.api.VueClasspathKotlin
+import jo.lspkotlin.documentation.DocumentationKotlin
 import jo.lspkotlin.index.AppelableKotlin
 import jo.lspkotlin.index.IndexAppelablesKotlin
 import jo.lspkotlin.parse.NoeudSyntaxique
@@ -55,7 +56,12 @@ internal object SignaturesAppels {
     /**
      * Contexte d'interrogation — miroir de celui du survol
      * ([InterrogationsSymboles.Contexte]) : nommage, résolveur,
-     * déclarations projet, index d'appelables, vue classpath.
+     * déclarations projet, index d'appelables, vue classpath ; ADR
+     * 0230 : le PORT KDoc cross-fichier ([kdocDeclaration], injecté
+     * par la session — `null` par défaut, sous-rapport honnête)
+     * accompagne la candidate PROJET de sa documentation, miroir du
+     * survol. Les candidates du CLASSPATH restent sans doc : le
+     * bytecode n'en porte pas (D3).
      */
     internal data class Contexte(
         val contexteNom: ResolutionKotlin.ContexteNom,
@@ -63,6 +69,7 @@ internal object SignaturesAppels {
         val declarationsProjet: List<DeclarationProjet>,
         val index: IndexAppelablesKotlin,
         val vue: VueClasspathKotlin?,
+        val kdocDeclaration: ((DeclarationProjet) -> String?)? = null,
     )
 
     /** Une candidate rendue avec son arité (pour la préselection). */
@@ -170,12 +177,14 @@ internal object SignaturesAppels {
         contexte: Contexte,
     ): List<Candidate> {
         // 1. Membre VIF de la classe englobante (this implicite) —
-        //    paramètres RÉELS de l'arbre (noms + types écrits).
+        //    paramètres RÉELS de l'arbre (noms + types écrits) ; ADR
+        //    0230 : la KDoc du document courant accompagne la
+        //    candidate (même preuve que le survol du nom déclaré).
         val membres =
             SymbolesProjet.membresEnglobants(racine, appel.debut)
                 .filterIsInstance<KtFunction>()
                 .filter { membre -> membre.nom() == nom }
-                .map { membre -> candidateMembreVif(membre) }
+                .map { membre -> candidateMembreVif(membre, DocumentationKotlin.kdocDe(membre)) }
         // 2. Fonctions de PREMIER NIVEAU du projet (membres et
         //    extensions exclus : l'un vit ci-dessus, l'autre exige un
         //    récepteur qu'un appel simple ne porte pas).
@@ -186,7 +195,9 @@ internal object SignaturesAppels {
                         declaration.nom == nom &&
                         declaration.conteneur == null &&
                         declaration.recepteur == null
-                }.map { declaration -> candidateFonction(declaration) }
+                }.map { declaration ->
+                    candidateFonction(declaration, contexte.kdocDeclaration?.invoke(declaration))
+                }
         // 3. Constructeurs primaires des classes du projet (hors Java :
         //    arité non extraite, garde D3 du contrôle kt.argumentCount).
         val constructeurs =
@@ -255,7 +266,9 @@ internal object SignaturesAppels {
                         declaration.nom == nom &&
                         (declaration.conteneur?.substringAfterLast('.') == shortRecepteur ||
                             declaration.recepteur?.substringAfterLast('.') == shortRecepteur)
-                }.map { declaration -> candidateFonction(declaration) }
+                }.map { declaration ->
+                    candidateFonction(declaration, contexte.kdocDeclaration?.invoke(declaration))
+                }
         // 2. Méthodes du récepteur CLASSPATH (vue JVM — TOUTES les
         //    surcharges du premier porteur de la chaîne de supertypes).
         val methodesJvm =
@@ -287,12 +300,24 @@ internal object SignaturesAppels {
 
     // ── Rendu des candidates ───────────────────────────────────────────
 
-    /** Candidate d'une déclaration FONCTION du projet (params (nom, type)). */
-    private fun candidateFonction(declaration: DeclarationProjet): Candidate {
+    /**
+     * Candidate d'une déclaration FONCTION du projet (params (nom,
+     * type)) — ADR 0230 : [documentation] (KDoc du document ou du
+     * port cross-fichier, `null` si non prouvé) accompagne la
+     * signature.
+     */
+    private fun candidateFonction(
+        declaration: DeclarationProjet,
+        documentation: String?,
+    ): Candidate {
         val parametres = declaration.parametres.map { (nom, type) -> libelleParametre(nom, type) }
         return Candidate(
             signature =
-                SignatureKotlin(etiquette(declaration.nom, parametres, declaration.typeRetour), null, parametres),
+                SignatureKotlin(
+                    etiquette(declaration.nom, parametres, declaration.typeRetour),
+                    documentation,
+                    parametres,
+                ),
             total = declaration.parametres.size,
             minimum = declaration.parametres.size - declaration.nombreParametresDefaut,
             aVararg = declaration.aVararg,
@@ -312,13 +337,24 @@ internal object SignaturesAppels {
         )
     }
 
-    /** Candidate d'un membre VIF de la classe englobante (arbre réel). */
-    private fun candidateMembreVif(fonction: KtFunction): Candidate {
+    /**
+     * Candidate d'un membre VIF de la classe englobante (arbre
+     * réel) — ADR 0230 : [documentation] est la KDoc VIVE du membre
+     * dans le document courant.
+     */
+    private fun candidateMembreVif(
+        fonction: KtFunction,
+        documentation: String?,
+    ): Candidate {
         val parametres =
             fonction.parametres().map { parametre -> libelleParametre(parametre.nom(), parametre.type()) }
         return Candidate(
             signature =
-                SignatureKotlin(etiquette(fonction.nom() ?: "?", parametres, fonction.typeRetour()), null, parametres),
+                SignatureKotlin(
+                    etiquette(fonction.nom() ?: "?", parametres, fonction.typeRetour()),
+                    documentation,
+                    parametres,
+                ),
             total = parametres.size,
             minimum = parametres.size,
             aVararg = false,

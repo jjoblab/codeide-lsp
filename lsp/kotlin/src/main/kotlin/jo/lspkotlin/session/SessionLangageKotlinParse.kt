@@ -462,6 +462,7 @@ internal class SessionLangageKotlinParse(
                     declarationsProjet = declarationsProjet(document, uri, contexteNom.paquet),
                     index = indexAppelables,
                     vue = classpath?.vue,
+                    kdocDeclaration = { declaration -> kdocDeDeclaration(declaration) },
                 ),
             )
         }
@@ -719,6 +720,7 @@ internal class SessionLangageKotlinParse(
                             declarationsProjet = declarations,
                             index = indexAppelables,
                             vue = classpath?.vue,
+                            kdocDeclaration = { declaration -> kdocDeDeclaration(declaration) },
                         ),
                     interrogations =
                         InterrogationsSymboles.Contexte(

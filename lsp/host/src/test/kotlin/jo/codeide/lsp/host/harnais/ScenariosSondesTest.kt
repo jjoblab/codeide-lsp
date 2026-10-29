@@ -327,8 +327,13 @@ class ScenariosSondesTest {
             )
             assertTrue(
                 survol.contents.right.value
-                    .startsWith("class"),
-                "la voie survolTypeClasspath rend la CLASSE (plus la fonction stdlib) : ${survol.contents.right.value}",
+                    .contains("public class kotlin.String"),
+                "la FICHE (ADR 0230) rend la CLASSE et ses qualifiants : ${survol.contents.right.value}",
+            )
+            assertTrue(
+                survol.contents.right.value
+                    .contains("Interfaces :"),
+                "la fiche STRUCTURELLE accompagne la signature (ADR 0230) : ${survol.contents.right.value}",
             )
             connexion.arreter()
         } catch (t: Throwable) {

@@ -41,9 +41,12 @@ public data class AideSignatureKotlin(
  *           compris (`Nom(p1: T1)`), sans préfixe `fun` (bruit de
  *           popup ; l'appelé EST une fonction ou un constructeur).
  * @property documentation texte d'accompagnement (KDoc rendu),
- *           `null` si non prouvé — toujours `null` à S1 (la doc des
- *           candidates hors document courant exigerait de re-parser
- *           des fichiers tiers, coût non assumé).
+ *           `null` si non prouvé — ADR 0230 : la candidate PROJET
+ *           porte la KDoc de sa déclaration (document courant →
+ *           arbre vif ; autre fichier du projet → port de la session,
+ *           lecture disque + parse bornées) ; les candidates du
+ *           CLASSPATH restent sans doc (le bytecode n'en porte pas,
+ *           D3 — jamais une ligne inventée).
  * @property parametres libellés de paramètres PRÊTS À AFFICHER
  *           (`texte: CharSequence`) — même nombre que la signature
  *           ; un paramètre sans nom rend son type seul.

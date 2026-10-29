@@ -422,6 +422,42 @@ class KotlinLanguageServerTest {
     }
 
     @Test
+    fun `signatureHelp - la KDoc d une candidate voyage en plaintext (ADR 0230)`() {
+        // Chantier P1-D : la candidate PROJET porte sa KDoc — le
+        // transport la sert telle quelle (plaintext), une candidate
+        // sans doc reste MUETTE (champ absent, jamais vide).
+        val session =
+            SessionScriptee(
+                signatures =
+                    AideSignatureKotlin(
+                        signatures =
+                            listOf(
+                                SignatureKotlin(
+                                    "ajouter(a: Int, b: Int): Int",
+                                    "Additionne deux entiers.",
+                                    listOf("a: Int", "b: Int"),
+                                ),
+                                SignatureKotlin("autre(x: Int): Int", null, listOf("x: Int")),
+                            ),
+                        signatureActive = 0,
+                        parametreActif = 0,
+                    ),
+            )
+        val serveur = KotlinLanguageServer(session, "version-test")
+        serveur.textDocumentService.didOpen(
+            DidOpenTextDocumentParams(TextDocumentItem("file:///a.kt", "kotlin", 1, "fun demo() = ajouter(1, 2)\n")),
+        )
+        val aide =
+            serveur.textDocumentService
+                .signatureHelp(
+                    SignatureHelpParams(TextDocumentIdentifier("file:///a.kt"), Position(0, 20)),
+                ).join()
+        assertEquals("Additionne deux entiers.", aide.signatures[0].documentation.left)
+        assertNull(aide.signatures[1].documentation, "sans doc prouvée, le champ reste ABSENT")
+        session.close()
+    }
+
+    @Test
     fun `signatureHelp - session en échec, SignatureHelp vide sans exception`() {
         val session = SessionScriptee(leverSurSignature = true)
         val serveur = KotlinLanguageServer(session, "version-test")

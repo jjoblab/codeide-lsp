@@ -1,5 +1,40 @@
 # Changelog — codeide-lsp
 
+## 1.20.0 (2026-10-29)
+
+- **Fiche classpath au survol, KDoc aux signatures (chantier P1-D de la
+  feuille de route du rapport d'analyse du 28/10, ADR 0230)** : la
+  documentation rejoint les deux surfaces où l'utilisateur l'attend —
+  le survol d'un type du classpath parle, l'aide à la signature
+  accompagne ses candidates projet de leur KDoc :
+  - **fiche structurelle du survol** : première ligne
+    `[public] genre FQCN [extends super]` (genre lu des drapeaux JVM —
+    `interface`/`enum`/`class`, un `object` Kotlin prouvé par son champ
+    `INSTANCE` statique final) ; héritage direct affiché HORS racines
+    universelles (`Object` masqué pour tous, `Enum` pour les enums) ;
+    sections `Interfaces : …` (directes), `Constantes : …` (champs
+    `ACC_ENUM` d'une enum, plafond 20) ou `Champs publics : Type nom, …`
+    (plafond 8) — synthétiques `$` et marqueur `INSTANCE` exclus.
+    Sans `.class` lisible : genre et champs restent, héritage et
+    interfaces se taisent (D3 — le bytecode ne porte NI KDoc NI
+    Javadoc, la fiche est structurelle) ;
+  - **KDoc des candidates de signature** : le port cross-fichier de
+    l'ADR 0208 (arbre vif du document ouvert, sinon lecture disque +
+    parse bornées UNE fois par candidate tierce) réutilisé TEL QUEL
+    par les candidates FONCTION, EXTENSION et MEMBRE VIF ; les
+    candidates du classpath restent muettes (bytecode sans doc) ;
+    le contrat `SignatureKotlin.documentation` est ré-ouvert (il
+    annonçait « toujours null ») — le transport hôte, qui servait déjà
+    le champ en plaintext, est inchangé ;
+  - sonde `ResolutionKotlin.infosClasse` (miroir aliasé de
+    `membresDe`), branchement session aux TROIS contextes de
+    signatures (aide, indices en ligne, complétion contextuelle).
+- Tests : +11 moteur (`FicheClasspathTest` — octets synthétiques
+  super/interfaces réels, plafonds, binaire illisible, port KDoc
+  fermé/ouvert/disque périmé), +1 hôte (doc en plaintext au
+  signatureHelp), S11 re-synchronisée sur la fiche ; baseline de
+  parité re-synchronisée.
+
 ## 1.19.0 (2026-10-29)
 
 - **Implémenter les membres manquants (chantier P1-C de la feuille de

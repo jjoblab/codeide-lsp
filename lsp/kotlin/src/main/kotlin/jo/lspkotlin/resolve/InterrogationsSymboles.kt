@@ -230,7 +230,13 @@ internal object InterrogationsSymboles {
         return null
     }
 
-    /** Survol d'un TYPE classpath (FQCN, vérifié contre la vue). */
+    /**
+     * Survol d'un TYPE classpath (FQCN, vérifié contre la vue) —
+     * ADR 0230 : la FICHE STRUCTURELLE (genre, héritage direct,
+     * interfaces, constantes d'enum / champs publics) prouvée par la
+     * lecture brute du `.class` ; signature seule quand le binaire
+     * est illisible (D3 — jamais une ligne inventée).
+     */
     private fun survolTypeClasspath(
         nom: String,
         contexte: Contexte,
@@ -238,7 +244,7 @@ internal object InterrogationsSymboles {
         contexte.resolution
             .fqcnDuNomEcrit(nom, contexte.contexteNom)
             ?.takeIf { fqcn -> contexte.resolution.membresDe(fqcn) != null }
-            ?.let { fqcn -> ContenuSurvoleKotlin("class $fqcn") }
+            ?.let { fqcn -> FicheClasspath.fiche(fqcn, contexte.resolution) }
 
     /** Survol d'un APPELABLE de premier niveau en portée (importé/joker). */
     private fun survolAppelablePortee(

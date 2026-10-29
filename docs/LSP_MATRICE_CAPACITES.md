@@ -45,8 +45,8 @@
 | Capacité | Java | Kotlin | XML | Preuves |
 |---|---|---|---|---|
 | Complétion (`completion`) | ✅ | ✅ (contextuelle vague 1 : arguments nommés, enum de `when`, attributs d'annotation — ADR 0228) | ✅ | CompletionKotlin + ContextesCompletionKotlin + tests flux client XML/Java |
-| Survol (`hover`) | ✅ | ✅ | ✅ | InterrogationsSymboles (tests moteur), XmlLanguageServerTest |
-| Aide à la signature (`signatureHelp`) | ✅ | ✅ | ❌ | SessionLangageKotlinSignatureTest |
+| Survol (`hover`) | ✅ | ✅ (fiche classpath : genre, héritage, interfaces, constantes/champs — ADR 0230) | ✅ | InterrogationsSymboles + FicheClasspathTest, XmlLanguageServerTest ; ScenariosSondesTest S11 |
+| Aide à la signature (`signatureHelp`) | ✅ | ✅ (KDoc des candidates projet — ADR 0230) | ❌ | SessionLangageKotlinSignatureTest, FicheClasspathTest |
 | Actions de code (`codeAction`) | ✅ | ✅ (imports + implémenter les membres manquants, ADR 0229) | ✅ | KotlinLanguageServerTest (quick-fixes), XmlLanguageServerTest ; MembresManquantsTest (moteur) |
 | Formatage (`formatting`) | ✅ | ✅ (lot L2, ADR 0202 — ré-indentation seule) | ✅ | EcjFormatterTest, JavaL4BoutEnBoutTest (E2E) ; FormateurKotlinTest ; KotlinLanguageServerL2Test ; XmlLanguageServerTest |
 | Formatage de plage (`rangeFormatting`) | ✅ | ⚠️ (servi ; consommation client prévue 3.74.0) | ✅ (lot L3) ⚠️ | FormatagePlageSelectionXmlTest ; XmlLanguageServerL3Test (E2E) ; KotlinLanguageServerL2Test |

@@ -222,6 +222,18 @@ internal class ResolutionKotlin(
         vue?.membres(fqcn) ?: vue?.membres(aliasJvmDe(fqcn))
 
     /**
+     * Informations de CLASSE d'un FQCN (superclasse DIRECTE et
+     * interfaces DIRECTES, lecture brute du `.class`) — la fiche de
+     * survol du classpath (ADR 0230). Miroir de [membresDe] : variante
+     * aliasée JVM sondée au premier échec, `null` si introuvable ou
+     * illisible (garde silencieuse D3).
+     */
+    internal fun infosClasse(fqcn: String): jo.lspkotlin.classpath.LecteurClassBrut.InfosClasse? =
+        octetsClasseAvecAlias(fqcn)?.let { octets ->
+            jo.lspkotlin.classpath.LecteurClassBrut.lire(octets)
+        }
+
+    /**
      * FQCN UNIQUE dans la vue portant ce nom SIMPLE (vague 4, retour
      * utilisateurs 25/10/2026 — U2 `getString` via chaîne de binding :
      * le champ ViewBinding `texteAnnee` porte le type écrit
