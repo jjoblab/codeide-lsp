@@ -1,5 +1,45 @@
 # Changelog — codeide-lsp
 
+## 1.23.6 (2026-10-31)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.6"`** (moteur RÉÉCRIT
+  du dépôt `jjoblab/code-lsp` — v1.1.6 tagué et publié, run Publication
+  vert 41135515100 + CI verte sur le commit tagué f15b738, artefacts
+  vérifiés sur `maven.pkg.github.com/jjoblab/code-lsp` : POM moteur sans
+  ecj, `version.properties=1.1.6`, bytecode 17, compagnon EPL-2.0
+  conforme — 942 entrées dont 929 `org/eclipse/jdt` + shims
+  `ecjart/compat` + registre). Mandat propriétaire du 31/10 au soir
+  (retour appareil sur CodeIDE **0.204.5**) : « J'ai testé sur l'appareil,
+  des progrès minuscules. Listé les écarts du serveur qui avaient été mis
+  pour plus tard ou pas encore étudié. Le problème le plus urgent c'est la
+  complétion… si en tapant l'utilisateur veut utiliser l'une des méthodes
+  de ses classes, il doit voir ces méthodes dans les suggestions de
+  complétion et même dans l'aide signature. Regarde attentivement comment
+  fait Android Studio. Il y a toujours un retard avant que les suggestions
+  arrivent. »
+- **L'inventaire des écarts demandé** : `docs/ECARTS-SERVEUR.md` (dépôt
+  code-lsp) — corrigés v1.1.6 §1, moteur §2, **hôte §3** (la cause racine
+  des retards appareil : fenêtre des 2 minutes de cache à l'ouverture,
+  complétions 11–12 s post-sync, churn de sessions, arbre
+  `build/generated` non indexé), client §4, décisions §5.
+- **Trois correctifs moteur de la vague** : (1) **mots-clés de top
+  level** — `i|`/`im|` AVANT l'espace rendaient 0 item là où Android
+  Studio propose `import`/`interface` : genre TOP_NIVEAU en repli de la
+  cascade (profondeur d'accolades zéro, gardes tête de
+  déclaration/littéraux/point), mots-clés légaux hors corps de type,
+  `extends`/`implements`/`permits` compris ; (2) **aide de signature
+  niveau 4 réparée** — la virgule traînante `repeter("monip", ` (méthode
+  du PROJET) rendait RIEN : la fermeture de la liste d'arguments
+  s'insère désormais AVANT l'accolade du bloc englobant (l'ancienne queue
+  la plaçait après les `}`) — signatures des méthodes du projet, noms de
+  paramètres servis depuis la SOURCE, paramètre actif exact ; (3)
+  **latence** — la résolution marquée se réduit par `SourceFocuser`
+  (seuil 2 000 caractères) : le coût de frappe cesse d'être linéaire à
+  la taille du fichier. Validation moteur : banc projet Android réel
+  **22/22** (S19/S20 nouveaux), `:java:test` 534/0/0 gates ouvertes,
+  baseline benchQualite signée intacte (1,000/1,000/1,000, p95 ≈ 37 ms,
+  0 saut). **Aucun changement d'hôte requis** — le pin seul monte.
+
 ## 1.23.5 (2026-10-31)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.5"`** (moteur RÉÉCRIT

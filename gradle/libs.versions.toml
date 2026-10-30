@@ -170,7 +170,7 @@ lsp4j = "0.21.2"
 # v1.23.0). Mise à jour future = bump ici + tag v* côté code-lsp ;
 # résolution : mavenLocal filtré (DEV publishToMavenLocal) puis GitHub
 # Packages jjoblab/code-lsp (jeton CODEIDE_PACKAGES_PAT).
-codeide-lsp-java = "1.1.5"
+codeide-lsp-java = "1.1.6"
 gson = "2.10.1"
 asm = "9.7"
 junit-jupiter = "5.10.1"
