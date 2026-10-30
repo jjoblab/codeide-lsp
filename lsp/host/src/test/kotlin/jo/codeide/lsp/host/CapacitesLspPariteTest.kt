@@ -384,19 +384,22 @@ class CapacitesLspPariteTest {
          * du dépôt code-lsp, bascule INTEGRATION-CODEIDE §3.2.2) : toute
          * divergence (ajout, retrait, détail) fait tomber le test. Écarts
          * ASSUMÉS du vendord : synchronisation COMPLÈTE (plein texte, fiche
-         * 059 — le vendord annonçait l'incrémentale), complétion au seul
-         * déclencheur « . » (fiche 058), actions de code au seul kind
-         * « quickfix » (fiche 055 — le multi-kinds et l'organizeImports au
-         * fil sont des écarts documentés §13 d'USAGE.md), PAS de jetons
-         * sémantiques (règle matrice ADR 0015 — le client garde sa
-         * coloration de repli) ; les extensions maison superDefinition /
-         * decompiledSource restent annoncées dans experimental (miroir du
-         * vendord — les entrées UI du client en dépendent).
+         * 059 — le vendord annonçait l'incrémentale), complétion aux
+         * déclencheurs « . » et « @ » (v1.1.3 — miroir EXACT du vendord
+         * `ServerCapabilitiesProvider` (`List.of(".", "@")`) : l'annotation
+         * s'arme à la frappe ; le moteur réécrit n'avait que « . » à la
+         * v1.1.2), actions de code au seul kind « quickfix » (fiche 055 —
+         * le multi-kinds et l'organizeImports au fil sont des écarts
+         * documentés §13 d'USAGE.md), PAS de jetons sémantiques (règle
+         * matrice ADR 0015 — le client garde sa coloration de repli) ; les
+         * extensions maison superDefinition / decompiledSource restent
+         * annoncées dans experimental (miroir du vendord — les entrées UI
+         * du client en dépendent).
          */
         private val TABLE_JAVA: Map<String, String> =
             linkedMapOf(
                 "synchronisation" to "complète",
-                "complétion" to "déclencheurs .",
+                "complétion" to "déclencheurs .@",
                 "survol" to "oui",
                 "définition" to "oui",
                 "définition de type" to "oui",

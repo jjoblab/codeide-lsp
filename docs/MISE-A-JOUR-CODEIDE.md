@@ -12,6 +12,69 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.23.3 — LE PIN MOTEUR 1.1.3 (superDefinition reconnu, familles « unused » élargies, déclencheur @)
+
+> Version de MAINTENANCE : l'hôte ne change PAS d'une ligne — seule la
+> coordonnée du moteur Java réécrit passe de 1.1.2 à **1.1.3** (tag publié
+> sur `maven.pkg.github.com/jjoblab/code-lsp`, run Publication vert). Le
+> correctif embarqué répond au retour appareil du 30/10 au soir sur
+> CodeIDE 0.204.2 : la chaîne fonctionne (« grand progrès ») mais
+> superDefinition était rejeté et les signaux « unused » restaient muets.
+
+### 1. État
+
+- **`textDocument/superDefinition` RECONNU** : le moteur enregistrait
+  l'extension sous son nom NU — le client cel-lsp
+  (`CodeIdeLanguageServer`) appelle le nom COMPLET, d'où « Unsupported
+  request method: textDocument/superDefinition » dans le journal appareil.
+  Les noms explicites alignent le fil sur le contrat du vendord : le
+  GO TO « Super » répond (liste de cibles `{path, start, end, label}`),
+  `textDocument/decompiledSource` aussi.
+- **Signaux « unused » ÉLARGIS ET STABLES** : locale inutilisée (table
+  rapide, corps hôte intact — aucun fallacieux), champ/méthode/type privé
+  inutilisé (table analytique), import inutilisé (inchangé, tag
+  `Unnecessary`). PENDANT la frappe dans un corps, l'import et le membre
+  privé inutilisés RESTENT affichés (portage hors corps du dernier
+  diagnose complet — la passe rapide ne peut pas les recalculer
+  honnêtement, le masquage casserait leur analyse d'usages). Fraîcheur
+  bornée : un signal apparaît/révoque au prochain diagnose complet (caret
+  hors de tout corps, édition structurelle, sauvegarde).
+- **Déclencheurs « . » ET « @ »** : la complétion d'annotation (`@Ov|`
+  → `@Override`) s'arme à la frappe — miroir exact du vendord.
+- **Complétion d'import VÉRIFIÉE au fil** : « `import ` » (préfixe vide)
+  rend les paquets de premier niveau (com/java/javax/org + paquets
+  projet), « `import com.` » rend les sous-paquets (dont le paquet du
+  projet — « exemple » attendu par l'utilisateur), labels = SEGMENTS
+  (filtrage local du client compatible). Après « `import ` » + espace,
+  l'ouverture automatique dépend de la POLITIQUE cel-lsp (préfixe vide =
+  déclencheur requis) : les suggestions arrivent à la première LETTRE
+  tapée (debounce 80 ms) ou après « . » — le bouton Cmplt/Ctrl+Espace
+  sert le préfixe vide.
+
+### 2. Ce que CodeIDE doit faire
+
+1. **Bump du pin miroir** : `codeide-lsp = "1.23.3"` ET
+   `codeide-lsp-java = "1.1.3"` dans `gradle/libs.versions.toml` (la
+   dépendance vit dans le POM de l'hôte — CodeIDE n'en consomme AUCUN
+   directement).
+2. **Témoin** : `serverInfo = { "name": "lspjava", "version": "1.1.3" }`
+   — la trace DEBUG du sink cel-lsp (`connect: SUCCESS — server ready,
+   version=1.1.3`) prouve le moteur branché.
+3. **Rejouer la passe appareil** (B1–B8 de `TESTS_MANUELS.md`) : dans un
+   fichier avec un import inutilisé + une variable locale inutilisée +
+   un champ privé inutilisé, (a) ouvrir le fichier → les TROIS
+   avertissements s'affichent (sévérité 2, tag Unnecessary sur
+   l'import) ; (b) taper DANS une méthode → les signaux RESTENT affichés
+   (portage) ; (c) GO TO Super sur une redéfinition → le picker répond
+   (plus de « Unsupported request method ») ; (d) taper `@` en tête
+   d'annotation → la complétion s'arme.
+
+### 3. Retour arrière
+
+- Substitution inverse : `codeide-lsp = "1.23.2"` (le pin 1.1.2 reste
+  publié) — mais superDefinition reste rejeté et les signaux « unused »
+  disparaissent à la frappe.
+
 ## 1.23.2 — LE PIN MOTEUR 1.1.2 (le correctif ART « Internal error. » sur toute requête)
 
 > Version de MAINTENANCE : l'hôte ne change PAS d'une ligne — seule la

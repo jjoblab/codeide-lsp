@@ -1,5 +1,45 @@
 # Changelog — codeide-lsp
 
+## 1.23.3 (2026-10-30)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.3"`** (moteur RÉÉCRIT
+  du dépôt `jjoblab/code-lsp` — v1.1.3 tagué et publié, run Publication
+  vert 41027683332 + CI verte 41027683205, artefacts vérifiés sur
+  `maven.pkg.github.com/jjoblab/code-lsp`). Retour appareil du 30/10 au
+  soir sur CodeIDE **0.204.2** (logs
+  `codeide-logs-2026-10-30-025629.zip`) : la chaîne est FRANCHIE
+  (« grand progrès » — complétion `import com.` à 58 items, diagnostics
+  de syntaxe reçus, sévérités correctes) mais trois familles restaient
+  muettes, toutes corrigées DANS le moteur :
+  1. **`textDocument/superDefinition` RECONNU** : le moteur enregistrait
+     l'extension maison sous son nom NU (`superDefinition`) — le client
+     cel-lsp appelle le nom COMPLET, la requête était rejetée
+     « Unsupported request method: textDocument/superDefinition »
+     (journal appareil). Noms explicites alignés sur le fil du vendord ;
+     le GO TO « Super » et la source décompilée répondent désormais.
+  2. **Familles analytiques ÉLARGIES** (« imports non utilisés,
+     variables non utilisées et autres, il ne les affiche pas ») :
+     locale inutilisée allumée sur la table RAPIDE (corps hôte intact —
+     les usages d'une locale vivent dans SA méthode, aucun fallacieux
+     fiche 014), champ/méthode/type privé inutilisé sur la table
+     ANALYTIQUE, et PORTAGE HORS CORPS pendant la frappe
+     (`portablesHorsCorps`) : l'import et le membre privé inutilisés
+     RESTENT affichés pendant qu'on tape dans un corps — la passe rapide
+     ne peut pas les recalculer honnêtement (le masquage des autres
+     corps casserait leur analyse d'usages).
+  3. **Déclencheurs de complétion « . » ET « @ »** — miroir EXACT du
+     vendord (`ServerCapabilitiesProvider` : `List.of(".", "@")`) : la
+     complétion d'annotation s'arme à la frappe. La TABLE_JAVA de parité
+     L0 suit (`déclencheurs .@`).
+- **Tests de parité alignés** : `CapacitesLspPariteTest` (TABLE_JAVA,
+  déclencheurs `.@`). 258 tests d'hôte verts contre le moteur 1.1.3
+  (résolution GitHub Packages/mavenLocal). Reproduction verrouillée côté
+  moteur : `Repro20261030AppareilTest` (11 tests — boucle LSP4J réelle +
+  miroir cel-lsp aux noms complets).
+- **Aucune autre variation** : la surface publique de l'hôte, le LSP
+  Kotlin et le LSP XML sont inchangés. Guide de passage CodeIDE :
+  `docs/MISE-A-JOUR-CODEIDE.md` §1.23.3.
+
 ## 1.23.2 (2026-10-30)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.2"`** (moteur RÉÉCRIT
