@@ -1,5 +1,25 @@
 # Changelog — codeide-lsp
 
+## 1.23.1 (2026-10-30)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.1"`** (moteur RÉÉCRIT
+  du dépôt `jjoblab/code-lsp` — v1.1.1 tagué et publié). Correctif du
+  moteur embarqué : le diagnose RAPIDE masquait le corps HÔTE par erreur
+  de comparaison d'identité (`===` entre deux scans distincts de la même
+  source) — la frappe de l'utilisateur était effacée du texte soumis à
+  ecj : **plus AUCUN diagnostic à la frappe après l'ouverture saine d'un
+  fichier**, et l'arbre focalisé (complétion dans le corps) atteint du
+  même défaut. C'est la cause racine mesurée du retour appareil du 30/10
+  sur CodeIDE 0.203.0 (« l'éditeur n'affiche rien quand je tape, aucun
+  signe des fonctionnalités du serveur » — INTEGRATION-CODEIDE §9 du
+  dépôt code-lsp : reproduit sur JVM par harnais miroir, corrigé par
+  égalité structurelle, régression verrouillée dans la fiche 014 du
+  cahier, 478 tests moteur verts).
+- **Aucune autre variation** : l'hôte, le LSP Kotlin et le LSP XML sont
+  inchangés — cette version ne porte QUE le pin moteur. Guide de passage
+  CodeIDE : `docs/MISE-A-JOUR-CODEIDE.md` §1.23.1 (bump du pin miroir,
+  témoin serverInfo 1.1.1, aucune action supplémentaire).
+
 ## 1.23.0 (2026-10-30)
 
 - **CHAÎNON RESTANT FRANCHI — `:lsp:host` consomme le moteur Java RÉÉCRIT**

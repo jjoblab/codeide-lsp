@@ -12,6 +12,48 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.23.1 — LE PIN MOTEUR 1.1.1 (le correctif « rien ne s'affiche à la frappe »)
+
+> Version de MAINTENANCE : l'hôte ne change PAS d'une ligne — seule la
+> coordonnée du moteur Java réécrit passe de 1.1.0 à **1.1.1** (tag publié
+> sur `maven.pkg.github.com/jjoblab/code-lsp`). Le correctif embarqué
+> répare la cause racine du retour appareil du 30/10 sur CodeIDE 0.203.0.
+
+### 1. État
+
+- **Ce que ça change** : le diagnose RAPIDE du moteur ne masque plus le
+  corps HÔTE (erreur de comparaison d'identité entre deux scans — la
+  frappe de l'utilisateur était effacée du texte soumis à ecj). Après
+  l'ouverture saine d'un fichier `.java`, la MOINDRE frappe cassée
+  republie désormais ses diagnostics (et la complétion dans le corps
+  redevient honnête) — comportement verrouillé par une régression neuve
+  dans la fiche 014 du cahier de code-lsp.
+- **Ce qui ne change PAS** : surface publique de l'hôte, protocole sur le
+  fil, LSP Kotlin/XML, rails de résolution — rien à adapter côté CodeIDE.
+
+### 2. Ce que CodeIDE doit faire
+
+1. **Bump du pin miroir** : `codeide-lsp = "1.23.1"` ET
+   `codeide-lsp-java = "1.1.1"` dans `gradle/libs.versions.toml` (la
+   dépendance vit dans le POM de l'hôte — CodeIDE n'en consomme AUCUN
+   directement).
+2. **Témoin** : `serverInfo = { "name": "lspjava", "version": "1.1.1" }`
+   — même limite qu'en 1.23.0 : cel-lsp ne remonte pas encore le
+   serverInfo (deltas consignés au CHANGELOG CodeIDE v0.204.0) ; la trace
+   DEBUG du sink cel-lsp (`connect: SUCCESS — server ready`) prouve le
+   moteur branché.
+3. **Rejouer la passe appareil I5** (B1–B8 de `TESTS_MANUELS.md`) : le
+   défaut corrigé était INVISIBLE en verbosité normale (aucune erreur —
+   juste des diagnostics vides) ; avec le sink câblé en v0.204.0, la
+   séquence attendue est désormais `didChange` →
+   `publishDiagnostics: N diagnostics received` avec N > 0 dès qu'une
+   erreur est frappée.
+
+### 3. Retour arrière
+
+- Substitution inverse : `codeide-lsp = "1.23.0"` (le pin 1.1.0 reste
+  publié) — mais cela réintroduit le défaut du diagnose rapide.
+
 ## 1.23.0 — LA BASCULE DU MOTEUR LSP JAVA (le chaînon restant franchi)
 
 > **C'est la version de la bascule** (INTEGRATION-CODEIDE du dépôt
