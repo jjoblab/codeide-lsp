@@ -12,6 +12,59 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.23.2 — LE PIN MOTEUR 1.1.2 (le correctif ART « Internal error. » sur toute requête)
+
+> Version de MAINTENANCE : l'hôte ne change PAS d'une ligne — seule la
+> coordonnée du moteur Java réécrit passe de 1.1.1 à **1.1.2** (tag publié
+> sur `maven.pkg.github.com/jjoblab/code-lsp`, run CI vert). Le correctif
+> embarqué répare la panne résiduelle du retour appareil du 30/10 au soir
+> sur CodeIDE 0.204.1 : le client se connecte mais CHAQUE requête répond
+> « Internal error. » et AUCUN diagnostic n'arrive.
+
+### 1. État
+
+- **Ce que ça change** : sur ART, le fournisseur `jrt` du
+  `lib/jrt-fs.jar` du JDK Termux externe ne peut PAS s'instancier
+  (`ServiceConfigurationError`, un **Error** — internes JDK absents du
+  runtime Android) ; l'ancienne garde du moteur capturait `Exception`
+  seulement, l'Error fuyait et faisait échouer TOUTES les requêtes dès la
+  première. Le moteur capture désormais `Throwable` : repli silencieux
+  vers le régime instantané documenté — complétion, diagnostics et
+  navigation continuent de servir le code utilisateur via les entrées
+  réelles du classpath (android.jar du modèle, bibliothèques du projet).
+  Verrouillé par quatre régressions dans la fiche 031 du cahier de
+  code-lsp (dont une simulation ART fidèle : le défaut est INVISIBLE sur
+  JVM car le fournisseur `java.base` masque le cassé — test de masquage
+  documenté).
+- **Ce qui ne change PAS** : surface publique de l'hôte, protocole sur le
+  fil, LSP Kotlin/XML, rails de résolution — rien à adapter côté CodeIDE.
+
+### 2. Ce que CodeIDE doit faire
+
+1. **Bump du pin miroir** : `codeide-lsp = "1.23.2"` ET
+   `codeide-lsp-java = "1.1.2"` dans `gradle/libs.versions.toml` (la
+   dépendance vit dans le POM de l'hôte — CodeIDE n'en consomme AUCUN
+   directement).
+2. **Témoin** : `serverInfo = { "name": "lspjava", "version": "1.1.2" }`
+   — même limite qu'en 1.23.0 : cel-lsp ne remonte pas encore le
+   serverInfo ; la trace DEBUG du sink cel-lsp
+   (`connect: SUCCESS — server ready`) prouve le moteur branché.
+3. **Rejouer la passe appareil** (B1–B8 de `TESTS_MANUELS.md`) : avec le
+   sink câblé, la séquence attendue sur ART n'est PLUS
+   `completion: ERROR … Internal error.` — les requêtes répondent, et la
+   frappe d'une erreur republie `publishDiagnostics: N diagnostics
+   received` avec N > 0. ATTENTION : la plateforme `java.*` n'est plus
+   résolue par l'image jrt du JDK externe sur ART (régime instantané) —
+   la complétion sur les SEULES API android.* du modèle reste honnête ;
+   un écart résiduel éventuel sur java.* pur sera consigné au §10
+   d'INTEGRATION-CODEIDE du dépôt code-lsp.
+
+### 3. Retour arrière
+
+- Substitution inverse : `codeide-lsp = "1.23.1"` (le pin 1.1.1 reste
+  publié) — mais cela réintroduit « Internal error. » sur toute requête
+  sur ART.
+
 ## 1.23.1 — LE PIN MOTEUR 1.1.1 (le correctif « rien ne s'affiche à la frappe »)
 
 > Version de MAINTENANCE : l'hôte ne change PAS d'une ligne — seule la

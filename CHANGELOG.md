@@ -1,5 +1,38 @@
 # Changelog — codeide-lsp
 
+## 1.23.2 (2026-10-30)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.2"`** (moteur RÉÉCRIT
+  du dépôt `jjoblab/code-lsp` — v1.1.2 tagué et publié, run CI vert
+  41008294645, artefacts vérifiés HTTP 200 : jar moteur 786 963 o avec
+  `version.properties=1.1.2`, compagnon ecj-art 3 288 188 o, metadata
+  `latest=1.1.2`). Correctif du moteur embarqué : sur **ART**, le
+  fournisseur `jrt` du `lib/jrt-fs.jar` du JDK Termux externe lève
+  `ServiceConfigurationError` à l'instanciation (internes JDK absents du
+  runtime Android — `jdk.internal.jimage` notamment) — un **Error** que
+  l'ancien `catch (Exception)` laissait fuir : la construction paresseuse
+  d'`EnvironnementNoms` explosait à la PREMIÈRE requête et le serveur
+  répondait **« Internal error. » à TOUT** (complétion, surlignage, inlay)
+  pendant que les diagnostics restaient muets. C'est la cause racine
+  mesurée du retour appareil du 30/10 au soir sur CodeIDE **0.204.1**
+  (logs `codeide-logs-2026-10-30-001905.zip` : `connect: SUCCESS` puis
+  chaque requête en erreur — INTEGRATION-CODEIDE §10 du dépôt code-lsp).
+  Le moteur dégrade désormais vers le régime instantané documenté (`null`)
+  — la plateforme reste couverte par les entrées réelles du classpath
+  (android.jar du modèle).
+- **Régression du fil appareil COMMITÉE** :
+  `ReproductionFrappeAppareilTest` (harnais `:lsp:host`) rejoue LE FIL
+  EXACT de la session défaillante sur la chaîne de production complète
+  (stdio : didOpen → documentHighlight(0) → inlayHint → didChange →
+  completion, puis pousserSync + re-frappe) et exige ZÉRO « Internal
+  error. » — la CI exécute désormais cette régression à chaque build.
+  Vérifiée VERTE contre le REGISTRE (mavenLocal écarté, résolution
+  GitHub Packages).
+- **Aucune autre variation** : la surface publique de l'hôte, le LSP
+  Kotlin et le LSP XML sont inchangés. Guide de passage CodeIDE :
+  `docs/MISE-A-JOUR-CODEIDE.md` §1.23.2 (bump du pin miroir, témoin
+  serverInfo 1.1.2, séquence sink attendue).
+
 ## 1.23.1 (2026-10-30)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.1"`** (moteur RÉÉCRIT
