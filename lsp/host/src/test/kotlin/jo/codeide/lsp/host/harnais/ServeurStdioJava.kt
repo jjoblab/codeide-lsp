@@ -62,8 +62,7 @@ public object ServeurStdioJava {
         private val reel: ServeurLangageJava,
         private val nourrir: (String) -> Unit,
     ) : LanguageServer {
-        override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> =
-            reel.initialize(params)
+        override fun initialize(params: InitializeParams): CompletableFuture<InitializeResult> = reel.initialize(params)
 
         override fun initialized(params: InitializedParams) {
             reel.initialized(params)

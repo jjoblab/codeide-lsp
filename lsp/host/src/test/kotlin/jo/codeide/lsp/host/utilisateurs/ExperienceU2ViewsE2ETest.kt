@@ -6,8 +6,8 @@ import jo.codeide.lsp.host.SessionLsp
 import jo.codeide.lsp.host.SessionLspKotlin
 import jo.codeide.lsp.host.SessionLspXml
 import jo.codeide.lsp.host.XmlLanguageServer
-import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.lsp.java.protocole.ServeurLangageJava
+import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
 import jo.codeide.tooling.protocol.ClasspathResult

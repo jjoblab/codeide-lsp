@@ -104,7 +104,8 @@ internal class AdaptateurIndexNoms(
 
     override fun fqnsForSimpleName(nom: String): List<String> =
         try {
-            vue.nomsParPrefixe(nom, LIMITE_RECHERCHE_EXACTE)
+            vue
+                .nomsParPrefixe(nom, LIMITE_RECHERCHE_EXACTE)
                 .filter { it.nomSimple == nom }
                 .flatMap { it.fqcns }
         } catch (t: Throwable) {
