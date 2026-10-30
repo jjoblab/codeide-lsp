@@ -2,8 +2,6 @@ package jo.codeide.lsp.host.harnais
 
 import jo.codeide.lsp.host.harnais.OutilsHarnais.demarrerServeurJava
 import jo.codeide.lsp.host.harnais.OutilsHarnais.ecrireClasspathJava
-import java.io.File
-import java.util.concurrent.TimeUnit
 import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DidChangeTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
@@ -17,6 +15,8 @@ import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * REPRODUCTION du retour appareil du 30/10 au soir (CodeIDE 0.204.1,
@@ -40,7 +40,6 @@ import org.junit.jupiter.api.Timeout
  */
 @Timeout(900)
 public class ReproductionFrappeAppareilTest {
-
     @Test
     public fun `E1 - fil appareil - didOpen puis documentHighlight inlayHint completion sans Internal error`() {
         val connexion = demarrerServeurJava("repro-appareil")
