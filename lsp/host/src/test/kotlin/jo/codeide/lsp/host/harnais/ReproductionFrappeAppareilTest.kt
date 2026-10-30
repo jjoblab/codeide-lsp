@@ -40,6 +40,12 @@ import java.util.concurrent.TimeUnit
  */
 @Timeout(900)
 public class ReproductionFrappeAppareilTest {
+    // Exemption detekt ciblée (motif LecteurSegment.kt règle 8) :
+    // LongMethod — le FIL APPAREIL se lit D'UN BLOC, à la lettre de la
+    // session défaillante (étapes 1→6 dans l'ordre exact du journal
+    // cel-lsp) ; le découper en sous-fonctions détruirait sa valeur
+    // documentaire de reproduction.
+    @Suppress("LongMethod")
     @Test
     public fun `E1 - fil appareil - didOpen puis documentHighlight inlayHint completion sans Internal error`() {
         val connexion = demarrerServeurJava("repro-appareil")
