@@ -1,5 +1,35 @@
 # Changelog — codeide-lsp
 
+## 1.23.4 (2026-10-30)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.4"`** (moteur RÉÉCRIT
+  du dépôt `jjoblab/code-lsp` — v1.1.4 tagué et publié, run Publication
+  vert 41086202563 + CI verte 41086126289, artefacts vérifiés HTTP 200 sur
+  `maven.pkg.github.com/jjoblab/code-lsp`). Retour appareil du 30/10
+  10:59 sur CodeIDE **0.204.3** (logs
+  `codeide-logs-2026-10-30-105910.zip`, moto g06) : « à part le document
+  highlight qui me semble fonctionner bien, les autres fonctionnalités
+  non — diagnostics, go to, complétion, rien du tout, seulement du
+  basic ». Cause racine DANS le moteur (INTEGRATION-CODEIDE §12, dépôt
+  code-lsp) : sur ART le fournisseur jrt du JDK externe est
+  ininstanciable ET l'ancienne sonde du régime plein ne voyait QUE le
+  jrt — l'appareil vivait donc en RÉGIME INSTANTANÉ alors que le
+  classpath porte `android.jar` (plateforme `java.*` + `android.*`).
+  v1.1.4 : la sonde devient « `java.lang.Object` résoluble » (jrt OU jar
+  du classpath porteur) — les ~30 gardes (définition, typeDefinition,
+  implementation, superDefinition, survol, documentHighlight, inlay,
+  codeAction…), `diagnose` (tables analytiques « unused ») et
+  `completer` repassent en régime plein sur l'appareil. Régression ART
+  simulée verrouillée côté moteur (`PlateformeClasspathARTTest`, 8
+  tests) ; **aucun changement d'hôte requis** — le pin seul monte.
+- **Étude éditeur ↔ LSP** (mandat propriétaire « consulte Android Studio
+  avant toute décision de refonte ») : livrée dans le dépôt code-lsp
+  (`docs/etudes/editeur-lsp/01-responsabilites-editeur-lsp.md`) —
+  cel-lsp/cel-lsp-api est DÉJÀ au modèle IntelliJ/VS Code (éditeur
+  générique + adaptateur pur), PAS de refonte de l'éditeur ; le document
+  highlight « vu fonctionnel » par l'utilisateur est la couche 1 de
+  l'éditeur (surlignage lexical du mot), le LSP répondait vide.
+
 ## 1.23.3 (2026-10-30)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.3"`** (moteur RÉÉCRIT
