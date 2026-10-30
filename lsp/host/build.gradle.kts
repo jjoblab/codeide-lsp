@@ -61,8 +61,8 @@ dependencies {
     // Résolution : mavenLocal filtré d'abord (publishToMavenLocal de
     // code-lsp — DEV sans jeton), GitHub Packages ensuite (jeton de
     // lecture), composite sur opt-in freres.sources (settings.gradle.kts).
-    api("jo.codeide.lsp.java:jo-codeide-lsp-java:1.1.0")
-    runtimeOnly("jo.codeide.lsp.java:jo-codeide-lsp-java-ecj-art:1.1.0")
+    api(libs.lsp.java.moteur)
+    runtimeOnly(libs.lsp.java.ecj.art)
     api(libs.lsp4j)
 
     // Modèle LSP (types de la surface publique : ClasspathResult par

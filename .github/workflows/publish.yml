@@ -101,6 +101,12 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # v1.23.0 (bascule §3.2.2) : :lsp:host consomme le moteur Java
+          # RÉÉCRIT — le build de PUBLICATION résout la coordonnée depuis
+          # maven.pkg.github.com/jjoblab/code-lsp (le POM de l'hôte publié
+          # porte la dépendance moteur) : le secret CODEIDE_PACKAGES_PAT
+          # porte cette lecture (mêmes infra/secret que la CI).
+          CODEIDE_PACKAGES_PAT: ${{ secrets.CODEIDE_PACKAGES_PAT }}
 
       - name: Déjà intégralement publiée — rien à faire
         if: steps.existant.outputs.modules == ''
