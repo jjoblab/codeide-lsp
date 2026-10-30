@@ -3,14 +3,14 @@ package jo.codeide.lsp.host
 import jo.codeeditor.lsp.LanguageServerDefinition
 import jo.codeeditor.lsp.connection.InProcessStreamConnectionProvider
 import jo.codeeditor.lsp.connection.StreamConnectionProvider
+import jo.codeide.lsp.java.EnvironnementCompilation
+import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import jo.codeide.lsp.model.AssociationFichier
 import jo.codeide.lsp.model.DepotModeleLsp
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.PersistanceModeleLsp
 import jo.codeide.lsp.model.ProjetLsp
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.codeide.lsp.java.EnvironnementCompilation
-import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

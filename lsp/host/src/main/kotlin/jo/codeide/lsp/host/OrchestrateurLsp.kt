@@ -2,6 +2,7 @@ package jo.codeide.lsp.host
 
 import jo.codeide.lsp.index.ServiceIndexDisque
 import jo.codeide.lsp.index.VueIndex
+import jo.codeide.lsp.java.EnvironnementCompilation
 import jo.codeide.lsp.model.ClasspathInstantane
 import jo.codeide.lsp.model.ConvertisseurModeleLsp
 import jo.codeide.lsp.model.DepotModeleLsp
@@ -11,7 +12,6 @@ import jo.codeide.lsp.model.KindEntree
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.ModuleLsp
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.codeide.lsp.java.EnvironnementCompilation
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job

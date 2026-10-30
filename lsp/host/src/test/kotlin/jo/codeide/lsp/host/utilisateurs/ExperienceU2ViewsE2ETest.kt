@@ -7,10 +7,10 @@ import jo.codeide.lsp.host.SessionLspKotlin
 import jo.codeide.lsp.host.SessionLspXml
 import jo.codeide.lsp.host.XmlLanguageServer
 import jo.codeide.tooling.protocol.ClasspathEntry
+import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.codeide.lsp.java.protocole.ServeurLangageJava
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout

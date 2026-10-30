@@ -1,8 +1,8 @@
 package jo.codeide.lsp.host.harnais
 
 import jo.codeide.lsp.host.SessionLsp
-import jo.codeide.tooling.protocol.ClasspathResult
 import jo.codeide.lsp.java.protocole.ServeurLangageJava
+import jo.codeide.tooling.protocol.ClasspathResult
 import kotlinx.serialization.json.Json
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.InitializeResult

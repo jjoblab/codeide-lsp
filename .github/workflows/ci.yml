@@ -83,6 +83,14 @@ jobs:
           ls "$SDK/platforms/android-37.2/android.jar"
 
       - name: Vérification complète (sans clean — caches Gradle)
+        # v1.23.0 (bascule §3.2.2) : :lsp:host consomme le moteur Java
+        # RÉÉCRIT depuis maven.pkg.github.com/jjoblab/code-lsp — le secret
+        # CODEIDE_PACKAGES_PAT (PAT read:packages, même infrastructure que
+        # CodeIDE pour ses trois frères) porte la lecture du registre.
+        # Sans jeton (secret absent), le build retombe sur mavenLocal —
+        # le chemin de DEV publishToMavenLocal reste ouvert.
+        env:
+          CODEIDE_PACKAGES_PAT: ${{ secrets.CODEIDE_PACKAGES_PAT }}
         run: ./gradlew spotlessCheck detekt checkModuleDependencies lintDebug testDebugUnitTest koverVerify assembleRelease --stacktrace
 
       - name: Publier les rapports en cas d'échec
