@@ -12,6 +12,68 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.23.0 — LA BASCULE DU MOTEUR LSP JAVA (le chaînon restant franchi)
+
+> **C'est la version de la bascule** (INTEGRATION-CODEIDE du dépôt
+> code-lsp, 30/10/2026) : `:lsp:host` consomme désormais le moteur Java
+> RÉÉCRIT (`jo.codeide.lsp.java:jo-codeide-lsp-java:1.1.0` + compagnon
+> `ecj-art` en runtimeOnly, depuis `maven.pkg.github.com/jjoblab/code-lsp`)
+> — le moteur vendored `:lsp:java` est ARCHIVÉ (ADR 0233 : gelé, plus
+> consommé par AUCUN module). **Pas une montée anodine** : le moteur qui
+> sert les requêtes LSP Java de CodeIDE CHANGE. Le protocole sur le fil
+> est préservé (surface `SessionLsp`/`CapaciteLsp` intacte, JSON
+> `NavigationTarget` repris à l'identique par `NavigationCible`).
+
+### 1. État
+
+- Architecture : UNE session LSP Java vivante par projet
+  (`ServeurLangageJava(environnement)` par connexion), moteurs résolus
+  PAR REQUÊTE via le routeur fichier → module — l'invariant ADR 0211
+  (nourrissage moteur unique par sync) est préservé à travers les
+  reconfigurations à chaud (fiche 066 du moteur : 5 syncs sans
+  re-initialize).
+- Ce que le moteur neuf APporte déjà et que l'hôte transporte :
+  `superDefinition`/`decompiledSource` annoncées en `experimental`
+  (miroir du vendord — les boutons cel-lsp restent vivants),
+  live-republish des documents ouverts après chaque remplacement de
+  contexte (motif `ContextListener`).
+- Ce qui reste INCHANGÉ côté CodeIDE : la consommation cel-lsp
+  (surface publique de l'hôte identique), la substitution composite
+  opt-in `freres.sources`, le retour arrière (substitution inverse —
+  descendre `codeide-lsp` à 1.22.1 suffit, le vendord archivé reste au
+  build et publiable).
+
+### 2. Ce que CodeIDE doit faire
+
+1. **Bump du catalogue** : `codeide-lsp = "1.23.0"` ET
+   `codeide-lsp-java = "1.1.0"` (le pin moteur, miroir du présent
+   catalogue — la dépendance vit dans le POM de l'hôte, CodeIDE n'en
+   consomme AUCUN directement ; les rails de résolution
+   `jo.codeide.lsp.java` de `settings.gradle.kts` (mavenLocal filtré +
+   Packages `jjoblab/code-lsp` derrière le jeton) sont déjà en place
+   depuis 8450bb7).
+2. **Vérifier le témoin de branchement au premier lancement** :
+   `serverInfo = { "name": "lspjava", "version": "1.1.0" }` consigné
+   côté client à CHAQUE connexion LSP Java (la ligne « LSP Java
+   connecté » des logs appareil doit le gagner — critère 1
+   d'acceptation d'INTEGRATION-CODEIDE).
+3. **Deux deltas assumés à vérifier côté consommation** :
+   semanticTokens NON annoncé (requête tolérante vide — le client garde
+   sa coloration de repli, aucune attente silencieuse) ;
+   `source.organizeImports` PAS encore servi au fil LSP (l'API moteur
+   §7.17 existe — l'action ne doit pas apparaître morte côté UI).
+4. **Passe appareil** : fiches 004/010/039 sur projet Android réel +
+   re-vérification E1–E4 des logs du 30/10 (go-to source générée
+   databinding, décompilée avant session prête, churn de sessions) —
+   procès-verbal d'appareil à consigner côté code-lsp (I5).
+
+### 3. Retour arrière
+
+- Substitution inverse en une ligne : `codeide-lsp = "1.22.1"` dans le
+  catalogue (le vendord archivé reste au build jusqu'au retrait
+  physique — règle « 2 versions sans régression » — et l'hôte 1.22.1
+  reste publiée sur Packages).
+
 ## 1.22.1 (correctif interne — les consommateurs de 1.22.0 n'ont RIEN à faire)
 
 > La CI de v1.22.0 est rouge sur `PariteCorpusDepotTest` (baseline de

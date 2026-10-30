@@ -1,6 +1,6 @@
 # Changelog — codeide-lsp
 
-## Non publié
+## 1.23.0 (2026-10-30)
 
 - **CHAÎNON RESTANT FRANCHI — `:lsp:host` consomme le moteur Java RÉÉCRIT**
   (INTEGRATION-CODEIDE §3.2.2 du dépôt code-lsp, arbitrage §3.3 OPTION B :
@@ -59,6 +59,16 @@
   `code-lsp` reste à venir, décision propriétaire). Marquages : README
   racine, `docs/LSP_JAVA.md`, `lsp/java/README.md`, en-tête de
   `lsp/java/build.gradle.kts`.
+
+- **Correctif CI : baseline de parité du corpus absorbée pour le chaînon**
+  (run 40979686795, 1 échec sur 469) : l'adaptation de l'hôte a ajouté
+  `NavigationCible.kt` et modifié 9 fichiers `.kt` du dépôt — le corpus de
+  `PariteCorpusDepotTest` (TOUT `.kt` du dépôt) suivait mécaniquement
+  (307 → 308 fichiers). Régénération `-Dparite.majBase=true --rerun-tasks`
+  réelle, diff réduit à la ligne de baseline ; la grammaire est SANS
+  changement (le sweep « sans marqueur d'erreur » reste vert sur les 308
+  fichiers au même passage). Incidence CI uniquement — AUCUNE sur les
+  artefacts.
 
 ## 1.22.1 (2026-10-29)
 
