@@ -1,5 +1,43 @@
 # Changelog — codeide-lsp
 
+## 1.23.5 (2026-10-31)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.5"`** (moteur RÉÉCRIT
+  du dépôt `jjoblab/code-lsp` — v1.1.5 tagué et publié, run Publication
+  vert 41107739288 + CI verte 6/6 sur le commit tagué, artefacts vérifiés
+  sur `maven.pkg.github.com/jjoblab/code-lsp` : POM moteur sans ecj,
+  `version.properties=1.1.5`, bytecode 17, compagnon EPL-2.0 conforme).
+  Mandat propriétaire du 31/10 (retours appareil sur CodeIDE **0.204.4**,
+  logs `codeide-logs-2026-10-30-124450.zip`) : « il y a encore beaucoup
+  d'incohérences, de retard dans les suggestions de complétion, les
+  suggestions doivent être précises dépendamment d'où je suis (import,
+  classe, membre, etc.), exactement comme Android Studio. Pour résoudre
+  ces problèmes, je propose que tu crées un test projet android complet
+  (avec de vrais jar, aar) et testé les fonctionnalités. »
+- **Le banc PROJET ANDROID RÉEL** (INTEGRATION-CODEIDE §13, dépôt
+  code-lsp) : `bancs/projet-android/` — réplique du projet monip
+  (AppCompatActivity, ActivityMainBinding data binding, Greeter, layout
+  `<layout>`) + sources générées simulées (R.java,
+  ActivityMainBinding) à leur emplacement AGP + `android.jar` 34-ext12 et
+  **16 AARs/jars réels** (appcompat 1.7.0, material 1.12.0,
+  constraintlayout, core, fragment, activity 1.8.2, lifecycle, savedstate,
+  viewbinding, databinding-runtime…), fermeture transitive vérifiée classe
+  par classe. `BancProjetAndroidReelTest` (20 tests) rejoue la timeline
+  appareil au protocole : didOpen avant sync → diagnostics du cache →
+  sync → LIVE-REPUBLISH → chaque famille de complétion.
+- **Cinq correctifs moteur de précision Android Studio** : (1) qualifier
+  IMBRIQUÉ — `R.layout.a|` propose ses constantes (chaînage des segments
+  en imbriqués `$`, sonde binaire du membre statique en forme pointée) ;
+  (2) auto-import en `additionalTextEdits` — l'insertion au point
+  d'imports, jamais si inutile (déjà présent, paquet courant, java.lang) ;
+  (3) marqueur de splice interne (`__codeide_completion__()`) écarté de
+  l'inventaire à préfixe vide ; (4) identifiant isolé en corps de méthode
+  = contexte NOM — la locale en TÊTE du popup, les types suivent ;
+  (5) classpath de banc à fermeture transitive réelle (miroir du montage
+  hôte). Validation moteur : 20/20 au banc, 521 tests verts, baseline
+  benchQualite signée intacte (p95 36,7 ms), chaud p95 complétion 119 ms.
+  **Aucun changement d'hôte requis** — le pin seul monte.
+
 ## 1.23.4 (2026-10-30)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.4"`** (moteur RÉÉCRIT
