@@ -1,5 +1,31 @@
 # Changelog — codeide-lsp
 
+## 1.24.1 (2026-11-01)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.12.0"` → `"1.12.1"`**
+  (HOTFIX retours appareil — CodeIDE 0.205.0 sur moto g06, logs
+  `codeide-logs-2026-11-01-144401.zip` : « la complétion ne fonctionne pas
+  correctement et bien d'autres problèmes » — le serveur figurait en
+  pleine frappe, 38 complétions / 47 surbrillances / 29 inlay en timeout,
+  plus AUCUN publishDiagnostics après une 2e invocation de complétion à la
+  même ancre). La cause racine (établie par bancs dans code-lsp) : les
+  coûts FROIDS du chemin de complétion — annuaire du classpath (le
+  android.jar seul porte ~40 000 entrées) et LookupEnvironment ecj —
+  étaient payés PAR LA PREMIÈRE REQUÊTE qui les touche, SOUS le verrou de
+  compilation ; la diagnose s'empilait derrière et la borne client de 5 s
+  explosait. Le moteur 1.12.1 pose trois garde-fous : PRÉ-CHAUFFE du
+  classpath (réchauffeur du double-tampon + première pose asynchrone,
+  construction HORS du verrou global), BUDGET D'HORLOGE de complétion
+  (3 s, partiel honnête à l'expiration), CHIEN DE GARDE des requêtes
+  lentes (window/logMessage Warning > 2 s — relayé par cel-lsp dans le
+  journal applicatif : le point de lenteur devient VISIBLE sur
+  l'appareil). Consigné : les faux positifs « I/O cannot be resolved »
+  des logs viennent du FICHIER utilisateur (signature générique copiée
+  avec ses variables de type — javac dirait pareil), pas du moteur.
+- **Aucune adaptation hôte requise** : la façade `jo.codeide.lsp.java.*`
+  est inchangée, `CapacitesLspPariteTest` et sa baseline restent valables
+  (aucune capability ne bouge) — `:lsp:host` compile et passe ses 258
+  tests tels quels avec le pin 1.12.1.
 ## 1.24.0 (2026-11-01)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.6"` → `"1.12.0"`** (moteur

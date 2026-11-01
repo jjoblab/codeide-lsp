@@ -12,6 +12,39 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.24.1 — LE PIN MOTEUR 1.12.1 (hotfix retours appareil : fin du serveur figé en pleine frappe)
+
+> Version de MAINTENANCE de montée : l'hôte ne change PAS d'une ligne —
+> seule la coordonnée du moteur Java passe de 1.12.0 à **1.12.1** (hotfix
+> des retours appareil du 01/11/2026, logs
+> `codeide-logs-2026-11-01-144401.zip`). Aucune capability ne bouge, le
+> garde-fou L0 et sa baseline restent valables.
+
+### 1. Ce que CodeIDE doit faire
+
+- **La montée seule suffit** : catalogue `codeide-lsp = "1.24.1"` + pin
+  miroir `codeide-lsp-java = "1.12.1"`. Aucune adaptation client.
+- **Témoin attendu sur l'appareil** : la frappe ne figure plus le
+  serveur — les complétions répondent (au pire un PARTIEL honnête au
+  bout de 3 s, jamais un timeout en cascade) et les diagnostics
+  continuent de couler PENDANT les complétions.
+- **Nouvelle observabilité** : si une requête dépasse 2 s, le moteur
+  publie `window/logMessage` (Warning) — cel-lsp le relaie dans le
+  journal applicatif sous « server/logMessage: lspjava lenteur : … » :
+  la prochaine passe appareil montre le POINT de lenteur exact, sans
+  deviner.
+- Consigné au passage : le label cel-lsp « connect: SUCCESS — server
+  ready, version=0 » imprime la version du DOCUMENT (cosmétique,
+  dépôt code-editor) ; les « I/O cannot be resolved » des logs
+  viennent du fichier utilisateur (signature générique héritée copiée
+  avec ses variables de type).
+
+### 2. État
+
+- Validation hôte : 258 tests / 0 échec avec le pin 1.12.1 (chaîne
+  complète, même commande que `ci.yml`). Moteur 1.12.1 : 949 tests /
+  0 échec dont 4 repros appareil, build strict VERT.
+
 ## 1.24.0 — LE PIN MOTEUR 1.12.0 (l'accumulé « niveau Android Studio » : semanticTokens, multi-kinds, usagesGroupes, refactorings lourds)
 
 > Version MINEURE de montée : l'hôte ne change pas d'une ligne de MAIN —
