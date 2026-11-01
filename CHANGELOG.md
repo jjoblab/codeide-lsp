@@ -1,5 +1,75 @@
 # Changelog — codeide-lsp
 
+## 1.24.0 (2026-11-01)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.1.6"` → `"1.12.0"`** (moteur
+  RÉÉCRIT du dépôt `jjoblab/code-lsp` — accumulé des vagues V-B à V-A2 de la
+  mission « niveau Android Studio », jamais propagé depuis la chaîne
+  1.1.6/1.23.6/0.204.6 du 31/10 : v1.12.0 tagué et publié, run Publication
+  vert 41328300278 + CI verte 6/6 sur le commit tagué 7f77173, artefacts
+  vérifiés sur `maven.pkg.github.com/jjoblab/code-lsp` : POM moteur sans ecj
+  (kotlin-stdlib 2.2.10 compile + lsp4j 0.21.2 runtime seules dépendances),
+  `version.properties=1.12.0` dans le jar, compagnon EPL-2.0 conforme — 942
+  entrées dont 929 `org/eclipse/jdt` + shims `ecjart/compat`). **Aucun
+  changement d'hôte requis pour compiler** : la façade
+  `jo.codeide.lsp.java.*` (SessionLsp/OrchestrateurLsp/AdaptateurIndexNoms/
+  KotlinLanguageServer) est restée compatible — `:lsp:host` compile et
+  passe ses 258 tests tels quels, SAUF le garde-fou L0 ci-dessous.
+- **Adaptation hôte minimale — le garde-fou L0 suit le catalogue** :
+  `CapacitesLspPariteTest.TABLE_JAVA` mise à jour pour les DEUX capacités
+  nouvelles annoncées par le moteur 1.12.0 (c'est le rôle du test L0 que
+  de tomber quand le catalogue bouge) : (1) **actions de code
+  MULTI-KINDS** — `quickfix` + `source,source.organizeImports,
+  source.generate` + `refactor,refactor.extract,refactor.extract.variable,
+  refactor.extract.constant,refactor.extract.function,refactor.inline,
+  refactor.inline.variable,refactor.inline.constant,refactor.rewrite,
+  refactor.rewrite.delete,refactor.rewrite.signature` (vague V-D — les
+  écarts « multi-kinds » et « organizeImports au fil » §13 d'USAGE.md du
+  moteur sont SOLDÉS) ; (2) **jetons sémantiques** — `complète, légende 8
+  types` (vague V-G — la règle matrice ADR 0015 « PAS de jetons
+  sémantiques, le client garde sa coloration de repli » est LEVÉE). La
+  baseline de parité du dépôt (`lsp/kotlin/…/digeste-corpus.txt`)
+  régénérée délibérément (`-Dparite.majBase=true --rerun-tasks` —
+  procédure v1.23.2 : l'édition du test modifie la forme des arbres) :
+  309 fichiers, digeste `8cff8859…`, diff fait partie de la revue.
+- **Ce que la montée apporte au client CodeIDE** (contrats documentés dans
+  `USAGE.md` du moteur — sections entre parenthèses) : `references`
+  MULTI-FICHIERS exhaustives + capability versionnée `x-codeide.usages` +
+  RPC maison `textDocument/usagesGroupes` (Find Usages arborescent :
+  déclaration signalée en racine de groupe, offsets absolus, plafond honnête
+  2 000 avec `total`/`rendus`/`plafond`/`tronque`) (§9.3, V-E) ;
+  `documentHighlight` kinds lecture/écriture COMPLETS (affectations
+  composées et incréments typés `Write`) (V-E) ; **actions de code
+  étendues** — organizeImports exposé, génération de code, intentions,
+  `codeAction/resolve` réel (§7.22) ; **refactorings lourds** —
+  extractions variable/constante/fonction sur sélection, inline (variable,
+  constante, multi-fichiers), safe delete hiérarchique, change signature,
+  création de champ/méthode contextuelle, rename de ressource (§7.23/§7.24,
+  V-D) ; **`textDocument/semanticTokens/full`** (légende 8 types, §7.16,
+  V-G) ; **workDoneProgress** + diagnostics enrichis `codeDescription.href`
+  (lien lint vérifié sans ancre par ID) + **willRenameFiles** (rename de
+  fichier Java) + resolve réel (§7.26/§7.27, V-G) ; inspections et
+  profil de sévérités (§7.20, V-C1) + **lint Android à valeur Java**
+  (NewApi sur base api-versions CIDX compacte, seconde passe asynchrone)
+  (§7.20, V-C2) ; **complétion niveau Android Studio** — smart/typedef,
+  second appel, chaîne, statement, `R.*` (§7.21/§9.4, V-C3) ; classes light
+  Android (R, BuildConfig, ViewBinding, DataBinding) + navigation `R.*`
+  vers le XML exact + MAJ ciblée didChange XML (V-B) ; ajout/
+  réordonnancement de paramètres + **rename depuis un document XML**
+  (propagation code+XML, garde publicateur) (§7.27) ; mémoire ART — budgets
+  d'octets, `onTrimMemory`, double-tampon et époques, plage prioritaire
+  `$/codeide/plageVisible` (§7.25/§9.5, V-F) ; robustesse corpus réel —
+  manifestes de classpath, gates P3/P4/P7, divergences ecj↔javac mesurées
+  (V-A2 : 6 FP sur 111 700 lignes = 0,054/1 000, rappel rename 0,991,
+  28 renommages sûrs / 0 cassé).
+- **Validation** : chaîne CI complète en local (même commande que
+  `ci.yml`) : `spotlessCheck detekt checkModuleDependencies lintDebug
+  testDebugUnitTest koverVerify assembleRelease` — VERT. `:lsp:host` 258
+  tests / 0 échec (L0 mis à jour), `:lsp:kotlin` 469 tests / 0 échec
+  (baseline régénérée). Version `1.24.0` (mineure : la montée du moteur
+  est mineure et apporte des capacités protocolaires nouvelles — rupture
+  annoncée `references` non confiné).
+
 ## 1.23.6 (2026-10-31)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.1.6"`** (moteur RÉÉCRIT

@@ -388,10 +388,13 @@ class CapacitesLspPariteTest {
          * déclencheurs « . » et « @ » (v1.1.3 — miroir EXACT du vendord
          * `ServerCapabilitiesProvider` (`List.of(".", "@")`) : l'annotation
          * s'arme à la frappe ; le moteur réécrit n'avait que « . » à la
-         * v1.1.2), actions de code au seul kind « quickfix » (fiche 055 —
-         * le multi-kinds et l'organizeImports au fil sont des écarts
-         * documentés §13 d'USAGE.md), PAS de jetons sémantiques (règle
-         * matrice ADR 0015 — le client garde sa coloration de repli) ; les
+         * v1.1.2), actions de code MULTI-KINDS (montée moteur 1.12.0,
+         * vague V-D : quickfix + source.organizeImports/source.generate +
+         * refactor.extract/inline/rewrite — les écarts multi-kinds et
+         * organizeImports §13 d'USAGE.md sont SOLDÉS), jetons sémantiques
+         * COMPLETS (montée moteur 1.12.0, vague V-G : légende 8 types —
+         * la règle matrice ADR 0015 « PAS de jetons sémantiques » est
+         * LEVÉE, le client peut consommer la coloration du serveur) ; les
          * extensions maison superDefinition / decompiledSource restent
          * annoncées dans experimental (miroir du vendord — les entrées UI
          * du client en dépendent).
@@ -404,7 +407,13 @@ class CapacitesLspPariteTest {
                 "définition" to "oui",
                 "définition de type" to "oui",
                 "implémentations" to "oui",
-                "actions de code" to "quickfix",
+                "actions de code" to
+                    "quickfix,source,source.organizeImports,source.generate," +
+                    "refactor,refactor.extract,refactor.extract.variable," +
+                    "refactor.extract.constant,refactor.extract.function," +
+                    "refactor.inline,refactor.inline.variable," +
+                    "refactor.inline.constant,refactor.rewrite," +
+                    "refactor.rewrite.delete,refactor.rewrite.signature",
                 "symboles de document" to "oui",
                 "surlignage" to "oui",
                 "références" to "oui",
@@ -420,6 +429,7 @@ class CapacitesLspPariteTest {
                 "aide à la signature" to "déclencheurs (,",
                 "indices en ligne" to "oui",
                 "pliage" to "oui",
+                "jetons sémantiques" to "complète, légende 8 types",
                 "encodage de position" to "utf-16",
                 "super-définition (expérimental)" to "oui",
                 "source décompilée (expérimental)" to "oui",

@@ -12,6 +12,59 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.24.0 — LE PIN MOTEUR 1.12.0 (l'accumulé « niveau Android Studio » : semanticTokens, multi-kinds, usagesGroupes, refactorings lourds)
+
+> Version MINEURE de montée : l'hôte ne change pas d'une ligne de MAIN —
+> seule la coordonnée du moteur Java réécrit passe de 1.1.6 à **1.12.0**
+> (accumulé des vagues V-B à V-A2 de la mission « niveau Android Studio »,
+> jamais propagé depuis la chaîne 1.1.6/1.23.6/0.204.6 du 31/10 ; tag
+> publié, run Publication vert 41328300278, CI verte 6/6 sur 7f77173,
+> artefacts vérifiés). Le garde-fou L0 de l'hôte
+> (`CapacitesLspPariteTest.TABLE_JAVA`) est mis à jour pour les DEUX
+> capacités nouvelles (actions de code multi-kinds, jetons sémantiques
+> légende 8 types) — la baseline de parité du dépôt suit (régénération
+> délibérée, 309 fichiers).
+
+### 1. Ce que CodeIDE doit faire
+
+- **La montée seule suffit** : `scripts/bump-frere.sh lsp minor` (catalogue
+  `codeide-lsp = "1.24.0"`) + **pin miroir** `codeide-lsp-java = "1.12.0"`
+  dans le même catalogue. Aucune adaptation client n'est REQUISE — la
+  façade `jo.codeide.lsp.java.*` est inchangée, `serverInfo.version`
+  passera à `1.12.0` au premier lancement (témoin du branchement).
+- **Rupture annoncée, non bloquante** : `references` n'est plus confiné au
+  document interrogé (usages de TOUT le projet, ordre trié
+  chemin+offset). Un client qui rendait la liste à plat continue de
+  fonctionner ; la rupture est annoncée par la capability versionnée
+  **`x-codeide.usages`** (`experimental` : `{version: 1, multiFichiers:
+  true, groupes: true, plafondRendu: 2000}`) — consommer le champ avant
+  de grouper.
+- **Opportunités à consommer côté client** (aucune urgente, le moteur
+  sert déjà la couleur/l'arbre aux clients qui les demandent) :
+  `textDocument/semanticTokens/full` (légende 8 types — la règle « PAS de
+  jetons sémantiques » de la matrice ADR 0015 est LEVÉE : le client peut
+  remplacer sa coloration de repli) ; `textDocument/usagesGroupes` (vue
+  arborescente Find Usages — déclaration en racine de groupe, offsets
+  ABSOLUS, plafond honnête : afficher `total` quand `tronque`) ; kinds
+  `source.*`/`refactor.*` des actions de code (organizeImports,
+  génération, intentions, extract/inline/safe-delete/change signature) ;
+  `codeAction/resolve` réel ; `workDoneProgress` ; `willRenameFiles` ;
+  `documentHighlight` kinds `Write` complets (styles lecture/écriture du
+  client K2 exploitables à 100 %). Contrats : `USAGE.md` du moteur
+  (§7.16/§7.20–§7.27, §9.3–§9.5).
+
+### 2. État
+
+- Validation hôte : 258 tests / 0 échec (chaîne CI complète en local,
+  même commande que `ci.yml`) ; `:lsp:kotlin` 469 / 0 (baseline
+  régénérée). Le moteur 1.12.0 embarque 900 tests / 0 échec, build strict
+  P1–P8 VERT, banc N1 tenu, et les gates corpus réel V-A2 (P3 : 6 FP sur
+  111 700 lignes = 0,054/1 000 ; P4 rappel 0,991 ; P7 : 28 renommages
+  sûrs / 0 cassé).
+- Retour arrière : inverser la montée (catalogue `codeide-lsp = "1.23.6"`
+  + pin miroir `codeide-lsp-java = "1.1.6"`) — le moteur 1.1.6 reste
+  résolu sur le registre.
+
 ## 1.23.3 — LE PIN MOTEUR 1.1.3 (superDefinition reconnu, familles « unused » élargies, déclencheur @)
 
 > Version de MAINTENANCE : l'hôte ne change PAS d'une ligne — seule la
