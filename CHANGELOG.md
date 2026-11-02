@@ -1,5 +1,30 @@
 # Changelog — codeide-lsp
 
+## 1.24.2 (2026-11-02)
+
+- **Montée du pin moteur : `codeide-lsp-java = "1.12.1"` → `"1.12.2"`**
+  (complément V-A2 côté moteur — le repli lexical Kotlin exercé SANS
+  classes compilées). Une passe de préparation du corpus AnySoftKeyboard
+  sans `built_in_kotlinc` (dépendances projet substituées, aucun build
+  déclenché) a exposé ce que le montage canonique masque : le repli
+  lexical de l'ADR 0022 synthétisait toute classe Kotlin FINALE —
+  l'héritage Java depuis une `open class` Kotlin était REFUSÉ (cas réel :
+  `PackBroadcastReceiverBase`, corpus AnySoftKeyboard @8cf81a3a). Le
+  moteur 1.12.2 fait capturer à `DeclarationsKotlin` les modificateurs
+  (open/abstract/sealed/data/value) : finale par défaut SAUF
+  open/abstract/sealed (classe), jamais pour une interface ; object/
+  enum class et facades restent finales. Sur cette passe, FP/1 000
+  lignes mesuré 0,843 → 0,0444 (le restant = limite documentée des
+  MEMBRES d'object Kotlin, périmètre ADR 0022, arbitrage différé). Sur
+  l'appareil : un projet mixte Java/Kotlin dont les classes Kotlin ne
+  sont PAS encore compilées ne produit plus le faux « cannot subclass
+  the final class ».
+- **Aucune adaptation hôte requise** : la façade `jo.codeide.lsp.java.*`
+  est inchangée, aucune capability ne bouge — `:lsp:host` compile et
+  passe ses 258 tests tels quels avec le pin 1.12.2 (2 régressions
+  moteur : `DeclarationsKotlinTest` « héritage Java depuis open class
+  accepté » / « classe non ouverte refusée » + fixture `Hierarchie.kt`).
+
 ## 1.24.1 (2026-11-01)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.12.0"` → `"1.12.1"`**

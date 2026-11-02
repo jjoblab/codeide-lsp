@@ -12,6 +12,37 @@
 > Views/XML) et 1.12.0 (companion objects ADR 0222, sélection par types
 > complets ADR 0223).
 
+## 1.24.2 — LE PIN MOTEUR 1.12.2 (complément V-A2 : le repli lexical Kotlin n'invente plus de classes finales)
+
+> Version de MAINTENANCE de montée : l'hôte ne change PAS d'une ligne —
+> seule la coordonnée du moteur Java passe de 1.12.1 à **1.12.2**
+> (complément V-A2 du 02/11/2026, PV
+> `mesures/2026-11-02-va2-complement-repli-lexical.txt` côté code-lsp).
+> Aucune capability ne bouge, le garde-fou L0 et sa baseline restent
+> valables.
+
+### 1. Ce que CodeIDE doit faire
+
+- **La montée seule suffit** : catalogue `codeide-lsp = "1.24.2"` + pin
+  miroir `codeide-lsp-java = "1.12.2"`. Aucune adaptation client.
+- **Ce qui change sur l'appareil** : dans un projet mixte Java/Kotlin
+  DONT LES CLASSES KOTLIN NE SONT PAS ENCORE COMPILÉES (première
+  ouverture, avant tout build), une classe Java qui étend une `open
+  class` Kotlin n'est plus accusée à tort « cannot subclass the final
+  class ». Le repli lexical respecte désormais open/abstract/sealed ;
+  object/enum class et facades restent finales (fidélité conservée).
+- **Limite documentée (inchangée, arbitrage différé)** : les MEMBRES
+  d'un `object` Kotlin ne sont pas extraits par le scanner lexical
+  (périmètre ADR 0022 : top-level uniquement) — un appel de membre
+  d'object avant compilation reste signalé jusqu'aux classes compilées.
+
+### 2. État
+
+- Validation hôte : 258 tests / 0 échec avec le pin 1.12.2 (chaîne
+  complète, même commande que `ci.yml`). Moteur 1.12.2 : 949 tests /
+  0 échec dont les 2 régressions DeclarationsKotlinTest, CI verte sur
+  le commit tagué 6f2d2df.
+
 ## 1.24.1 — LE PIN MOTEUR 1.12.1 (hotfix retours appareil : fin du serveur figé en pleine frappe)
 
 > Version de MAINTENANCE de montée : l'hôte ne change PAS d'une ligne —
