@@ -1,12 +1,13 @@
 package jo.codeide.lsp.host.utilisateurs
 
-import jo.codeide.lsp.host.KotlinLanguageServer
 import jo.codeide.lsp.host.PhaseIndexation
 import jo.codeide.lsp.host.SessionLsp
 import jo.codeide.lsp.host.SessionLspKotlin
 import jo.codeide.lsp.host.SessionLspXml
+import jo.codeide.lsp.host.SondesIndexPack
 import jo.codeide.lsp.host.XmlLanguageServer
 import jo.codeide.lsp.java.protocole.ServeurLangageJava
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -18,6 +19,7 @@ import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -272,20 +274,17 @@ class ExperienceU2ViewsE2ETest {
             TimeUnit.MILLISECONDS.sleep(2000)
         }
 
-        // ── Façade KOTLIN nourrie + attente du PRET moteur ────────────
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
+        // ── Façade KOTLIN nourrie (bascule ADR 0136 : le pack décode ses
+        // propres jars — la vue fusion n'est plus consommée ; la fenêtre
+        // d'état se referme au verdict du guichet, la couverture réelle
+        // est attendue par la SONDE ci-dessous) ───────────────────────
         val facadeKotlin = SessionLspKotlin(racineProjet = projet, sessionJava = sessionJava)
-        facadeKotlin.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facadeKotlin.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
-        val serveurKotlin = facadeKotlin.serveur() as KotlinLanguageServer
+        facadeKotlin.appliquerClasspath(resultat)
+        val serveurKotlin = facadeKotlin.serveur() as ServeurLangageKotlin
         serveurKotlin.connect(espion)
         serveurKotlin.initialize(InitializeParams()).join()
+        serveurKotlin.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveurKotlin)
 
         // ── didOpen des fichiers KOTLIN ────────────────────────────────
         for (fichier in fichiersKotlin) {
@@ -477,7 +476,7 @@ class ExperienceU2ViewsE2ETest {
     @Suppress("LongMethod")
     private fun sonderHovers(
         serveurJava: ServeurLangageJava,
-        serveurKotlin: KotlinLanguageServer,
+        serveurKotlin: ServeurLangageKotlin,
         contenus: Map<File, String>,
         sources: File,
         projet: File,
@@ -559,7 +558,7 @@ class ExperienceU2ViewsE2ETest {
      */
     @Suppress("LongMethod")
     private fun sonderCompletions(
-        serveurs: Triple<ServeurLangageJava, KotlinLanguageServer, XmlLanguageServer>,
+        serveurs: Triple<ServeurLangageJava, ServeurLangageKotlin, XmlLanguageServer>,
         contenus: Map<File, String>,
         sources: File,
         projet: File,

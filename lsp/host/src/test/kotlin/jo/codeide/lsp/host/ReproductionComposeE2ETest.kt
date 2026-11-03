@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -9,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.TextDocumentItem
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -149,22 +151,19 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
                 sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET }
             }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
 
         // ── Façade Kotlin nourrie + attente du PRET moteur ─────────────
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
+        facade.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état se referme au verdict du
+        // guichet (PRET immédiat) — la couverture RÉELLE de l'index est
+        // attendue par la SONDE après initialize (SondesIndexPack).
         val espion = EspionClient()
-        val serveur = facade.serveur() as KotlinLanguageServer
+        val serveur = facade.serveur() as ServeurLangageKotlin
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveur)
 
         // ── Le fichier du propriétaire, AVANT le nourrissage (le scan
         //    doit le voir — miroir du disque réel) ─────────────────
@@ -265,20 +264,17 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
                 sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET }
             }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
+        facade.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état se referme au verdict du
+        // guichet (PRET immédiat) — la couverture RÉELLE de l'index est
+        // attendue par la SONDE après initialize (SondesIndexPack).
         val espion = EspionClient()
-        val serveur = facade.serveur() as KotlinLanguageServer
+        val serveur = facade.serveur() as ServeurLangageKotlin
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveur)
 
         val source =
             """
@@ -363,18 +359,15 @@ fun ComposeAppTheme(contenu: @Composable () -> Unit) {
                 sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET }
             }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
-        val serveur = facade.serveur() as KotlinLanguageServer
+        facade.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état se referme au verdict du
+        // guichet (PRET immédiat) — la couverture RÉELLE de l'index est
+        // attendue par la SONDE après initialize (SondesIndexPack).
+        val serveur = facade.serveur() as ServeurLangageKotlin
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveur)
 
         val source =
             """

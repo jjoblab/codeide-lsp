@@ -1,9 +1,10 @@
 package jo.codeide.lsp.host.utilisateurs
 
-import jo.codeide.lsp.host.KotlinLanguageServer
 import jo.codeide.lsp.host.PhaseIndexation
 import jo.codeide.lsp.host.SessionLsp
 import jo.codeide.lsp.host.SessionLspKotlin
+import jo.codeide.lsp.host.SondesIndexPack
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -16,6 +17,7 @@ import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -190,22 +192,19 @@ class ExperienceU4GradleE2ETest {
                 sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET }
             }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
 
         // ── Façade Kotlin nourrie + attente du PRET moteur ─────────────
         val facade = SessionLspKotlin(racineProjet = projet, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
+        facade.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état se referme au verdict du
+        // guichet (PRET immédiat) — la couverture RÉELLE de l'index est
+        // attendue par la SONDE après initialize (SondesIndexPack).
         val espion = EspionClient()
-        val serveur = facade.serveur() as KotlinLanguageServer
+        val serveur = facade.serveur() as ServeurLangageKotlin
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveur)
 
         // ── didOpen de CHAQUE script, comme un éditeur au démarrage ──
         val contenus = mutableMapOf<File, String>()
@@ -419,7 +418,7 @@ class ExperienceU4GradleE2ETest {
 
     /** Sonde de complétion à [position] — rend la liste d'items offerts. */
     private fun sonderCompletion(
-        serveur: KotlinLanguageServer,
+        serveur: ServeurLangageKotlin,
         fichier: File,
         position: Position,
         libelle: String,

@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.lsp.model.ClasspathInstantane
 import jo.codeide.lsp.model.EnsemblesSources
 import jo.codeide.lsp.model.ModuleLsp
@@ -10,6 +11,7 @@ import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.FileChangeType
 import org.eclipse.lsp4j.FileEvent
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.PublishDiagnosticsParams
@@ -127,12 +129,33 @@ class SurveillanceFichiersLangagesTest {
         }
     }
 
-    /** Serveur Kotlin réel + espion branchés (initialize fait). */
-    private fun serveurKotlin(espace: Espace): Pair<KotlinLanguageServer, EspionClient> {
-        val serveur = espace.kotlin.serveur() as KotlinLanguageServer
+    /**
+     * Attend la publication de diagnostics d'une URI (debounce 50 ms du
+     * pack — la publication est ASYNCHRONE, jamais synchrone au didOpen ;
+     * `depuis` ignore les publications antérieures à cet indice).
+     */
+    private fun attendrePublication(
+        espion: EspionClient,
+        uri: String,
+        depuis: Int = 0,
+        delaiMs: Long = 10_000,
+    ): org.eclipse.lsp4j.PublishDiagnosticsParams {
+        val fin = System.currentTimeMillis() + delaiMs
+        while (System.currentTimeMillis() < fin) {
+            val recue = espion.recus.drop(depuis).lastOrNull { it.uri == uri }
+            if (recue != null) return recue
+            Thread.sleep(50)
+        }
+        throw AssertionError("aucune publication de $uri après $delaiMs ms")
+    }
+
+    /** Serveur Kotlin du pack réel + espion branchés (initialize + initialized). */
+    private fun serveurKotlin(espace: Espace): Pair<ServeurLangageKotlin, EspionClient> {
+        val serveur = espace.kotlin.serveur() as ServeurLangageKotlin
         val espion = EspionClient()
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).get(10, TimeUnit.SECONDS)
+        serveur.initialized(InitializedParams())
         return serveur to espion
     }
 
@@ -152,25 +175,26 @@ class SurveillanceFichiersLangagesTest {
         val espace = espaceAvecSurveillanceManuelle(racine)
         try {
             // Le classpath Kotlin connaît la racine (scan des sources).
-            espace.kotlin.appliquerModele(modeleUneRacine(sources), null)
+            espace.kotlin.appliquerModele(modeleUneRacine(sources))
             val (serveur, espion) = serveurKotlin(espace)
             try {
                 // A.kt OUVERT référence util() — Autre.kt FERMÉ ne la déclare
-                // pas encore : la publication initiale porte kt.unresolved.
+                // pas encore : la publication initiale porte kt.unresolved
+                // (débouncée 50 ms par le pack : attente bornée).
                 val a = sources.resolve("A.kt")
                 a.writeText("fun principal() {\n    util()\n}\n")
                 serveur.textDocumentService.didOpen(
                     DidOpenTextDocumentParams(TextDocumentItem(a.toURI().toString(), "kotlin", 1, a.readText())),
                 )
-                val initiale = espion.recus.last()
+                val initiale = attendrePublication(espion, a.toURI().toString())
                 assertTrue(
                     initiale.diagnostics.any { it.code?.left == "kt.unresolved" },
                     "util() non déclaré : la publication initiale porte kt.unresolved",
                 )
 
                 // Modification EXTERNE de Autre.kt (terminal, build Gradle) :
-                // un tour RÉEL du surveillant produit l'événement, la session
-                // le pousse (le chemin complet de production).
+                // un tour RÉEL du surveillant produit l'événement, la façade
+                // le diffuse (le chemin complet de production).
                 val surveillant = SurveillantFichiersHote(racine, periodeMs = 0L)
                 val avant = surveillant.instantane()
                 val autre = sources.resolve("Autre.kt")
@@ -179,13 +203,27 @@ class SurveillanceFichiersLangagesTest {
                 assertTrue(evenements.isNotEmpty(), "le .kt externe modifié produit un événement")
                 espace.session.pousserEvenementsFichiers(DidChangeWatchedFilesParams(evenements))
 
-                // Le serveur Kotlin a RAFRAÎCHI ses sources puis republié :
-                // util() est désormais résolue — plus de kt.unresolved.
-                val apres = espion.recus.last()
+                // DELTA ASSUMÉ de la bascule ADR 0136 : le serveur du pack
+                // RAFRAÎCHIT son scan sur l'événement (fil dédié) mais ne
+                // REPUBLIE PAS spontanément les documents ouverts — la
+                // republication part à la PROCHAINE ÉDITION (didChange).
+                // La preuve du rafraîchissement : le même texte repoussé
+                // (nudge) republie SANS kt.unresolved — util() est résolue.
+                Thread.sleep(500) // le scan rafraîchi du pack (fil dédié)
+                val compteAvant = espion.recus.size
+                serveur.textDocumentService.didChange(
+                    org.eclipse.lsp4j.DidChangeTextDocumentParams(
+                        org.eclipse.lsp4j.VersionedTextDocumentIdentifier(a.toURI().toString(), 2),
+                        listOf(
+                            org.eclipse.lsp4j.TextDocumentContentChangeEvent(a.readText()),
+                        ),
+                    ),
+                )
+                val apres = attendrePublication(espion, a.toURI().toString(), depuis = compteAvant)
                 assertEquals(a.toURI().toString(), apres.uri)
                 assertTrue(
                     apres.diagnostics.none { it.code?.left == "kt.unresolved" },
-                    "après l'événement externe, util() est résolue (diagnostics rafraîchis)",
+                    "après l'événement externe et le nudged didChange, util() est résolue",
                 )
             } finally {
                 serveur.shutdown().get(10, TimeUnit.SECONDS)
@@ -260,29 +298,53 @@ class SurveillanceFichiersLangagesTest {
         val racine = dossierTemp.resolve("projet-arret").apply { mkdirs() }
         val espace = espaceAvecSurveillanceManuelle(racine)
         try {
+            // Le classpath Kotlin connaît la racine (scan des sources —
+            // SANS lui, l'index est muet : aucune preuve, aucun diagnostic).
+            espace.kotlin.appliquerModele(modeleUneRacine(racine))
             val premier = serveurKotlin(espace)
             val second = serveurKotlin(espace)
-            // Un document OUVERT sur le second : la poussée d'un événement
-            // externe se voit par sa REPUBLICATION.
+            // Un document OUVERT sur le second, référençant une fonction
+            // DÉCLARÉE NULLE PART au départ : publication initiale à
+            // kt.unresolved (débouncée — attente bornée).
             val b = racine.resolve("B.kt")
-            b.writeText("val x = 1\n")
+            b.writeText("fun principal() {\n    externe()\n}\n")
             second.first.textDocumentService.didOpen(
                 DidOpenTextDocumentParams(TextDocumentItem(b.toURI().toString(), "kotlin", 1, b.readText())),
             )
+            val initiale = attendrePublication(second.second, b.toURI().toString())
+            assertTrue(
+                initiale.diagnostics.any { it.code?.left == "kt.unresolved" },
+                "externe() non déclarée : publication initiale à kt.unresolved",
+            )
             // Le PREMIER serveur est arrêté (shutdown) : il quitte la liste
             // des vivants de la façade — la poussée ne doit l'ATTEINDRE
-            // que le second (et ne jamais lever côté arrêté).
+            // QUE le second (et ne jamais lever côté arrêté).
             premier.first.shutdown().get(10, TimeUnit.SECONDS)
             premier.first.exit()
-            val publicationsAvant = second.second.recus.size
+            // Événement EXTERNE : Externe.kt déclare désormais la fonction.
+            // Le vivant RAFRAÎCHIT son scan (delta bascule ADR 0136 : pas
+            // de republication spontanée) — la preuve vit au nudged
+            // didChange SUIVANT.
+            racine.resolve("Externe.kt").writeText("fun externe() {}\n")
             espace.session.pousserEvenementsFichiers(
                 DidChangeWatchedFilesParams(
-                    listOf(FileEvent(racine.resolve("x.kt").toURI().toString(), FileChangeType.Changed)),
+                    listOf(FileEvent(racine.resolve("Externe.kt").toURI().toString(), FileChangeType.Created)),
                 ),
             )
+            Thread.sleep(500) // le scan rafraîchi du pack (fil dédié)
+            val compteAvant = second.second.recus.size
+            second.first.textDocumentService.didChange(
+                org.eclipse.lsp4j.DidChangeTextDocumentParams(
+                    org.eclipse.lsp4j.VersionedTextDocumentIdentifier(b.toURI().toString(), 2),
+                    listOf(
+                        org.eclipse.lsp4j.TextDocumentContentChangeEvent(b.readText()),
+                    ),
+                ),
+            )
+            val apres = attendrePublication(second.second, b.toURI().toString(), depuis = compteAvant)
             assertTrue(
-                second.second.recus.size > publicationsAvant,
-                "le serveur VIVANT a reçu la poussée (republication de son document ouvert)",
+                apres.diagnostics.none { it.code?.left == "kt.unresolved" },
+                "le serveur VIVANT a rafraîchi son scan (externe() résolue après le nudged didChange)",
             )
             second.first.shutdown().get(10, TimeUnit.SECONDS)
             second.first.exit()

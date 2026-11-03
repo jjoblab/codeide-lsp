@@ -2,7 +2,7 @@ package jo.codeide.lsp.host
 
 import jo.codeide.lsp.java.EnvironnementCompilation
 import jo.codeide.lsp.java.protocole.ServeurLangageJava
-import jo.lspkotlin.api.SessionLangageKotlin
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.lspxml.api.SessionLangageXml
 import org.eclipse.lsp4j.InitializeParams
 import org.eclipse.lsp4j.ServerCapabilities
@@ -65,7 +65,7 @@ class CapacitesLspPariteTest {
 
     @Test
     fun `kotlin - table = capacites reelles du serveur`() {
-        val serveur = KotlinLanguageServer(proxyPassif(SessionLangageKotlin::class.java), "version-test")
+        val serveur = ServeurLangageKotlin()
         val capacites = capaciteReelles(serveur)
         assertEquals(
             CapacitesAnnoncees.capacites(LangageLsp.KOTLIN) - CapaciteLsp.DIAGNOSTICS,
@@ -105,7 +105,7 @@ class CapacitesLspPariteTest {
 
     @Test
     fun `kotlin - table COMPLETE des capacites annoncees (L0)`() {
-        val serveur = KotlinLanguageServer(proxyPassif(SessionLangageKotlin::class.java), "version-test")
+        val serveur = ServeurLangageKotlin()
         val resultat = serveur.initialize(InitializeParams()).get(10, TimeUnit.SECONDS)
         assertEquals(
             TABLE_KOTLIN,
@@ -437,16 +437,27 @@ class CapacitesLspPariteTest {
 
         /**
          * Table COMPLÈTE attendue du serveur Kotlin (L0) — miroir exact
-         * de `KotlinLanguageServer.initialize` : toute divergence (ajout,
-         * retrait, détail) fait tomber le test.
+         * du `initialize` du SERVEUR DU PACK NEUF (bascule ADR 0136 :
+         * jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin — 19
+         * capacités annoncées et servies, 7 absentes honnêtes,
+         * CapacitesServeur du pack) : toute divergence (ajout, retrait,
+         * détail) fait tomber le test.
+         *
+         * Deltas ASSUMÉS vs l'adaptateur ancien : les déclencheurs de
+         * complétion passent à `.(` (miroir du moteur, l'annotation `@`
+         * n'armant pas la complétion Kotlin côté pack) ; les kinds
+         * quickfix sont annoncés ; l'encodage UTF-16 est négocié ; la
+         * super-définition expérimentale n'est PLUS annoncée
+         * (extension propre Java — le pack la servira au fil des vagues,
+         * ADR 0136 étape B).
          */
         private val TABLE_KOTLIN: Map<String, String> =
             linkedMapOf(
                 "synchronisation" to "complète",
-                "complétion" to "déclencheurs .:",
+                "complétion" to "déclencheurs .(",
                 "survol" to "oui",
                 "définition" to "oui",
-                "actions de code" to "oui",
+                "actions de code" to "quickfix",
                 "symboles de document" to "oui",
                 "pliage" to "oui",
                 "aide à la signature" to "déclencheurs (,",
@@ -460,10 +471,7 @@ class CapacitesLspPariteTest {
                 "indices en ligne" to "oui",
                 "symboles d'espace" to "oui",
                 "plage de sélection" to "oui",
-                // ADR 0210 : GO TO « Super » — méthode personnalisée
-                // textDocument/superDefinition, annoncée dans
-                // experimental (pattern jdt.ls, miroir du LSP Java).
-                "super-définition (expérimental)" to "oui",
+                "encodage de position" to "utf-16",
             )
 
         /**

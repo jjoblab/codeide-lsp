@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -105,6 +106,52 @@ class AlignementLsp4jTest {
                     ),
                 ).get(30, TimeUnit.SECONDS)
         return reponse.left ?: reponse.right.items
+    }
+
+    /**
+     * Miroir KOTLIN (bascule ADR 0136) : le PACK langue compile contre
+     * lsp4j 0.21.2 (même épinglage que :java — le câble cel-lsp étant
+     * commun) et la résolution de :lsp:host prend 0.22.0 : le serveur du
+     * pack (binaire 0.21.2) doit fonctionner SOUS 0.22.0 — liaisons
+     * initialize/initialized/didOpen/completion/shutdown/exit, la
+     * complétion proposant la fonction LOCALE du document (le modèle du
+     * document prime — aucune dépendance à l'index).
+     */
+    @Test
+    fun `kotlin - le serveur du pack (0-21-2) fonctionne sous 0-22-0`() {
+        val serveur = ServeurLangageKotlin()
+        run {
+            val resultat =
+                serveur
+                    .initialize(org.eclipse.lsp4j.InitializeParams())
+                    .get(10, TimeUnit.SECONDS)
+            assertTrue(resultat.serverInfo.name.isNotBlank(), "serverInfo rempli par le pack")
+            serveur.initialized(org.eclipse.lsp4j.InitializedParams())
+
+            val uri = (tmp.resolve("sonde.kt")).toUri().toString()
+            val source = "fun salut() {}" + "\n" + "fun appel() { sal }" + "\n"
+            serveur.textDocumentService.didOpen(
+                org.eclipse.lsp4j.DidOpenTextDocumentParams(
+                    org.eclipse.lsp4j.TextDocumentItem(uri, "kotlin", 1, source),
+                ),
+            )
+            val reponse =
+                serveur.textDocumentService
+                    .completion(
+                        org.eclipse.lsp4j.CompletionParams(
+                            org.eclipse.lsp4j.TextDocumentIdentifier(uri),
+                            org.eclipse.lsp4j.Position(1, 17),
+                        ),
+                    ).get(30, TimeUnit.SECONDS)
+            val items = reponse.left ?: reponse.right.items
+            assertTrue(
+                items.any { it.label.startsWith("salut") },
+                "la complétion propose la fonction locale (liaison 0.21.2 sous 0.22.0) : " +
+                    items.joinToString { it.label },
+            )
+            serveur.shutdown().get(10, TimeUnit.SECONDS)
+            serveur.exit()
+        }
     }
 
     private companion object {

@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -9,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.TextDocumentItem
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -114,7 +116,7 @@ actual class Plateforme actual constructor(actual val nom: String) {
         nom: String,
         racines: List<File>,
         jarStdlib: File,
-    ): Quadruple<SessionLsp, SessionLspKotlin, KotlinLanguageServer, EspionClient> {
+    ): Quadruple<SessionLsp, SessionLspKotlin, ServeurLangageKotlin, EspionClient> {
         val racine = dossierTemp.resolve(nom)
         val resultat =
             ClasspathResult(
@@ -136,20 +138,17 @@ actual class Plateforme actual constructor(actual val nom: String) {
         runBlocking {
             withTimeout(300_000) { sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET } }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
-        val serveur = facade.serveur() as KotlinLanguageServer
+        facade.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état se referme au verdict du
+        // guichet (PRET immédiat) — la couverture RÉELLE de l'index est
+        // attendue par la SONDE après initialize (SondesIndexPack).
+        val serveur = facade.serveur() as ServeurLangageKotlin
         val espion = EspionClient()
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveur)
         return Quadruple(sessionJava, facade, serveur, espion)
     }
 

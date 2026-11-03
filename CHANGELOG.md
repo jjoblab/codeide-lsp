@@ -1,5 +1,61 @@
 # Changelog — codeide-lsp
 
+## 1.25.0 (2026-11-03)
+
+- **BASCULE KOTLIN ADR 0136 (GK-027/KH16 — le chaînon Kotlin est
+  FRANCHI)** : `:lsp:host` consomme le **PACK LANGUE KOTLIN RÉÉCRIT** de
+  [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp) —
+  `jo.codeide.lsp.kotlin:jo-codeide-lsp-kotlin:1.13.0` (PREMIÈRE
+  PUBLICATION du pack, Q-K4 tranché le 03/11/2026 : mécanisme miroir
+  `:java`, façade unique, même dépôt GitHub Packages). Le serveur servi
+  est le `ServeurLangageKotlin` du pack (serveur LSP4J in-process, 19
+  capacités annoncées et servies, 7 absentes honnêtes, gardes I2/I3,
+  serverInfo `lspkotlin` à la version réelle du descripteur D6) ; la
+  session naît du SPI du pack (`ServiceMoteurLangageKotlin.unique`,
+  chargement ServiceLoader) et se nourrit par le guichet ADR 0211
+  (`definirClasspath` — moteur nourricier, passes sur fil dédié). L'ancien
+  adaptateur `KotlinLanguageServer` (1 598 l.) est RETIRÉ du chemin de
+  connexion ; le module vendored `:lsp:kotlin` reste au build, GELÉ, plus
+  consommé par AUCUN module (retrait physique après « 2 versions sans
+  régression », I6). Montée simultanée du pin moteur Java
+  `codeide-lsp-java = "1.12.2"` → `"1.13.0"` (V-H : répartiteur au
+  protocole, 3 voies FRAPPE/NAVIGATION/CONFORT).
+- **Rails de résolution** (`settings.gradle.kts`) : mavenLocal filtré +
+  GitHub Packages `jjoblab/code-lsp` étendus au groupe
+  `jo.codeide.lsp.kotlin` ; composite OPT-IN `freres.sources`
+  (substitution `:kotlin`, propriété `moteur-kotlin.dir` /
+  `CODEIDE_MOTEUR_KOTLIN_DIR`).
+- **Deltas ASSUMÉS du pack (consignés, ADR 0136 étape B — les capacités
+  reviennent au fil des vagues)** : `textDocument/superDefinition` non
+  annoncé côté Kotlin (extension propre Java — l'entrée UI disparaît
+  jusqu'à la vague) ; appel qualifié inconnu non signalé en MODE SCRIPT
+  (voie 6 — la preuve de TYPE qualifié reste servie, garde D3 miroir
+  fiche 027) ; pas de republication spontanée des documents ouverts sur
+  événements de fichiers externes (le scan se rafraîchit sur fil dédié,
+  la republication part à l'édition suivante) ; publications asynchrones
+  débouncées 50 ms ; `isIncomplete=false` (l'ancien posait `true`
+  permanent — comportement consigné de l'ancienne chaîne).
+- **Retraits de suites** (autorité comportementale = la suite du PACK
+  côté code-lsp : cahier 469/469 comportements + 12 cas dorés, 523
+  tests, CI 10/10 bloquante) : `KotlinLanguageServerTest` (53),
+  `KotlinLanguageServerL2Test` (9), `AdaptateurVueClasspathTest`,
+  `ScenariosFondamentauxTest` (A1–B10), `ScenariosNavigationTest`
+  (C1–E9), `ScenariosEditionTest`, `ScenariosSondesTest` — suites L1/L2
+  de l'ADAPTATEUR ANCIEN (formes du fil : plages, kinds, sévérités,
+  drapeaux). **Conservées et VERTES contre le pack** :
+  `CapacitesLspPariteTest` (table L0 miroir du pack — 19 capacités),
+  `AlignementLsp4jTest` (binaire 0.21.2 sous 0.22.0, cas pack ajouté),
+  `SessionLspKotlinTest`/`SessionLspKotlinIndexationTest` (façade —
+  fenêtre ADR 0211), `ScenariosKotlinHeritageTest` KH1–KH4 (régressions
+  appareil rapportées, transport stdio RÉEL), `ReproductionFrappeAppareilTest`,
+  `Reproduction{Kmp,GradleKts,GradleModele,Compose,Views,AbsenceProjet}E2ETest`,
+  `ExperienceU1–U4`, `SurveillanceFichiersLangagesTest` — 121 tests hôte
+  VERTS.
+- **Sonde d'index** (`SondesIndexPack`) : la fenêtre d'état du pack ne
+  dit rien de la couverture réelle — les scénarios à preuves attendent
+  la couverture par une SONDE LSP honnête (complétion du stdlib
+  « println », paramétrable par classpath).
+
 ## 1.24.2 (2026-11-02)
 
 - **Montée du pin moteur : `codeide-lsp-java = "1.12.1"` → `"1.12.2"`**

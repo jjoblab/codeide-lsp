@@ -22,11 +22,9 @@ val jetonPackages: String? =
         .orElse(providers.environmentVariable("CODEIDE_PACKAGES_PAT"))
         .orNull
 
-// Interrupteur du mode composite (opt-in, même convention que CodeIDE) :
-// substituer le moteur Java RÉÉCRIT par le PROJET du checkout frère
-// code-lsp pour une session de chirurgie croisée multi-dépôts — sans
-// lui, la coordonnée résout en binaire (mavenLocal d'abord, Packages
-// ensuite).
+// Moteur Kotlin RÉÉCRIT (bascule ADR 0136 du 03/11/2026 — INTEGRATION-CODEIDE
+// Kotlin du dépôt code-lsp) : MÊME convention que le moteur Java ci-dessous.
+// Interrupteur du mode composite (opt-in) partagé : freres.sources.
 val modeSourcesMoteur: Boolean =
     providers.gradleProperty("freres.sources").isPresent ||
         providers.environmentVariable("CODEIDE_FRERES_SOURCES").isPresent
@@ -34,23 +32,28 @@ val modeSourcesMoteur: Boolean =
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // Moteur Java RÉÉCRIT (bascule §8.5 / INTEGRATION-CODEIDE §3.2.2) :
+        // Moteurs RÉÉCRITS (bascule §8.5 / INTEGRATION-CODEIDE §3.2.2 pour le
+        // Java, ADR 0136 pour le Kotlin) :
         // chemin binaire LOCAL EN TÊTE (avant google/mavenCentral — sinon
         // Central est interrogé d'abord pour ce groupe) — le
         // publishToMavenLocal de code-lsp y fait ombre au registre
         // distant et est consommé immédiatement, sans jeton (DEV).
-        // FILTRE STRICT : seul le groupe du moteur neuf y résout.
+        // FILTRE STRICT : seuls les groupes des moteurs neufs y résolvent.
         mavenLocal {
             content {
                 includeGroup("jo.codeide.lsp.java")
+                includeGroup("jo.codeide.lsp.kotlin")
             }
         }
         if (jetonPackages != null) {
-            // Moteur Java RÉÉCRIT : dépôt jjoblab/code-lsp, même jeton de
-            // lecture, filtre strict sur le groupe du moteur.
+            // Moteurs RÉÉCRITS : dépôt jjoblab/code-lsp, même jeton de
+            // lecture, filtre strict sur les groupes des moteurs.
             maven {
                 url = uri("https://maven.pkg.github.com/jjoblab/code-lsp")
-                content { includeGroup("jo.codeide.lsp.java") }
+                content {
+                    includeGroup("jo.codeide.lsp.java")
+                    includeGroup("jo.codeide.lsp.kotlin")
+                }
                 credentials {
                     username = "jjoblab"
                     password = jetonPackages
@@ -139,6 +142,30 @@ if (modeSourcesMoteur) {
             dependencySubstitution {
                 substitute(module("jo.codeide.lsp.java:jo-codeide-lsp-java"))
                     .using(project(":java"))
+            }
+        }
+    }
+}
+
+// Moteur Kotlin RÉÉCRIT (bascule ADR 0136 du 03/11/2026) — composite
+// OPT-IN sur le MÊME interrupteur freres.sources : le dossier est résolu
+// dans cet ordre : propriété Gradle `moteur-kotlin.dir`, variable
+// d'environnement CODEIDE_MOTEUR_KOTLIN_DIR, puis défaut `../code-lsp`
+// (checkout frère). La SUBSTITUTION remplace la coordonnée du pack par
+// le projet :kotlin du build inclus (l'épinglage par le ref git check
+// out — le pack est UN artefact, aucun compagnon).
+if (modeSourcesMoteur) {
+    val dossierMoteurKotlin: File =
+        providers.gradleProperty("moteur-kotlin.dir")
+            .orElse(providers.environmentVariable("CODEIDE_MOTEUR_KOTLIN_DIR"))
+            .map(rootDir::resolve)
+            .orElse(rootDir.resolve("../code-lsp"))
+            .get()
+    if (dossierMoteurKotlin.resolve("settings.gradle.kts").isFile) {
+        includeBuild(dossierMoteurKotlin) {
+            dependencySubstitution {
+                substitute(module("jo.codeide.lsp.kotlin:jo-codeide-lsp-kotlin"))
+                    .using(project(":kotlin"))
             }
         }
     }

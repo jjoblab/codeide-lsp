@@ -460,6 +460,12 @@ public object OutilsHarnais {
         val connexion = Connexion(processus, lanceur.remoteProxy, lanceur.remoteEndpoint, client, racine, stderr)
         if (initialiser) {
             initialiser(connexion)
+            // Bascule ADR 0136 : la fenêtre d'état de la façade ne dit
+            // rien de la couverture d'index du pack — les scénarios à
+            // PREUVES (kt.unresolved, complétion du classpath) attendent
+            // la couverture par la SONDE LSP (println du stdlib).
+            jo.codeide.lsp.host.SondesIndexPack
+                .attendreClasspath(lanceur.remoteProxy)
         }
         return connexion
     }

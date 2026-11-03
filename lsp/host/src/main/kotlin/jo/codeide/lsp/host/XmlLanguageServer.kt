@@ -84,7 +84,8 @@ import java.util.logging.Logger
  * cel-lsp fabrique, [SessionLspXml.serveur]) — initialize → initialized
  * → didOpen/didChange/didClose → shutdown → exit. Le client est injecté
  * par le transport in-process (cel-lsp appelle `connect` par réflexion,
- * même contrat que `JavaLanguageServer`/`KotlinLanguageServer`).
+ * même contrat que les serveurs des moteurs réécrits du dépôt
+code-lsp).
  *
  * Capacités déclarées (honnêtes, LSP 3.17) : synchronisation de document
  * COMPLÈTE + publication de diagnostics — RIEN d'autre à XE1 (la

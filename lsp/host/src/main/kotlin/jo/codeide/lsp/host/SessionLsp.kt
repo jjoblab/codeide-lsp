@@ -79,8 +79,7 @@ import java.util.logging.Logger
  * contraint (les constructeurs existants compilent inchangés).
  * TooManyFunctions — façade de mission : chaque méthode publique est une
  * FRONTIÈRE consommée (serveur, définitions, vues par langue —
- * vueClasspathKotlin K3, vueNomsXml XE1), pas un regroupement de
- * convenance.
+ * vueNomsXml XE1), pas un regroupement de convenance.
  */
 @Suppress("LongParameterList", "TooManyFunctions")
 public class SessionLsp(
@@ -474,22 +473,6 @@ public class SessionLsp(
         inscrit = serveur
         serveursJava.add(serveur)
         return serveur
-    }
-
-    /**
-     * Vue de classpath NEUTRE Kotlin de l'union courante (K3,
-     * LSP_KOTLIN.md §4.1 « classpath », D4 : la vue d'index fusion
-     * ADR 0111 est PARTAGÉE avec le LSP Kotlin — l'adaptateur est
-     * recréé à CHAQUE appel : les requêtes sous-lisent tant que la
-     * construction n'est pas PRÊTE, jamais de double budget de cache).
-     *
-     * @return l'adaptateur sur la vue courante, `null` avant le premier
-     *         sync réussi (la session Kotlin vit alors en régime
-     *         dégradé : symboles projet seuls — jamais de mensonge).
-     */
-    public fun vueClasspathKotlin(): jo.lspkotlin.api.VueClasspathKotlin? {
-        val vueCourante = orchestrateur.etat() ?: return null
-        return AdaptateurVueClasspath(vueCourante)
     }
 
     /**

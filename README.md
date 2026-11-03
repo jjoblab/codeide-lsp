@@ -15,11 +15,16 @@ le 2026-10-17** (`git filter-repo`, historique conservé — 339 commits).
 > ADR 0211 : une session LSP Java vivante par projet, moteurs résolus PAR
 > REQUÊTE, contextes remplacés À CHAUD par les syncs. Ce dépôt reste
 > l'habitat des LSP **Kotlin** et **XML**, du **modèle**, de l'**index**
-> et de l'**hôte** (`:lsp:host`) jusqu'à la migration ou réécriture
-> complète des LSP Kotlin et XML vers `code-lsp` (à venir, décision
-> propriétaire). Le module archivé reste au build, GELE et plus consommé
-> par AUCUN module ; retrait physique après « 2 versions sans
-> régression ».
+> et de l'**hôte** (`:lsp:host`). **BASCULE KOTLIN ADR 0136
+> (03/11/2026, v1.25.0)** : le chaînon Kotlin est FRANCHI — `:lsp:host`
+> consomme le PACK LANGUE KOTLIN RÉÉCRIT de
+> [`jjoblab/code-lsp`](https://github.com/jjoblab/code-lsp)
+> (`jo.codeide.lsp.kotlin:jo-codeide-lsp-kotlin:1.13.0`, première
+> publication Q-K4 — le serveur `ServeurLangageKotlin` du pack sert les
+> connexions, sessions du SPI D6, nourrissage ADR 0211) ; le module
+> vendored `:lsp:kotlin` suit le sort du Java : GELÉ, plus consommé par
+> AUCUN module, retrait physique après « 2 versions sans régression »
+> (I6). Le XML reste servi par ce dépôt (migration future).
 
 ## Modules
 
@@ -31,7 +36,7 @@ le 2026-10-17** (`git filter-repo`, historique conservé — 339 commits).
 | `:lsp:ecj-art` | JVM (build-time) | Patcher ASM de l'ecj — jamais dans l'APK — **gelé solidairement (ADR 0233)** : ne sert que le moteur vendored archivé |
 | `:lsp:testing` | JVM | Suite d'intégration moteur ↔ index (au-dessus des deux, ADR 0108) |
 | `:lsp:host` | Android (AAR) | L'HÔTE — SessionLsp, orchestrateur sync → modèle → index → moteurs (ADR 0109) |
-| `:lsp:kotlin` | JVM pur | Moteur Kotlin — parseur sur la grammaire officielle du compilateur VENDORÉE (ADR 0115, étapes K1–K3) ; l'Analysis API K2 est écartée (D1) et la compilation K2 différée au tooling (D8) ; suite de parité |
+| `:lsp:kotlin` | JVM pur | **GELÉ (03/11/2026, bascule ADR 0136)** — moteur Kotlin vendored remplacé par le pack langue de [`code-lsp`](https://github.com/jjoblab/code-lsp) v1.13.0 (v1.25.0) ; reste au build (suite de parité du dépôt + digeste du corpus), plus consommé par AUCUN module ; retrait physique après « 2 versions sans régression » (I6) |
 | `:lsp:xml` | JVM pur | Parseur XML Android tolérant écrit main — zéro dépendance (décision X1) |
 
 `kotlin` et `xml` sont des **entités indépendantes** (aucune dépendance

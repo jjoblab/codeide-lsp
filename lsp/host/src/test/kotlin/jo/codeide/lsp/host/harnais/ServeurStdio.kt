@@ -1,9 +1,9 @@
 package jo.codeide.lsp.host.harnais
 
-import jo.codeide.lsp.host.KotlinLanguageServer
 import jo.codeide.lsp.host.PhaseIndexation
 import jo.codeide.lsp.host.SessionLsp
 import jo.codeide.lsp.host.SessionLspKotlin
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -20,11 +20,12 @@ import java.io.File
  * Réplique la chaîne de PRODUCTION complète de CodeIDE, telle que
  * décrite par la matrice des capacités :
  *
- *   SessionLsp (index disque réel, ADR 0111 — la vue fusion nourrie du
- *   kotlin-stdlib RÉEL) → vueClasspathKotlin() (AdaptateurVueClasspath)
- *   → SessionLspKotlin.appliquerClasspath(resultat, vue) (façade)
- *   → facade.serveur() (KotlinLanguageServer, LSP4J 0.22)
- *   → LSPLauncher sur System.in/System.out (vrai transport JSON-RPC).
+ *   SessionLsp (index disque réel, ADR 0111 — le surveillant de fichiers
+ *   relaye les événements externes) → SessionLspKotlin.appliquerClasspath(
+ *   resultat) (façade — bascule ADR 0136 : le pack décode SES jars, la vue
+ *   d'index fusion n'est plus consommée) → facade.serveur()
+ *   (ServeurLangageKotlin du pack, LSP4J 0.22) → LSPLauncher sur
+ *   System.in/System.out (vrai transport JSON-RPC).
  *
  * Le processus est lancé par [HarnaisClientLspTest] avec :
  *   - HARNAIS_RACINE  : racine du projet (sources de test sur disque) ;
@@ -87,8 +88,6 @@ public object ServeurStdio {
                 sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET }
             }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente après index PRÊT" }
-
         // ── Façade Kotlin nourrie + serveur LSP4J sur stdio ────────────
         val facadeKotlin =
             SessionLspKotlin(
@@ -96,23 +95,16 @@ public object ServeurStdio {
                 dossierIndex = dossierIndexKotlin,
                 sessionJava = sessionJava,
             )
-        facadeKotlin.appliquerClasspath(resultat, vue)
-        // ADR 0211/0213 : le nourrissage KOTLIN est asynchrone (fil
-        // dédié du moteur) — le serveur attend son ABOUTISSEMENT par le
-        // FLUX d'état (PRET/PARTIEL), exactement comme CodeIDE attendra
-        // le PRET Java avant d'ouvrir l'éditeur. Les scénarios restent
-        // DÉTERMINISTES (aucune fenêtre de sous-lecture).
-        runBlocking {
-            withTimeout(240_000) {
-                facadeKotlin.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
+        facadeKotlin.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état (CONSTRUCTION → PRET au
+        // verdict du guichet) ne dit rien de la couverture réelle — la
+        // DÉTERMINISATION des scénarios vit côté CLIENT (la sonde
+        // d'index de SondesIndexPack est jouée par le harnais après
+        // initialize/initialized, sur le VRAI transport).
         val serveur = facadeKotlin.serveur()
 
         val lanceur = LSPLauncher.createServerLauncher(serveur, System.`in`, System.out)
-        (serveur as KotlinLanguageServer).connect(lanceur.remoteProxy)
+        (serveur as ServeurLangageKotlin).connect(lanceur.remoteProxy)
         lanceur.startListening().get()
 
         // stdin fermé (le client a fini) : arrêt exhaustif, sortie propre.

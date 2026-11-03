@@ -73,13 +73,21 @@ dependencies {
     // publique — implementation.
     implementation(project(":lsp:index"))
 
-    // Moteur Kotlin (K2, LSP_KOTLIN.md §4.1 « session ») : l'hôte est
-    // l'ADAPTATEUR LSP4J du moteur — le SPI MoteurLangageKotlin traverse
-    // la surface publique (paramètre du constructeur SessionLspKotlin,
-    // injectable pour les tests), donc api. C'est le SEUL type du moteur
-    // visible (D6 : jamais l'implémentation concrète, résolution
-    // ServiceLoader — le pack « langue » futur se branche là).
-    api(project(":lsp:kotlin"))
+    // Moteur Kotlin RÉÉCRIT (bascule ADR 0136 du 03/11/2026 — INTEGRATION-
+    // CODEIDE Kotlin du dépôt code-lsp) : l'hôte consomme le PACK LANGUE
+    // par sa coordonnée (miroir exact du moteur Java ci-dessus). La
+    // surface publique traverse DEUX façades du pack : le serveur LSP4J
+    // in-process (ServeurLangageKotlin — SessionLspKotlin.serveur() en
+    // fait son serveur de connexion) et le SPI du pack
+    // (ServiceMoteurLangageKotlin, contrat D6 — paramètre du constructeur
+    // de SessionLspKotlin, injectable pour les tests), donc api. Le
+    // module vendored :lsp:kotlin de ce dépôt reste au build, GELÉ, plus
+    // consommé par AUCUN module (retrait physique après « 2 versions sans
+    // régression », I6). Résolution : mavenLocal filtré d'abord
+    // (publishToMavenLocal de code-lsp — DEV sans jeton), GitHub Packages
+    // ensuite (jeton de lecture), composite sur opt-in freres.sources
+    // (settings.gradle.kts).
+    api(libs.lsp.kotlin.moteur)
 
     // Moteur XML (XE1, LSP_XML.md §4.1 « session ») : même frontière —
     // le SPI MoteurLangageXml traverse la surface publique (paramètre

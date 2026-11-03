@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -10,6 +11,7 @@ import org.eclipse.lsp4j.CompletionParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.HoverParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -145,18 +147,26 @@ class ReproductionGradleModeleE2ETest {
             acceptable = { it == PhaseIndexation.PRET },
             description = "index Java",
         )
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
+        facade.appliquerClasspath(resultat)
         attendrePhase(
             flux = facade.etatIndexation,
             acceptable = { it == PhaseIndexation.PRET || it == PhaseIndexation.PARTIEL },
             description = "index Kotlin",
         )
-        val serveur = facade.serveur() as KotlinLanguageServer
+        val serveur = facade.serveur() as ServeurLangageKotlin
         val espion = EspionClient()
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        // Le classpath de ce test est GRADLE (PAS de kotlin-stdlib) : la
+        // sonde vise le FQCN JavaVersion du jar core-api réel.
+        SondesIndexPack.attendreClasspath(
+            serveur,
+            texteSonde = "fun sonde() { JavaVers }\n",
+            colonneSonde = 20,
+            libelleAttendu = "JavaVersion",
+        )
 
         // LE script avec un segment QUALIFIÉ Gradle réel : le template
         // « Empty Views Activity » écrit `JavaVersion.VERSION_11`.

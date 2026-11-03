@@ -170,14 +170,23 @@ lsp4j = "0.21.2"
 # v1.23.0). Mise à jour future = bump ici + tag v* côté code-lsp ;
 # résolution : mavenLocal filtré (DEV publishToMavenLocal) puis GitHub
 # Packages jjoblab/code-lsp (jeton CODEIDE_PACKAGES_PAT).
-# MONTÉE 1.12.1 → 1.12.2 (2026-11-02, complément V-A2 — repli lexical
-# Kotlin SANS classes compilées : le scanner synthétisait toute classe
-# Kotlin FINALE, héritage Java depuis une open class refusé (cas réel
-# PackBroadcastReceiverBase du corpus AnySoftKeyboard) ; désormais
-# DeclarationsKotlin capte open/abstract/sealed — finale par défaut
-# SAUF classe ouverte, jamais une interface). Aucune adaptation hôte —
-# la façade jo.codeide.lsp.java.* est inchangée.
-codeide-lsp-java = "1.12.2"
+# MONTÉE 1.12.2 → 1.13.0 (2026-11-03, bascule Kotlin ADR 0136 — V-H :
+# répartiteur au protocole, 3 voies FRAPPE/NAVIGATION/CONFORT sur 29
+# méthodes de document, supersession à valeur, chien de garde du worker
+# du répartiteur — fin de la tempête de requêtes appareil mesurée en
+# file). Aucune adaptation hôte — la façade jo.codeide.lsp.java.* est
+# inchangée.
+codeide-lsp-java = "1.13.0"
+
+# Moteur Kotlin RÉÉCRIT — pack langue (bascule ADR 0136 du 03/11/2026,
+# Q-K4 tranché : miroir :java, façade unique). PREMIÈRE PUBLICATION du
+# pack (tag v1.13.0 côté code-lsp, MÊME run que le moteur Java).
+# CONSOMMATEUR : :lsp:host (api — le serveur LSP4J ServeurLangageKotlin
+# et le SPI ServiceMoteurLangageKotlin traversent sa surface publique).
+# Le pack est UN artefact (code neuf + grammaire vendorée + descripteur
+# D6) ; résolution : mavenLocal filtré (DEV publishToMavenLocal) puis
+# GitHub Packages jjoblab/code-lsp (jeton CODEIDE_PACKAGES_PAT).
+codeide-lsp-kotlin = "1.13.0"
 gson = "2.10.1"
 asm = "9.7"
 junit-jupiter = "5.10.1"
@@ -254,6 +263,12 @@ gradle-tooling-api = { group = "org.gradle", name = "gradle-tooling-api", versio
 # traversent sa surface publique).
 lsp-java-moteur = { group = "jo.codeide.lsp.java", name = "jo-codeide-lsp-java", version.ref = "codeide-lsp-java" }
 lsp-java-ecj-art = { group = "jo.codeide.lsp.java", name = "jo-codeide-lsp-java-ecj-art", version.ref = "codeide-lsp-java" }
+
+# Moteur Kotlin RÉÉCRIT (bascule ADR 0136) : le pack langue — serveur
+# LSP4J + SPI D6 dans UN artefact (grammaire vendorée embarquée).
+# CONSOMMATEUR : :lsp:host (api — SessionLspKotlin expose le serveur et
+# le SPI du pack ; le module vendored :lsp:kotlin n'est plus consommé).
+lsp-kotlin-moteur = { group = "jo.codeide.lsp.kotlin", name = "jo-codeide-lsp-kotlin", version.ref = "codeide-lsp-kotlin" }
 
 # lsp4j pour la façade LSP, gson pour les types de l'ancienne couche app) ;
 # :lsp:ecj-art (patcheur ASM du build) ; :lsp:java en JUnit 5 (suite vendored) ;

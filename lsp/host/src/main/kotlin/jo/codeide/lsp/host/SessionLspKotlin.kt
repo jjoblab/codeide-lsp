@@ -3,21 +3,18 @@ package jo.codeide.lsp.host
 import jo.codeeditor.lsp.LanguageServerDefinition
 import jo.codeeditor.lsp.connection.InProcessStreamConnectionProvider
 import jo.codeeditor.lsp.connection.StreamConnectionProvider
+import jo.codeide.lsp.kotlin.api.ClasspathKotlin
+import jo.codeide.lsp.kotlin.api.EntreeClasspathKotlin
+import jo.codeide.lsp.kotlin.api.KindEntreeKotlin
+import jo.codeide.lsp.kotlin.api.PreviewKotlin
+import jo.codeide.lsp.kotlin.api.ServiceMoteurLangageKotlin
+import jo.codeide.lsp.kotlin.api.SessionLangageKotlin
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.lsp.model.ConvertisseurModeleLsp
 import jo.codeide.lsp.model.KindEntree
 import jo.codeide.lsp.model.LecteurStatistiquesFichier
 import jo.codeide.lsp.model.ProjetLsp
 import jo.codeide.tooling.protocol.ClasspathResult
-import jo.lspkotlin.api.ClasspathKotlin
-import jo.lspkotlin.api.EntreeClasspathKotlin
-import jo.lspkotlin.api.EtatEntreeTravailKotlin
-import jo.lspkotlin.api.EvenementIndexationKotlin
-import jo.lspkotlin.api.KindEntreeKotlin
-import jo.lspkotlin.api.MoteurLangageKotlin
-import jo.lspkotlin.api.PhaseIndexationKotlin
-import jo.lspkotlin.api.PreviewKotlin
-import jo.lspkotlin.api.ServiceMoteurLangageKotlin
-import jo.lspkotlin.api.SessionLangageKotlin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,45 +27,58 @@ import java.util.logging.Level
 import java.util.logging.Logger
 
 /**
- * Façade de la session LSP Kotlin d'un projet (K2 → K3, LSP_KOTLIN.md
- * §5) — miroir volontairement MINCE de [SessionLsp] (Java) : même
- * frontière nette, même cycle de vie piloté par le ViewModel, même
- * transport in-process cel-lsp (ADR 0109 D2 — un changement de
- * transport se brancherait ici sans toucher au moteur ni à l'éditeur).
+ * Façade de la session LSP Kotlin d'un projet — miroir volontairement
+ * MINCE de [SessionLsp] (Java) : même frontière nette, même cycle de vie
+ * piloté par le ViewModel, même transport in-process cel-lsp (ADR
+ * 0109 D2 — un changement de transport se brancherait ici sans toucher
+ * au moteur ni à l'éditeur).
  *
- * Le moteur est résolu par le SPI ServiceLoader ([MoteurLangageKotlin],
- * D6 : c'est le SEUL type du moteur visible de l'hôte — jamais
- * l'implémentation concrète, jamais le parseur) ; chaque connexion LSP
- * reçoit sa PROPRE session moteur ([serveur]), les sessions vivantes
- * sont suivies et [close] referme celles qu'une connexion n'aurait pas
- * arrêtées (contrat « 0 ressource orpheline » du prompt 3).
+ * **Bascule ADR 0136 (03/11/2026)** : le serveur servi est désormais le
+ * SERVEUR LSP4J DU PACK NEUF (`jo-codeide-lsp-kotlin`, coordinate
+ * `jo.codeide.lsp.kotlin:jo-codeide-lsp-kotlin` — l'adaptateur
+ * historique `KotlinLanguageServer` est retiré du chemin de connexion,
+ * miroir exact de la bascule Java §3.2.2 option B) : chaque connexion
+ * reçoit un [ServeurLangageKotlin] dont la session naît du SPI du pack
+ * ([ServiceMoteurLangageKotlin.unique] — chemin de production D6, jamais
+ * une classe interne) et se nourrit du classpath courant. Le pack ANCIEN
+ * (moteur vendored `:lsp:kotlin` de ce dépôt) reste au build, gelé,
+ * plus consommé par AUCUN module — son retrait physique suit la règle
+ * « 2 versions sans régression » (I6).
  *
- * K3 : la façade NOURRIT les sessions — [appliquerClasspath] (post-sync
- * utile) et [appliquerModele] (réouverture, modèle persisté W7)
- * convertissent le résultat tooling en entrées NEUTRES (jars/AAR
- * d'existence vérifiée, racines sources, vue [VueClasspathKotlin]
- * fournie par la session Java qui possède l'index fusion — UNE seule
- * vue, un seul budget de cache, D4) et poussent l'état aux sessions
- * vivantes ; les sessions FUTURES ([serveur]) naissent nourries.
+ * Le nourrissage suit l'ADR 0211 (une fois par synchronisation) :
+ * [appliquerClasspath] / [appliquerModele] convertissent le résultat
+ * tooling en entrées NEUTRES du pack neuf (jars/AAR d'existence vérifiée,
+ * racines sources, dossier d'index) et les confient au MOTEUR
+ * ([ServiceMoteurLangageKotlin.definirClasspath] — le pack neuf est
+ * nourricier : la passe part sur son fil dédié, les sessions se branchent
+ * sans rien relire). Le pack neuf décodant LUI-MÊME ses jars (index
+ * dédié — segments « kotlin-appelables » par empreinte), la VUE d'index fusion
+ * de la session Java n'est plus consommée ici — la couture
+ * [SessionLsp.vueClasspathKotlin] est retirée avec lui.
  *
  * @param racineProjet racine du projet ouvert (identité de la session).
- * @param moteur moteur de langue (SPI) — injectable pour les tests,
- *        résolution ServiceLoader par défaut (échec explicite si le
- *        module n'est pas branché : erreur de build, pas fantôme).
+ * @param moteur SPI du pack langue (injectable pour les tests — la
+ *        résolution par défaut passe par [ServiceMoteurLangageKotlin.unique] :
+ *        ServiceLoader sur le descripteur `META-INF/services` embarqué
+ *        dans le jar du pack, repli moteur noyau du pack).
  * @param lecteurStats couture de statistiques (existence des entrées),
  *        injectable pour les tests.
- * @param sessionJava session Java du MÊME projet (lot L1 du plan 1.3.0) —
- *        quand elle est fournie, la façade s'inscrit à son surveillant
- *        de fichiers : les événements externes (`.kt`/`.kts` modifiés
- *        hors éditeur) atteignent les serveurs Kotlin VIVANTS par le
- *        MÊME chemin que les serveurs Java. `null` = façade autonome
- *        (les événements externes ne la touchent pas — tests, usage
- *        hors projet).
+ * @param dossierIndex répertoire de l'index partagé où persistent les
+ *        segments d'appelables du pack (`kotlin-appelables/<sha>.kidx` —
+ *        le même contrat d'habitat que le pack ancien : les segments
+ *        existants se réutilisent, l'auto-guérison du pack couvre les
+ *        autres cas).
+ * @param sessionJava session Java du MÊME projet (lot L1) — quand elle
+ *        est fournie, la façade s'inscrit à son surveillant de fichiers :
+ *        les événements externes (`.kt`/`.kts` modifiés hors éditeur)
+ *        atteignent les serveurs Kotlin VIVANTS par le MÊME chemin que
+ *        les serveurs Java. `null` = façade autonome (tests, usage hors
+ *        projet).
  */
-@Suppress("LongParameterList", "TooManyFunctions")
+@Suppress("TooManyFunctions")
 public class SessionLspKotlin(
     racineProjet: File,
-    private val moteur: MoteurLangageKotlin = ServiceMoteurLangageKotlin.unique(),
+    private val moteur: ServiceMoteurLangageKotlin = ServiceMoteurLangageKotlin.unique,
     private val lecteurStats: LecteurStatistiquesFichier = LecteurStatistiquesFichierDisque(),
     private val dossierIndex: File? =
         jo.codeide.lsp.index.ServiceIndexDisque
@@ -82,14 +92,15 @@ public class SessionLspKotlin(
     private val sessionsVivantes = CopyOnWriteArrayList<SessionLangageKotlin>()
 
     /**
-     * Serveurs LSP4J des connexions vivantes (lot L1) — la destination
-     * des événements de fichiers externes quand la façade est branchée
-     * sur le surveillant de la session Java ; chaque serveur se retire
-     * à son arrêt (aLArret).
+     * Serveurs LSP4J du pack neuf des connexions vivantes (lot L1) — la
+     * destination des événements de fichiers externes quand la façade est
+     * branchée sur le surveillant de la session Java ; chaque serveur se
+     * retire à son arrêt (rappelArret — le serveur referme lui-même sa
+     * session à `exit`).
      */
-    private val serveursVivants = CopyOnWriteArrayList<KotlinLanguageServer>()
+    private val serveursVivants = CopyOnWriteArrayList<ServeurLangageKotlin>()
 
-    /** Classpath courant (poussé aux sessions futures à la création). */
+    /** Classpath courant du pack (poussé au moteur à chaque sync utile). */
     @Volatile
     private var classpathCourant: ClasspathKotlin? = null
 
@@ -101,11 +112,17 @@ public class SessionLspKotlin(
         sessionJava?.enregistrerDestinataireFichiers(::diffuserEvenementsFichiers)
 
     /**
-     * Miroir public de l'état d'indexation du MOTEUR Kotlin (ADR 0213 —
-     * demande D3 de CodeIDE, écran multi-moteurs) : le MÊME type public
-     * que [SessionLsp.etatIndex] côté Java, alimenté par les événements
-     * du moteur (phases, liste de travail, breakdown, bilan) — l'agrégat
-     * CodeIDE branche le flux SANS autre changement côté hôte.
+     * Miroir public de l'état d'indexation Kotlin (écran multi-moteurs).
+     *
+     * **Fenêtre de prise en charge** (bascule ADR 0136) : le pack neuf
+     * n'expose PAS la progression fine de sa passe (liste de travail,
+     * breakdown, durées) par son SPI — l'état publié ici est une FENÊTRE
+     * honnête : CONSTRUCTION au départ de sync, PRET quand le guichet de
+     * nourrissage du moteur a PRIS EN CHARGE la passe (retour de
+     * [ServiceMoteurLangageKotlin.definirClasspath]). Pendant la fenêtre,
+     * la sous-lecture honnête du pack (guichet `indexSiPret` — aucune
+     * réponse servie sur un index non couvert) garantit qu'aucun symbole
+     * fantôme n'est servi : l'écran ne ment pas, il sous-rapporte.
      */
     private val etatIndexationMutable = MutableStateFlow(EtatIndexation.INITIAL)
 
@@ -113,54 +130,15 @@ public class SessionLspKotlin(
     public val etatIndexation: StateFlow<EtatIndexation>
         get() = etatIndexationMutable.asStateFlow()
 
-    /**
-     * Désinscription de l'observateur moteur (ADR 0213) — fermée à
-     * [close] : une façade morte ne reçoit plus d'événements. Un pack
-     * ancien rend la poignée vide du SPI (aucun événement — les
-     * FENÊTRES de [appliquerModele] prennent le relais).
-     */
-    private val desinscriptionObservateur: Closeable =
-        try {
-            moteur.enregistrerObservateurIndexation { evenement ->
-                etatIndexationMutable.value = traduire(evenement)
-                // ADR 0211/0213 : la passe ABOUTIT (PRET/PARTIEL final) —
-                // les documents ouverts pendant la fenêtre de
-                // sous-lecture se REPUBLIENT avec les VRAIS diagnostics
-                // (le client reçoit la vérité dès qu'elle existe).
-                if (evenement.phase == jo.lspkotlin.api.PhaseIndexationKotlin.PRET ||
-                    evenement.phase == jo.lspkotlin.api.PhaseIndexationKotlin.PARTIEL
-                ) {
-                    republierServeursVivants()
-                }
-            }
-        } catch (t: Throwable) {
-            // Pack exotique : fenêtres seules (le monde d'avant).
-            LOGGER.log(Level.WARNING, "observateur d'indexation refusé par le moteur (fenêtres seules)", t)
-            java.io.Closeable { }
-        }
-
-    /**
-     * Republie les documents ouverts de CHAQUE serveur vivant (ADR
-     * 0211/0213) — un serveur fautif n'empêche pas les autres (miroir
-     * de [diffuserEvenementsFichiers]).
-     */
-    private fun republierServeursVivants() {
-        for (serveur in serveursVivants) {
-            try {
-                serveur.republierDocumentsOuverts()
-            } catch (t: Throwable) {
-                LOGGER.log(Level.WARNING, "republication d'un serveur Kotlin échouée (ignorée)", t)
-            }
-        }
-    }
-
     private var fermee = false
 
     /**
      * Diffusion des événements de fichiers externes aux serveurs
      * VIVANTS (lot L1) — chaque poussée est gardée : un serveur en
      * arrêt n'empêche pas les autres (miroir de
-     * [SessionLsp.pousserEvenementsFichiers]).
+     * [SessionLsp.pousserEvenementsFichiers]). Le serveur du pack neuf
+     * y rafraîchit le scan des racines sur son FIL DÉDIÉ (le fil
+     * JSON-RPC n'attend jamais un scan).
      */
     private fun diffuserEvenementsFichiers(params: DidChangeWatchedFilesParams) {
         for (serveur in serveursVivants) {
@@ -174,28 +152,58 @@ public class SessionLspKotlin(
 
     /**
      * UN serveur LSP4J pour une connexion (cel-lsp approvisionne par le
-     * supplier du transport) : la session moteur est NEUVE et suivie —
-     * shutdown/exit la referme et la retire, [close] rattrape les autres.
-     * La session naît NOURRIE du classpath courant s'il y en a un (K3).
+     * supplier du transport) : le SERVEUR DU PACK NEUF (bascule ADR
+     * 0136 — miroir de [SessionLsp.serveur] côté Java) ; sa session
+     * moteur naît du SPI à `initialize` (fabrique ci-dessous), NOURRIE
+     * du classpath courant s'il y en a un (K3), suivie ici et refermée
+     * par le serveur à `exit` — [close] rattrape les autres.
      */
     public fun serveur(): LanguageServer {
         synchronized(this) {
             check(!fermee) { "SessionLspKotlin fermée — créer une nouvelle session" }
         }
-        val sessionLangage = moteur.creerSession()
-        classpathCourant?.let { sessionLangage.definirClasspath(it) }
-        sessionsVivantes.add(sessionLangage)
-        // Le rappel aLArret capture le serveur par variable locale —
-        // affectée une fois le serveur construit (même patron que
+        // Le rappel aLArret capture le serveur et SA session par variables
+        // locales — affectées une fois construites (même patron que
         // [SessionLsp.serveur] côté Java).
-        var inscrit: KotlinLanguageServer? = null
+        var inscrit: ServeurLangageKotlin? = null
+        var sessionInscrite: SessionLangageKotlin? = null
         val serveur =
-            KotlinLanguageServer(
-                session = sessionLangage,
-                versionServeur = moteur.version,
-                aLArret = {
-                    sessionsVivantes.remove(sessionLangage)
+            ServeurLangageKotlin(
+                fabriqueSession = { racine ->
+                    val sessionLangage = moteur.creerSession()
+                    val classpath = synchronized(this) { classpathCourant }
+                    // Le BRANCHEMENT initial est GARDÉ : un pack exotique
+                    // qui refuse la pose (poussée par session du monde
+                    // d'avant) ne doit pas tuer la CONNEXION — la session
+                    // vit, les poussées suivantes sont gardées de même.
+                    try {
+                        sessionLangage.definirClasspath(
+                            classpath
+                                ?: ClasspathKotlin(
+                                    entrees = emptyList(),
+                                    racinesSources =
+                                        racine?.let { listOf(it.toString()) } ?: emptyList(),
+                                    dossierIndex = dossierIndex?.absolutePath,
+                                ),
+                        )
+                    } catch (t: Throwable) {
+                        LOGGER.log(
+                            Level.WARNING,
+                            "branchement initial d'une session moteur refusé (ignoré)",
+                            t,
+                        )
+                    }
+                    synchronized(this) {
+                        if (!fermee) {
+                            sessionsVivantes.add(sessionLangage)
+                            sessionInscrite = sessionLangage
+                        }
+                    }
+                    sessionLangage
+                },
+                rappelArret = {
                     inscrit?.let { vivant -> serveursVivants.remove(vivant) }
+                    sessionInscrite?.let { session -> sessionsVivantes.remove(session) }
                 },
             )
         inscrit = serveur
@@ -216,65 +224,43 @@ public class SessionLspKotlin(
 
     /**
      * Applique un résultat de classpath POST-SYNC (K3) : conversion
-     * complète (modèle v8 → entrées neutres + racines sources), la VUE
-     * de classpath est fournie par l'appelant (la session Java qui
-     * possède l'index fusion — [SessionLsp.vueClasspathKotlin]).
+     * complète (modèle v8 → entrées neutres du pack + racines sources).
      *
-     * Tolérant : vue `null` = régime dégradé (symboles projet seuls) ;
-     * les entrées INEXISTANTES sont filtrées ici (le moteur n'a pas à
-     * deviner) ; un appel REDONDANT est un no-op chaud (segments par
-     * empreinte côté moteur).
+     * Tolérant : les entrées INEXISTANTES sont filtrées ici (le pack
+     * n'a pas à deviner) ; un appel REDONDANT est un no-op chaud
+     * (segments par empreinte côté moteur).
      *
      * @param resultat résultat BRUT du protocole tooling (post-sync).
-     * @param vue vue de classpath neutre (peut être null avant le
-     *        premier index PRÊT).
      */
-    public fun appliquerClasspath(
-        resultat: ClasspathResult,
-        vue: jo.lspkotlin.api.VueClasspathKotlin?,
-    ) {
+    public fun appliquerClasspath(resultat: ClasspathResult) {
         val projet = ConvertisseurModeleLsp.depuisClasspathResult(resultat, lecteurStats)
-        appliquerModele(projet, vue)
+        appliquerModele(projet)
     }
 
     /**
      * Applique un modèle DÉJÀ construit (K3, réouverture : le modèle
      * PERSISTÉ W7 de la session Java — même pipeline que
-     * [SessionLsp.nourrirDepuisModelePersiste] côté Java) : la session
-     * Kotlin retrouve ses entrées QUASI INSTANTANÉMENT, la sync fraîche
+     * [SessionLsp.nourrirDepuisModelePersiste] côté Java) : le pack
+     * retrouve ses segments QUASI INSTANTANÉMENT, la sync fraîche
      * remplacera si l'empreinte a changé.
      */
-    public fun appliquerModele(
-        projet: ProjetLsp,
-        vue: jo.lspkotlin.api.VueClasspathKotlin?,
-    ) {
+    public fun appliquerModele(projet: ProjetLsp) {
+        val classpath: ClasspathKotlin
         synchronized(this) {
             if (fermee) return
-            val entrees = entreesIndexables(projet)
-            val racines = racinesSources(projet)
-            val classpath =
+            classpath =
                 ClasspathKotlin(
-                    entrees = entrees,
-                    vue = vue,
-                    racinesSources = racines,
-                    dossierIndex = dossierIndex,
+                    entrees = entreesIndexables(projet),
+                    racinesSources = racinesSources(projet).map { it.absolutePath },
+                    dossierIndex = dossierIndex?.absolutePath,
                 )
             classpathCourant = classpath
         }
         // ADR 0211 (demande D1) : nourrissage MOTEUR une fois par sync,
-        // sur le fil dédié du moteur — le supplier de connexion ne paie
-        // plus RIEN. `false` = pack ancien sans nourrissage moteur : la
-        // poussée SYNCHRONE ci-dessous reste LE nourrissage (monde
-        // d'avant, tolérance de version).
-        val prisEnCharge =
-            try {
-                moteur.definirClasspath(classpathCourant!!)
-            } catch (t: Throwable) {
-                LOGGER.log(Level.WARNING, "nourrissage moteur refusé (poussée par session)", t)
-                false
-            }
-        // ADR 0213 (demande D3) : fenêtre CONSTRUCTION au départ de sync
-        // — le premier événement moteur (s'il y en a) reprend la main.
+        // sur le fil dédié du pack — le supplier de connexion ne paie
+        // plus RIEN. `false` = pack exotique sans nourrissage moteur : la
+        // poussée SYNCHRONE ci-dessous reste LE nourrissage (tolérance
+        // de version du contrat D6, monde d'avant).
         etatIndexationMutable.value =
             EtatIndexation(
                 phase = PhaseIndexation.CONSTRUCTION,
@@ -284,160 +270,81 @@ public class SessionLspKotlin(
                 avertissements = emptyList(),
                 erreurs = emptyList(),
             )
-        // Poussé HORS verrou : les sessions moteur sérialisent en
-        // interne, la façade reste responsive (le push est idempotent).
-        sessionsVivantes.forEach { session ->
+        val prisEnCharge =
             try {
-                session.definirClasspath(classpathCourant!!)
+                moteur.definirClasspath(classpath)
             } catch (t: Throwable) {
-                LOGGER.log(Level.WARNING, "poussée de classpath à une session moteur échouée (ignorée)", t)
+                LOGGER.log(Level.WARNING, "nourrissage moteur refusé (poussée par session)", t)
+                false
+            }
+        if (!prisEnCharge) {
+            // Pack exotique : la poussée par session a nourri
+            // SYNCHRONEMENT — fenêtre PRET honnête (jamais de PARTIEL
+            // inventé, le pack n'est pas observable).
+            sessionsVivantes.forEach { session ->
+                try {
+                    session.definirClasspath(classpath)
+                } catch (t: Throwable) {
+                    LOGGER.log(
+                        Level.WARNING,
+                        "poussée de classpath à une session moteur échouée (ignorée)",
+                        t,
+                    )
+                }
             }
         }
-        if (!prisEnCharge) {
-            // Pack ancien : la poussée ci-dessus a nourri SYNCHRONEMENT —
-            // fenêtre PRET honnête (jamais de PARTIEL inventé, le moteur
-            // n'est pas observable).
-            etatIndexationMutable.value =
-                EtatIndexation(
-                    phase = PhaseIndexation.PRET,
-                    faits = 0,
-                    total = 0,
-                    entreeCourante = null,
-                    avertissements = emptyList(),
-                    erreurs = emptyList(),
-                )
-        }
+        // Fenêtre de prise en charge (KDoc de [etatIndexationMutable]) :
+        // le guichet du moteur a rendu son verdict — le pack neuf y est
+        // TOUJOURS nourricier (retour immédiat, la passe part sur son
+        // fil dédié, les requêtes sous-lisent honnêtement tant que les
+        // segments ne sont pas couverts).
+        etatIndexationMutable.value =
+            EtatIndexation(
+                phase = PhaseIndexation.PRET,
+                faits = 0,
+                total = 0,
+                entreeCourante = null,
+                avertissements = emptyList(),
+                erreurs = emptyList(),
+            )
     }
 
     /**
-     * Annule le passage d'indexation Kotlin EN VOL (ADR 0214 — demande
-     * D5) : drapeau coopératif, le passage publie son acquis et se
-     * marque PARTIEL « annulé par l'utilisateur ».
+     * Annule le passage d'indexation Kotlin EN VOL — **fenêtre honnête
+     * de la bascule ADR 0136** : le pack neuf n'expose pas l'annulation
+     * coopérative par son SPI (ADR 0214 D5 côté ancien) ; la méthode
+     * reste au contrat public (l'agrégat CodeIDE l'appelle pour les
+     * trois langues) et rend `false` : AUCUN passage n'est déclaré
+     * annulable, le bouton ne compte pas le Kotlin. L'annulation
+     * redevient réelle quand le pack expose le guichet (vague
+     * capacités).
      *
-     * @return `false` si aucun passage n'est en vol (ou pack ancien).
+     * @return `false` (aucun passage annulable via le pack neuf).
      */
-    public fun annulerPassage(): Boolean =
-        try {
-            moteur.annulerPassage()
-        } catch (t: Throwable) {
-            LOGGER.log(Level.WARNING, "annulation refusée par le moteur (ignorée)", t)
-            false
-        }
+    public fun annulerPassage(): Boolean {
+        // Journal unique : le no-op est un état CONNU, pas une panne.
+        LOGGER.fine("annulation de passage non exposée par le pack neuf (no-op honnête)")
+        return false
+    }
 
     /**
-     * Retente les ÉCHECS du dernier passage Kotlin SEULEMENT (ADR 0214
-     * — demande D4) : les entrées saines sont reprises du cache sans
-     * re-lecture (REPRIS massifs visibles à l'écran), seuls les écarts
-     * et les pendances d'une annulation sont re-payés.
+     * Retente les ÉCHECS du dernier passage — même fenêtre honnête que
+     * [annulerPassage] : le pack neuf ne l'expose pas par son SPI ;
+     * `false` = rien à retenter.
      *
-     * @return `false` s'il n'y a rien à retenter (ou pack ancien).
+     * @return `false` (aucune reprise exposée par le pack neuf).
      */
-    public fun reesayerEchecs(): Boolean =
-        try {
-            moteur.reesayerEchecs()
-        } catch (t: Throwable) {
-            LOGGER.log(Level.WARNING, "reprise des échecs refusée par le moteur (ignorée)", t)
-            false
-        }
-
-    /**
-     * Traduit un événement moteur (types neutres du pack, ADR 0213) en
-     * [EtatIndexation] public — MÊME patron de découplage que
-     * [SessionLsp.traduireEtatIndex] côté Java (l'UI ne voit que les
-     * types publics de `lsp:host`).
-     *
-     * Exemption detekt ciblée (règle 8 : exception commentée) :
-     * LongMethod/CyclomaticComplexMethod — la traduction EXHAUSTIVE de
-     * tous les champs de l'événement (les `when` sur les enums
-     * compris) est par construction longue, miroir assumé de
-     * `traduireEtatIndex` (SessionLsp) : la découper casserait la
-     * lisibilité UN-À-UN sans réduire la complexité réelle.
-     */
-    @Suppress("LongMethod", "CyclomaticComplexMethod")
-    private fun traduire(evenement: EvenementIndexationKotlin): EtatIndexation =
-        EtatIndexation(
-            phase =
-                when (evenement.phase) {
-                    jo.lspkotlin.api.PhaseIndexationKotlin.INITIAL -> PhaseIndexation.INITIAL
-                    jo.lspkotlin.api.PhaseIndexationKotlin.CONSTRUCTION -> PhaseIndexation.CONSTRUCTION
-                    jo.lspkotlin.api.PhaseIndexationKotlin.PRET -> PhaseIndexation.PRET
-                    jo.lspkotlin.api.PhaseIndexationKotlin.PARTIEL -> PhaseIndexation.PARTIEL
-                    jo.lspkotlin.api.PhaseIndexationKotlin.ERREUR -> PhaseIndexation.ERREUR
-                },
-            faits = evenement.faits,
-            total = evenement.total,
-            entreeCourante = evenement.entreeCourante,
-            avertissements = evenement.avertissements,
-            erreurs = evenement.erreurs,
-            phaseDetaillee =
-                when (evenement.phaseDetaillee) {
-                    jo.lspkotlin.api.PhaseDetailleeIndexationKotlin.AUCUNE -> {
-                        PhaseDetailleeIndexation.AUCUNE
-                    }
-
-                    jo.lspkotlin.api.PhaseDetailleeIndexationKotlin.BIBLIOTHEQUES -> {
-                        PhaseDetailleeIndexation.BIBLIOTHEQUES
-                    }
-
-                    jo.lspkotlin.api.PhaseDetailleeIndexationKotlin.SOURCES -> {
-                        PhaseDetailleeIndexation.SOURCES
-                    }
-                },
-            listeTravail =
-                evenement.listeTravail.map { entree ->
-                    EntreeTravailIndexation(
-                        nom = entree.nom,
-                        etat =
-                            when (entree.etat) {
-                                EtatEntreeTravailKotlin.EN_ATTENTE -> EtatEntreeTravailIndexation.EN_ATTENTE
-                                EtatEntreeTravailKotlin.ACTIF -> EtatEntreeTravailIndexation.ACTIF
-                                EtatEntreeTravailKotlin.TERMINE -> EtatEntreeTravailIndexation.TERMINE
-                                EtatEntreeTravailKotlin.REPRIS -> EtatEntreeTravailIndexation.REPRIS
-                                EtatEntreeTravailKotlin.ECARTE -> EtatEntreeTravailIndexation.ECARTE
-                            },
-                    )
-                },
-            breakdownIndexeurs =
-                evenement.breakdownIndexeurs.map { breakdown ->
-                    BreakdownIndexeurIndexation(
-                        identifiant = breakdown.identifiant,
-                        libelle = breakdown.libelle,
-                        millisecondesCumulees = breakdown.millisecondesCumulees,
-                        nombreEntrees = breakdown.nombreEntrees,
-                    )
-                },
-            dureesPhases =
-                evenement.dureesPhases?.let { durees ->
-                    DureesPhasesIndexation(
-                        bibliothequesMs = durees.bibliothequesMs,
-                        sourcesMs = durees.sourcesMs,
-                    )
-                },
-            bilanDernierPassage =
-                evenement.bilanDernierPassage?.let { bilan ->
-                    BilanDernierPassageIndexation(
-                        dureeMs = bilan.dureeMs,
-                        artefactsTotal = bilan.artefactsTotal,
-                        artefactsRepris = bilan.artefactsRepris,
-                        artefactsReconstruits = bilan.artefactsReconstruits,
-                        fichiersParcourus = bilan.fichiersParcourus,
-                        fichiersReanalyses = bilan.fichiersReanalyses,
-                        indexeurPlusCouteux = bilan.indexeurPlusCouteux,
-                        horodatageMs = bilan.horodatageMs,
-                    )
-                },
-            settled = evenement.settled,
-            reprises = evenement.reprises,
-        )
+    public fun reesayerEchecs(): Boolean {
+        LOGGER.fine("reprise des échecs non exposée par le pack neuf (no-op honnête)")
+        return false
+    }
 
     /**
      * Union des entrées JAR/AAR EXISTANTES de tous les modules +
      * plateforme android.jar des modules actifs (miroir volontairement
      * MINCE d'unionIndexable/jarsDe de l'orchestrateur Java — mêmes
      * sémantiques : première occurrence gardée, existence vérifiée ;
-     * le moteur Kotlin consomme l'UNION, pas de contexte par module à
-     * K3 — documenté LSP_KOTLIN §4.2, le raffinement par module suit
-     * les retours).
+     * le pack consomme l'UNION, pas de contexte par module à K3).
      *
      * Exemption detekt ciblée (règle 16) : CyclomaticComplexMethod/
      * LoopWithTooManyJumpStatements — MIROIR d'unionIndexable de
@@ -493,12 +400,11 @@ public class SessionLspKotlin(
     /**
      * Previews Compose d'un document (C1 — découverte `@Preview
      * @Composable` consommée par la carte « goutte d'eau » de l'éditeur) :
-     * passe-plat vers les sessions moteur VIVANTES — la session qui
-     * détient le document ouvert répond, les autres rendent VIDE
-     * (première réponse non vide emportée). Aucune session vivante ou
-     * pack antérieur C1 (défaut vide du SPI) : liste VIDE, jamais
-     * d'exception — le consommateur dégrade honnêtement (pas de carte
-     * d'aperçu Compose).
+     * passe-plat vers les sessions moteur VIVANTES du pack — la session
+     * qui détient le document ouvert répond, les autres rendent VIDE
+     * (première réponse non vide emportée). Aucune session vivante :
+     * liste VIDE, jamais d'exception — le consommateur dégrade honnêtement
+     * (pas de carte d'aperçu Compose).
      *
      * @param uri identité du document ouvert dans l'éditeur.
      * @return les previews dans l'ordre du document ; liste VIDE sans
@@ -516,11 +422,12 @@ public class SessionLspKotlin(
         return emptyList()
     }
 
-    /** Arrêt exhaustif : sessions des connexions jamais arrêtées refermées,
+    /**
+     * Arrêt exhaustif : sessions des connexions jamais arrêtées refermées,
      * décompte vidé, désinscription au surveillant de la session Java
-     * (lot L1 — la façade morte ne reçoit plus d'événements) et à
-     * l'observateur d'indexation du moteur (ADR 0213).
-     * Idempotente (le Java l'est aussi — contrat h1). */
+     * (lot L1 — la façade morte ne reçoit plus d'événements).
+     * Idempotente (le Java l'est aussi — contrat h1).
+     */
     public override fun close() {
         synchronized(this) {
             if (fermee) return
@@ -532,11 +439,6 @@ public class SessionLspKotlin(
             } catch (t: Throwable) {
                 LOGGER.log(Level.WARNING, "désinscription du surveillant échouée (ignorée)", t)
             }
-        }
-        try {
-            desinscriptionObservateur.close()
-        } catch (t: Throwable) {
-            LOGGER.log(Level.WARNING, "désinscription de l'observateur d'indexation échouée (ignorée)", t)
         }
         serveursVivants.clear()
         sessionsVivantes.forEach { session ->

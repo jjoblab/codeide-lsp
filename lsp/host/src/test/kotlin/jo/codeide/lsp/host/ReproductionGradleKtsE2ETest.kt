@@ -1,5 +1,6 @@
 package jo.codeide.lsp.host
 
+import jo.codeide.lsp.kotlin.protocole.ServeurLangageKotlin
 import jo.codeide.tooling.protocol.ClasspathEntry
 import jo.codeide.tooling.protocol.ClasspathKind
 import jo.codeide.tooling.protocol.ClasspathModule
@@ -9,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.InitializedParams
 import org.eclipse.lsp4j.TextDocumentItem
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -95,20 +97,17 @@ class ReproductionGradleKtsE2ETest {
         runBlocking {
             withTimeout(300_000) { sessionJava.etatIndexation.first { it.phase == PhaseIndexation.PRET } }
         }
-        val vue = checkNotNull(sessionJava.vueClasspathKotlin()) { "vue fusion absente" }
         val facade = SessionLspKotlin(racineProjet = racine, sessionJava = sessionJava)
-        facade.appliquerClasspath(resultat, vue)
-        runBlocking {
-            withTimeout(300_000) {
-                facade.etatIndexation.first {
-                    it.phase == PhaseIndexation.PRET || it.phase == PhaseIndexation.PARTIEL
-                }
-            }
-        }
-        val serveur = facade.serveur() as KotlinLanguageServer
+        facade.appliquerClasspath(resultat)
+        // Bascule ADR 0136 : la fenêtre d'état se referme au verdict du
+        // guichet (PRET immédiat) — la couverture RÉELLE de l'index est
+        // attendue par la SONDE après initialize (SondesIndexPack).
+        val serveur = facade.serveur() as ServeurLangageKotlin
         val espion = EspionClient()
         serveur.connect(espion)
         serveur.initialize(InitializeParams()).join()
+        serveur.initialized(InitializedParams())
+        SondesIndexPack.attendreClasspath(serveur)
 
         // LE build.gradle.kts du template (viewBinding, version catalog).
         val fichier = File(racine, "build.gradle.kts")
@@ -177,9 +176,13 @@ class ReproductionGradleKtsE2ETest {
                 diagnostics.joinToString("\n") { "${it.code} ${it.message}" },
         )
 
-        // Garde D3 : la typo QUALIFIÉE reste signalée dans le script.
+        // Garde D3 : la typo QUALIFIÉE reste signalée dans le script —
+        // en position de TYPE (miroir de la garde du pack, fiche 027 : le
+        // régime script ne coupe pas les PREUVES de types ; delta assumé
+        // de la bascule ADR 0136 : l'APPEL qualifié inconnu n'est plus
+        // signalé en script, voie 6 du pack).
         val fichierGarde = File(racine, "outil.gradle.kts")
-        val sourceGarde = "val x = java.io.Fichier(\"essai\")\n"
+        val sourceGarde = "val x: java.io.Fichier? = null\n"
         fichierGarde.writeText(sourceGarde)
         val uriGarde = fichierGarde.toURI().toString()
         serveur.textDocumentService.didOpen(
